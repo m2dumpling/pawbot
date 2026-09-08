@@ -99,8 +99,23 @@ terminal/TUI client explicitly:
 - [`scripts/install.sh`](scripts/install.sh)
 - [`scripts/install.ps1`](scripts/install.ps1)
 
-Once the final public repository URL is set, those scripts can be exposed as
-the usual `curl | sh` and `irm | iex` commands.
+For a fresh macOS or Linux desktop, the installer can be run directly from
+GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/main/scripts/install.sh | sh
+```
+
+For native Windows PowerShell:
+
+```powershell
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/main/scripts/install.ps1)
+```
+
+The installer selects an active virtual environment, `uv`, `pipx`, or a
+dedicated `~/.pawbot/venv` fallback, then opens the WebUI on a fresh desktop.
+Configure the first Provider and model in **Settings → Models** before sending
+your first task.
 
 ### From a source checkout
 

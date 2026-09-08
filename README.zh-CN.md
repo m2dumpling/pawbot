@@ -93,8 +93,21 @@ uv tool install --force --upgrade pawbot-ai; pawbot
 - [`scripts/install.sh`](scripts/install.sh)
 - [`scripts/install.ps1`](scripts/install.ps1)
 
-最终公开仓库地址确定后，可以把它们暴露为常见的 `curl | sh` 和 `irm | iex`
-一键命令。
+macOS/Linux 可以直接通过 GitHub 一键安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/main/scripts/install.sh | sh
+```
+
+Windows 原生 PowerShell：
+
+```powershell
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/main/scripts/install.ps1)
+```
+
+安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
+`~/.pawbot/venv`，全新桌面环境会自动打开 WebUI。首次使用前，请在
+**Settings → Models** 中配置 Provider 和模型。
 
 ### 从源码安装
 
