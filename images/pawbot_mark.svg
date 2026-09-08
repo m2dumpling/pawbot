@@ -1,0 +1,14 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>pawbot mark</title>
+  <ellipse cx="68" cy="76" rx="30" ry="58" transform="rotate(-18 68 76)" fill="#6D4C41"/>
+  <ellipse cx="188" cy="76" rx="30" ry="58" transform="rotate(18 188 76)" fill="#6D4C41"/>
+  <ellipse cx="128" cy="154" rx="108" ry="105" fill="#E8BE87"/>
+  <path d="M128 42L158 8L168 55L128 45L88 55L98 8L128 42Z" fill="#E8BE87"/>
+  <circle cx="91" cy="139" r="12" fill="#2B211C"/>
+  <circle cx="165" cy="139" r="12" fill="#2B211C"/>
+  <circle cx="95" cy="135" r="4" fill="#F8FAFC"/>
+  <circle cx="169" cy="135" r="4" fill="#F8FAFC"/>
+  <ellipse cx="128" cy="180" rx="38" ry="29" fill="#F7D9AC"/>
+  <ellipse cx="128" cy="174" rx="18" ry="13" fill="#2B211C"/>
+  <path d="M128 187C128 205 112 211 100 205M128 187C128 205 144 211 156 205" stroke="#2B211C" stroke-width="7" stroke-linecap="round"/>
+</svg>

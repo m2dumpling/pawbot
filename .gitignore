@@ -1,0 +1,73 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.cache/
+*.egg-info/
+node_modules/
+work/
+sessions/
+run/
+.bun/
+.venv/
+venv/
+webui/dist/
+dist/
+build/
+tmp/
+temp/
+playwright-report/
+test-results/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Runtime state and local Agent artifacts
+llm_usage.sqlite3*
+.pawbot/
+
+# Personal/private configuration and credentials. Keep local; publish only
+# sanitized *.example.* templates.
+.env
+.env.*
+!.env.example
+config.json
+config.local.json
+config.*.local.json
+render-config.json
+*.secret
+*.secrets
+secrets/
+credentials/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local databases, logs, dumps, and diagnostic exports
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.db
+*.db-*
+*.log
+*.dump
+*.bak
+*.orig
+*.log
+.coverage
+coverage.xml
+htmlcov/
+
+# Personal interview and analysis materials. Keep these files on the local
+# machine; they are not part of the public source distribution.
+docs/interview/
+interview-prep/
+
+# Local analysis/design workspaces and generated notes.
+graphify-out/
+.spec-workflow/

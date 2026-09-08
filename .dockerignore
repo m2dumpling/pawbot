@@ -1,0 +1,57 @@
+# Git and local Python/JS environments
+.git/
+.venv/
+venv/
+node_modules/
+webui/node_modules/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.mypy_cache/
+.cache/
+
+# Runtime state, credentials, and personal data
+config.json
+config.*.local.json
+.env
+.env.*
+!.env.example
+.pawbot/
+work/
+sessions/
+run/
+logs/
+llm_usage.sqlite3*
+*.sqlite
+*.sqlite3
+*.db
+*.log
+*.dump
+*.bak
+*.secret
+*.secrets
+secrets/
+credentials/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Generated and local-only material
+dist/
+build/
+webui/dist/
+pawbot/web/dist/
+docs/interview/
+graphify-out/
+.spec-workflow/
+coverage.xml
+htmlcov/
+playwright-report/
+test-results/
+
+# Docker only needs this installer helper from scripts/.
+scripts/*
+!scripts/install_channel_dependencies.py

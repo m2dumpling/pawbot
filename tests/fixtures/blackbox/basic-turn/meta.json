@@ -1,0 +1,7 @@
+{
+  "mode": "record",
+  "schema_version": 2,
+  "session_key": "demo",
+  "model": "fixture-model",
+  "git_rev": "fixture"
+}

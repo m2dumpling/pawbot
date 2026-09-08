@@ -1,0 +1,15 @@
+{
+  "description": "Use pawbot from the local browser workbench.",
+  "requirements": "Local gateway, WebSocket token",
+  "setup": {
+    "docsLabel": "Open WebSocket setup",
+    "officialLabel": "Open local WebUI",
+    "tryIt": "Open the WebUI and send a short message.",
+    "summary": "WebSocket is required by the browser workbench and is prepared by the pawbot webui command.",
+    "steps": [
+      "Start pawbot with the webui command.",
+      "Open the local URL printed in the terminal.",
+      "Keep WebSocket enabled while using the browser workbench."
+    ]
+  }
+}

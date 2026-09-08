@@ -1,0 +1,273 @@
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./images/readme-cover-dark.svg" />
+    <img src="./images/readme-cover-light.svg" alt="pawbot" />
+  </picture>
+</p>
+
+# pawbot
+
+### 一个可以运行在浏览器、终端和聊天应用里的自托管 AI Agent。
+
+把任务交给 pawbot，它可以读写文件、执行命令、搜索网页、调用 MCP 工具、
+记住对话，并按计划执行工作。想要可视化操作就用 WebUI，想要速度就用终端，
+想让 Agent 随时可用就接入聊天应用。
+
+pawbot 最适合 Agent 开发者的能力是 **Record & Replay（录制与回放）**：
+真实执行一次 Agent 回合，然后在修改代码时离线重放——不需要重新请求模型、
+不产生新的 Token 消耗，也不会执行真实工具副作用。
+
+## 从这里开始
+
+| 你想做什么 | 从这里开始 |
+|---|---|
+| 安装已发布版本 | [快速安装](#快速安装) |
+| 打开浏览器工作台 | [WebUI](#webui) |
+| 在终端执行一次请求 | [CLI](#cli) |
+| 接入聊天应用 | [通道与集成](#通道与集成) |
+| 了解回放能力 | [Record & Replay](#record--replay录制与回放) |
+| 修改 Agent 或增加工具 | [开发](#开发) |
+
+## pawbot 能做什么？
+
+- 使用文件、Shell、网页搜索、网页抓取、文档、图片等工具；
+- 连接 MCP Server，并通过扩展增加能力；
+- 跨对话保存 Session History 和长期记忆；
+- 执行长期任务和定时自动化；
+- 使用 Anthropic、OpenAI 兼容端点、本地模型、Fallback 和 Model Preset；
+- 通过 WebUI、CLI/TUI、API 或聊天通道访问同一个 Agent；
+- 提供 Python SDK 和 OpenAI 兼容 API，方便集成到自己的应用。
+
+## 为什么是 pawbot？
+
+### 一个 Agent，多种入口
+
+WebUI、终端、API 和聊天通道共享同一套对话、工具和配置。你可以在浏览器
+里开始任务，再从终端继续；也可以让 Agent 运行在 Gateway 中，直接从聊天应用
+与它对话。
+
+### 录制一次 Agent，反复离线回放
+
+模型请求和外部工具让 Agent Bug 很难复现，也让每次测试都要付出成本。
+pawbot 会保存一个回合中的模型响应和工具观测。回放时，当前 Agent 代码会
+使用这些历史输入重新执行：
+
+- 不重新请求 Provider；
+- 不消耗新的 Token；
+- 不依赖网络；
+- 不产生真实工具副作用；
+- 编排行为变化时输出结构化 diff。
+
+这适合调试、回归测试和安全重构 Agent Loop。
+
+### 数据留在你自己的机器上
+
+pawbot 面向自托管。Session、配置、Workspace 和录制文件都由你自己控制。
+Shell、文件访问、网络工具和 MCP Server 都是明确的能力，并有对应的安全边界。
+
+## 快速安装
+
+### 已发布 Python 包
+
+包发布后，可以一条命令完成安装并打开 WebUI。
+
+macOS / Linux：
+
+```bash
+uv tool install --force --upgrade pawbot-ai && pawbot
+```
+
+Windows PowerShell：
+
+```powershell
+uv tool install --force --upgrade pawbot-ai; pawbot
+```
+
+仓库还提供隔离安装脚本。全新桌面环境会自动打开 WebUI；如果需要终端/TUI，
+请显式运行 `pawbot agent`：
+
+- [`scripts/install.sh`](scripts/install.sh)
+- [`scripts/install.ps1`](scripts/install.ps1)
+
+最终公开仓库地址确定后，可以把它们暴露为常见的 `curl | sh` 和 `irm | iex`
+一键命令。
+
+### 从源码安装
+
+要求：Python 3.11+ 和 [uv](https://docs.astral.sh/uv/)。只有修改 WebUI 或
+TUI 时才需要 Bun。
+
+```bash
+uv sync --all-extras --dev
+uv run pawbot --help
+```
+
+只有需要对应聊天通道时，才安装全部可选通道依赖：
+
+```bash
+uv run --no-sync python -m scripts.install_channel_dependencies --all-channels
+```
+
+## 快速开始
+
+### WebUI
+
+浏览器工作台适合第一次使用：
+
+```bash
+uv run pawbot webui
+```
+
+在 **Settings → Models** 中配置 Provider 和模型，创建一个新对话并发送
+`Hello!`。首次启动默认只绑定本机地址。
+
+### CLI
+
+直接运行 `pawbot` 会打开 WebUI；如果明确需要终端/TUI，请运行
+`pawbot agent`。
+
+执行一次请求并退出：
+
+```bash
+uv run pawbot agent --message "解释这个仓库的顶层模块"
+```
+
+如果要让 Gateway 常驻后台，请执行：
+
+```bash
+uv run pawbot gateway
+```
+
+让 Gateway 在后台运行：
+
+```bash
+uv run pawbot gateway --background
+uv run pawbot gateway status
+uv run pawbot gateway logs
+```
+
+## Record & Replay（录制与回放）
+
+录制一个真实回合：
+
+```bash
+uv run pawbot agent \
+  --message "检查仓库并总结 Agent Loop" \
+  --record .pawbot/blackbox/demo
+```
+
+离线回放：
+
+```bash
+uv run pawbot agent --replay .pawbot/blackbox/demo
+```
+
+在 WebUI 的 **设置 → Record & Replay** 中也可以完成同样的流程：点击“开始录制”，
+可以切换或新开多个会话，最后点击“停止录制”。录制窗口属于整个 Agent，停止前的
+所有回合都会写入同一份样本。残缺样本会保留并显示原因，也可以直接在前端删除，
+不会等到回放时才报错。
+
+在指定迭代处暂停并查看重建后的消息：
+
+```bash
+uv run pawbot agent \
+  --replay .pawbot/blackbox/demo \
+  --break-at 2
+```
+
+录制文件包含模型响应轨、工具观测轨和 Turn Envelope。回放会检查工具顺序、
+工具结果插入、上下文治理、Continuation 和最终消息结构。详见
+[docs/record-replay.md](docs/record-replay.md)。
+
+在 **设置 → 模型** 中选择模型时，pawbot 会优先读取提供商 `/models` 返回的能力信息，
+并对已知模型 ID 使用内置能力目录兜底。上下文长度和支持的思考档位会在保存前显示；
+如果接口没有提供这些信息，界面会明确标记未知，并保留手动设置入口。
+
+## 通道与集成
+
+pawbot 支持 WebUI、终端、OpenAI 兼容 API、Python SDK、WebSocket 通道和聊天
+通道。MCP Server 与扩展点可以在不修改 Agent Loop 的情况下增加能力。
+
+## 架构
+
+```text
+用户消息
+   ↓
+通道 / WebUI / CLI / API
+   ↓
+AgentLoop：准备对话并运行一个回合
+   ↓
+AgentRunner：请求模型、调用工具、回填结果、按需继续
+   ↓
+Provider + ToolRegistry + MCP
+   ↓
+回答、保存的 Session 和通道响应
+```
+
+核心源码位于：
+
+- `pawbot/agent/loop.py`：回合编排；
+- `pawbot/agent/runner.py`：模型与工具循环；
+- `pawbot/agent/turn/`：回合状态和阶段；
+- `pawbot/agent/blackbox/`：Record & Replay；
+- `pawbot/agent/tools/`：工具契约和执行；
+- `pawbot/session/`：对话、记忆和恢复；
+- `pawbot/providers/`：模型适配和重试。
+
+## 文档
+
+- [文档索引](docs/README.md)
+- [Record & Replay](docs/record-replay.md)
+- [发布说明](docs/release-notes/0.3.0.md)
+- [变更记录](CHANGELOG.md)
+- [贡献指南](CONTRIBUTING.md)
+- [安全策略](SECURITY.md)
+
+## 安全与隐私
+
+pawbot 可以执行 Shell、访问本地文件、调用网络工具和连接 MCP Server。
+启用这些能力前请阅读 [`SECURITY.md`](SECURITY.md)。
+
+以下内容不能提交到 Git：
+
+- `config.json`、`.env*`、Provider 凭证和证书；
+- `.pawbot/` 录制文件和 Session 数据；
+- `work/`、`sessions/`、`run/`、SQLite 文件和私有日志；
+- 包含个人信息的 Prompt、工具结果和本地路径。
+
+回放文件可能包含敏感 Prompt 和工具输出。分享前必须脱敏；仓库示例请使用
+`tests/fixtures/blackbox/` 中的安全 Fixture。
+
+## 开发
+
+```bash
+uv sync --all-extras --dev
+uv run --no-sync python -m scripts.install_channel_dependencies --all-channels
+uv run ruff check pawbot
+uv run basedpyright
+uv run pytest -q
+```
+
+修改 WebUI 时：
+
+```bash
+cd webui
+bun install --frozen-lockfile
+bun run test
+bun run build
+```
+
+## 项目状态
+
+pawbot 当前处于 Alpha/Experimental Preview 阶段，适合个人自托管、开发、
+测试和小规模单节点部署。当前不承诺多实例 Session 一致性、持久化分布式执行、
+自动故障接管或企业级高可用。
+
+## 许可证
+
+MIT — 详见 [LICENSE](LICENSE) 和
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
