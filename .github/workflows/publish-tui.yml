@@ -104,4 +104,6 @@ jobs:
           set -eu
           test -n "$RELEASE_TAG"
           test -n "$(find tui-dist -maxdepth 1 -name 'pawbot-tui-*.zip' -print -quit)"
-          gh release upload "$RELEASE_TAG" tui-dist/pawbot-tui-*.zip tui-dist/pawbot-tui-*.zip.sha256 --clobber
+          gh release upload "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            tui-dist/pawbot-tui-*.zip tui-dist/pawbot-tui-*.zip.sha256 --clobber
