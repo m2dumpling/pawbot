@@ -9,6 +9,10 @@ on:
         description: Release tag whose TUI assets should be built
         required: true
         type: string
+      source_ref:
+        description: Optional source ref for a post-release test/build fix
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -39,7 +43,7 @@ jobs:
       - name: Check out release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ inputs.source_ref || env.RELEASE_TAG }}
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
