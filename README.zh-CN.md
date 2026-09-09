@@ -96,13 +96,13 @@ uv tool install --force --upgrade pawbot-ai; pawbot
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.0/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/main/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.0/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
@@ -236,6 +236,7 @@ Provider + ToolRegistry + MCP
 - [文档索引](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
 - [发布说明](docs/release-notes/0.3.0.md)
+- [发布与 PyPI 指南](docs/publishing.md)
 - [变更记录](CHANGELOG.md)
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)
