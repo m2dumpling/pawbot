@@ -3,6 +3,19 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.3.4 - 2026-09-10
+
+### Changed
+
+- Reworked the WebUI Record & Replay view around a compact per-turn summary:
+  user request, final answer, model, decision count, tool count, and outcome
+  are visible first.
+- Moved the complete turn-level JSON records into a dedicated full-screen
+  viewer so raw execution data remains available without overwhelming the
+  normal inspection path.
+- Clarified replay terminology to distinguish an offline orchestration check
+  from a log viewer or a model-quality score.
+
 ## 0.3.3 - 2026-09-09
 
 ### Fixed

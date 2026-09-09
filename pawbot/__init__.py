@@ -49,7 +49,7 @@ def _resolve_version() -> str:
         return _pkg_version("pawbot-ai")
     except PackageNotFoundError:
         # Source checkouts often import pawbot without installed dist-info.
-        return _read_pyproject_version() or "0.3.3"
+        return _read_pyproject_version() or "0.3.4"
 
 
 __version__ = _resolve_version()
