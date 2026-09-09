@@ -240,7 +240,7 @@ function activityLabel(
       return statusCopy(status, "Starting long task", "Started long task", "Could not start long task");
     case "update_goal":
       return statusCopy(status, "Updating long task", "Updated long task", "Could not update long task");
-    // TODO(0.3.2): Remove write_stdin display compatibility after 0.3.1.
+    // TODO(0.3.3): Remove write_stdin display compatibility after 0.3.2.
     case "exec_session":
     case "write_stdin":
       return statusCopy(status, "Continuing command", "Continued command", "Could not continue command");
@@ -293,7 +293,7 @@ function activityDetail(items: GenericToolRunItem[], family: ToolFamily, name: s
       return safeText(fieldValue(trace, "ui_summary"));
     case "update_goal":
       return safeText(fieldValue(trace, "action"));
-    // TODO(0.3.2): Remove write_stdin display compatibility after 0.3.1.
+    // TODO(0.3.3): Remove write_stdin display compatibility after 0.3.2.
     case "exec_session":
     case "write_stdin":
       return compactIdentifier(fieldValue(trace, "session_id"));

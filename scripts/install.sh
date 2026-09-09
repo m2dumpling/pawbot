@@ -2,11 +2,13 @@
 set -eu
 
 package="pawbot-ai"
-install_target="$package"
+install_target="${PAWBOT_INSTALL_TARGET:-$package}"
 install_source="PyPI"
 dry_run="0"
 pawbot_runner=""
 pawbot_python=""
+pawbot_launcher=""
+install_failure_reason=""
 
 info() {
   printf '%s\n' "$*"
@@ -18,14 +20,36 @@ fail() {
 }
 
 install_failure_hint() {
-  printf '%s\n' "Error: could not install pawbot from $install_source." >&2
-  printf '%s\n' "If pip mentioned externally-managed-environment, use uv, pipx, or a virtual environment instead of system pip." >&2
-  printf '%s\n' "You can also run manually:" >&2
-  printf '  %s\n' "uv tool install --force --upgrade $install_target" >&2
-  printf '  %s\n' "$python_bin -m venv ~/.pawbot/venv" >&2
-  printf '  %s\n' "~/.pawbot/venv/bin/python -m pip install --upgrade $install_target" >&2
-  printf '%s\n' "Then open the WebUI with:" >&2
-  printf '  %s\n' "pawbot" >&2
+  privilege_prefix="sudo "
+  if [ "$(id -u 2>/dev/null || printf '1')" = "0" ]; then
+    privilege_prefix=""
+  fi
+  printf '%s\n' "Pawbot installation failed." >&2
+  case "$install_failure_reason" in
+    venv)
+      printf '%s\n' "Reason: Python's venv/ensurepip support is missing for $python_bin." >&2
+      printf '%s\n' "Debian/Ubuntu (use the version-specific package first):" >&2
+      printf '  %s\n' "${privilege_prefix}apt-get update && ${privilege_prefix}apt-get install -y python$python_version-venv" >&2
+      printf '%s\n' "If that package is unavailable, use:" >&2
+      printf '  %s\n' "${privilege_prefix}apt-get update && ${privilege_prefix}apt-get install -y python3-venv" >&2
+      printf '%s\n' "Fedora/RHEL:" >&2
+      printf '  %s\n' "${privilege_prefix}dnf install -y python3-venv python3-pip" >&2
+      printf '%s\n' "Arch Linux:" >&2
+      printf '  %s\n' "${privilege_prefix}pacman -S --needed python" >&2
+      ;;
+    pip)
+      printf '%s\n' "Reason: pip/ensurepip is unavailable for $python_bin." >&2
+      printf '%s\n' "Use uv or pipx, or install the Python packaging tools for your distribution." >&2
+      ;;
+    cli)
+      printf '%s\n' "Reason: the package installation completed, but the pawbot CLI could not be started." >&2
+      ;;
+    *)
+      printf '%s\n' "Reason: the package could not be installed from $install_source." >&2
+      printf '%s\n' "If pip reported externally-managed-environment, use uv, pipx, or a virtual environment." >&2
+      ;;
+  esac
+  printf '%s\n' "After fixing the reason above, rerun the Pawbot installer." >&2
   exit 1
 }
 
@@ -70,7 +94,32 @@ ensure_pip() {
   fi
 
   info "pip was not found for $target_python. Trying ensurepip..."
-  "$target_python" -m ensurepip --upgrade >/dev/null 2>&1
+  "$target_python" -m ensurepip --upgrade >/dev/null 2>&1 || {
+    install_failure_reason="pip"
+    return 1
+  }
+}
+
+python_version=""
+
+get_python_version() {
+  "$python_bin" - <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+}
+
+check_venv_support() {
+  if "$python_bin" - <<'PY' >/dev/null 2>&1
+import venv
+import ensurepip
+PY
+  then
+    return 0
+  fi
+
+  install_failure_reason="venv"
+  return 1
 }
 
 run_pawbot() {
@@ -91,17 +140,41 @@ run_pawbot() {
 }
 
 pawbot_try_command() {
+  if [ -n "$pawbot_launcher" ] && [ -x "$pawbot_launcher" ]; then
+    printf '"%s"\n' "$pawbot_launcher"
+    return 0
+  fi
   case "$pawbot_runner" in
     uv)
-      printf '%s\n' "uv tool run --from $install_target pawbot"
+      printf '%s\n' "uv tool run --from \"$install_target\" pawbot"
       ;;
     pipx)
-      printf '%s\n' "pipx run --spec $install_target pawbot"
+      printf '%s\n' "pipx run --spec \"$install_target\" pawbot"
       ;;
     python)
-      printf '%s\n' "$pawbot_python -m pawbot"
+      printf '"%s" -m pawbot\n' "$pawbot_python"
       ;;
   esac
+}
+
+default_bin_dir() {
+  if [ "$(id -u 2>/dev/null || printf '1')" = "0" ] &&
+    [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
+    printf '%s\n' /usr/local/bin
+    return 0
+  fi
+
+  old_ifs="$IFS"
+  IFS=:
+  for path_dir in ${PATH:-}; do
+    if [ -n "$path_dir" ] && [ -d "$path_dir" ] && [ -w "$path_dir" ]; then
+      IFS="$old_ifs"
+      printf '%s\n' "$path_dir"
+      return 0
+    fi
+  done
+  IFS="$old_ifs"
+  printf '%s\n' "$HOME/.local/bin"
 }
 
 is_fresh_pawbot_install() {
@@ -140,35 +213,58 @@ install_with_uv() {
   info "Installing or upgrading pawbot from $install_source with uv tool..."
   uv tool install --python "$python_bin" --force --upgrade "$install_target" || return 1
   pawbot_runner="uv"
+  write_pawbot_launcher
 }
 
 install_with_pipx() {
   info "Installing or upgrading pawbot from $install_source with pipx..."
   pipx install --python "$python_bin" --force "$install_target" || return 1
   pawbot_runner="pipx"
+  write_pawbot_launcher
 }
 
-write_managed_wrapper() {
-  bin_dir="${PAWBOT_BIN_DIR:-$HOME/.local/bin}"
-  wrapper="$bin_dir/pawbot"
+write_pawbot_launcher() {
+  [ -n "${HOME:-}" ] || return 0
+  bin_dir="${PAWBOT_BIN_DIR:-$(default_bin_dir)}"
+  pawbot_launcher="$bin_dir/pawbot"
   mkdir -p "$bin_dir" || return 0
 
-  if [ -e "$wrapper" ] && ! grep -q "Generated by pawbot installer" "$wrapper" 2>/dev/null; then
-    info "Not updating $wrapper because it already exists."
+  if [ -e "$pawbot_launcher" ] && ! grep -q "Generated by pawbot installer" "$pawbot_launcher" 2>/dev/null; then
+    info "Not updating $pawbot_launcher because it already exists."
+    pawbot_launcher=""
     return 0
   fi
 
-  cat > "$wrapper" <<EOF
+  case "$pawbot_runner" in
+    uv)
+      cat > "$pawbot_launcher" <<EOF
+#!/bin/sh
+# Generated by pawbot installer.
+exec uv tool run --from "$install_target" pawbot "\$@"
+EOF
+      ;;
+    pipx)
+      cat > "$pawbot_launcher" <<EOF
+#!/bin/sh
+# Generated by pawbot installer.
+exec pipx run --spec "$install_target" pawbot "\$@"
+EOF
+      ;;
+    python)
+      cat > "$pawbot_launcher" <<EOF
 #!/bin/sh
 # Generated by pawbot installer.
 exec "$pawbot_python" -m pawbot "\$@"
 EOF
-  chmod +x "$wrapper" || return 0
+      ;;
+    *)
+      pawbot_launcher=""
+      return 0
+      ;;
+  esac
+  chmod +x "$pawbot_launcher" || return 0
 
-  if ! command -v pawbot >/dev/null 2>&1; then
-    info "Installed a pawbot launcher at $wrapper."
-    info "Add $bin_dir to PATH to run pawbot directly."
-  fi
+  info "Installed a pawbot launcher at $pawbot_launcher."
 }
 
 install_with_managed_venv() {
@@ -178,6 +274,9 @@ install_with_managed_venv() {
   venv_python="$venv_dir/bin/python"
 
   if [ ! -x "$venv_python" ]; then
+    if ! check_venv_support; then
+      return 1
+    fi
     info "Creating a dedicated virtual environment at $venv_dir..."
     mkdir -p "$(dirname "$venv_dir")"
     "$python_bin" -m venv "$venv_dir" || return 1
@@ -194,7 +293,7 @@ PY
 
   pawbot_runner="python"
   pawbot_python="$venv_python"
-  write_managed_wrapper
+  write_pawbot_launcher
 }
 
 while [ "$#" -gt 0 ]; do
@@ -228,6 +327,7 @@ else
   python_bin="$(find_python)" || fail "Python 3.11 or newer was not found. Install Python first, then rerun this command."
 fi
 
+python_version="$(get_python_version)"
 info "Using Python: $("$python_bin" --version 2>&1)"
 
 if [ "$dry_run" = "1" ]; then
@@ -242,10 +342,15 @@ if [ "$dry_run" = "1" ]; then
     info "Dry run: would run: pipx install --python $python_bin --force $install_target"
     info "Dry run: would run pawbot as: pipx run --spec $install_target pawbot"
   else
-    venv_dir="${PAWBOT_VENV:-$HOME/.pawbot/venv}"
-    info "Dry run: would create or reuse a dedicated virtual environment: $venv_dir"
-    info "Dry run: would run: $venv_dir/bin/python -m pip install --upgrade $install_target"
-    info "Dry run: would run pawbot as: $venv_dir/bin/python -m pawbot"
+    if check_venv_support; then
+      venv_dir="${PAWBOT_VENV:-$HOME/.pawbot/venv}"
+      info "Dry run: would create or reuse a dedicated virtual environment: $venv_dir"
+      info "Dry run: would run: $venv_dir/bin/python -m pip install --upgrade $install_target"
+      info "Dry run: would run pawbot as: $venv_dir/bin/python -m pawbot"
+    else
+      info "Dry run: would stop because Python venv/ensurepip support is missing."
+      info "Dry run: install the version-specific python${python_version}-venv package first."
+    fi
   fi
   if [ "${PAWBOT_SKIP_WIZARD:-}" = "1" ]; then
     info "Dry run: would skip automatic setup because PAWBOT_SKIP_WIZARD=1."
@@ -287,7 +392,39 @@ else
 fi
 
 info "Installed pawbot:"
-run_pawbot --version
+if ! run_pawbot --version; then
+  install_failure_reason="cli"
+  install_failure_hint
+fi
+
+show_install_success() {
+  info "Installation successful."
+  if [ -n "$pawbot_launcher" ] && [ -x "$pawbot_launcher" ]; then
+    resolved_pawbot="$(command -v pawbot 2>/dev/null || true)"
+    if [ "$resolved_pawbot" = "$pawbot_launcher" ]; then
+      info "CLI verified on PATH: $resolved_pawbot"
+      info "Run: pawbot webui"
+    else
+      bin_dir="$(dirname "$pawbot_launcher")"
+      info "CLI verified at: $pawbot_launcher"
+      if [ -n "$resolved_pawbot" ]; then
+        info "This shell currently resolves pawbot to: $resolved_pawbot"
+      else
+        info "This shell does not include $bin_dir in PATH."
+      fi
+      info "Run now: \"$pawbot_launcher\" webui"
+      info "For future shells: export PATH=\"$bin_dir:\$PATH\""
+    fi
+  elif command -v pawbot >/dev/null 2>&1; then
+    info "CLI verified on PATH: $(command -v pawbot)"
+    info "Run: pawbot webui"
+  else
+    info "CLI verified through: $(pawbot_try_command)"
+    info "Run: $(pawbot_try_command) webui"
+  fi
+}
+
+show_install_success
 
 if [ "${PAWBOT_SKIP_WIZARD:-}" = "1" ]; then
   info "Skipping automatic setup because PAWBOT_SKIP_WIZARD=1."

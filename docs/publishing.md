@@ -7,7 +7,7 @@ source releases and PyPI package releases are separate steps.
 
 1. Wait for the `CI` workflow on `main` to finish successfully.
 2. Open **Releases → Draft a new release** in the repository.
-3. Create or select the new version tag (for example, `v0.3.1`) targeting the latest green `main` commit.
+3. Create or select the new version tag (for example, `v0.3.2`) targeting the latest green `main` commit.
 4. Use the matching file under `docs/release-notes/` as the release description.
 
 Publishing the GitHub Release triggers `.github/workflows/publish.yml`.
@@ -39,19 +39,38 @@ After the publish workflow succeeds, verify the package page:
 https://pypi.org/project/pawbot-ai/
 ```
 
-Then test the public installer in a clean environment:
+Then test the public package in a clean environment:
 
 ```bash
 uv tool install --force --upgrade pawbot-ai
-pawbot
+pawbot --version
 ```
 
 On Windows PowerShell:
 
 ```powershell
 uv tool install --force --upgrade pawbot-ai
-pawbot
+pawbot --version
 ```
+
+For the GitHub installer, test the platform-specific commands as well:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/vX.Y.Z/scripts/install.sh | sh
+```
+
+```powershell
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/vX.Y.Z/scripts/install.ps1)
+```
+
+The installer must verify `pawbot --version` before printing a success message.
+On a minimal Debian/Ubuntu image without `venv/ensurepip`, it must stop before
+creating the managed environment and print the matching `python3.x-venv`
+command. It must not print a WebUI or `pawbot` startup command in that failure
+path. On Windows, the generated launcher is placed in the user's Pawbot bin
+directory and added to the user `PATH`; on POSIX systems, the installer prints
+the verified launcher path and an `export PATH=...` command when the current
+shell does not already contain that directory.
 
 The installer opens the WebUI on a local desktop. The first user still needs
 to configure a Provider, API key, and model in **Settings → Models**.
@@ -62,5 +81,7 @@ to configure a Provider, API key, and model in **Settings → Models**.
 - The publish workflow only runs for a published GitHub Release.
 - Keep the version in `pyproject.toml`, the release tag, and the release notes
   aligned.
+- Wait for the CI installer smoke jobs on Ubuntu, macOS, and Windows before
+  publishing a release.
 - If the workflow fails, fix the publisher or build issue before retrying; do
   not create a second tag for the same version.

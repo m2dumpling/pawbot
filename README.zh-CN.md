@@ -129,18 +129,28 @@ uv tool install --force --upgrade pawbot-ai; pawbot
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/install.sh | sh
+```
+
+如果系统没有 `curl`，也可以使用 `wget`：
+
+```bash
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.1/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
-`~/.pawbot/venv`，全新桌面环境会自动打开 WebUI。首次使用前，请在
-**Settings → Models** 中配置 Provider 和模型。
+`~/.pawbot/venv`，全新桌面环境会自动打开 WebUI。创建独立环境前，安装器
+会先检查 Python 的 `venv` 和 `ensurepip` 是否可用。如果 Debian/Ubuntu
+最小镜像缺少 `python3.x-venv`，安装会立即停止并给出准确的依赖安装命令，
+不会继续打印误导性的启动命令。安装成功后会执行 `pawbot --version`；如果
+启动器不在当前 Shell 的 `PATH` 中，会显示已验证的启动器路径和立即运行的
+命令。首次使用前，请在 **Settings → Models** 中配置 Provider 和模型。
 
 ### 从源码安装
 
@@ -277,7 +287,7 @@ Provider + ToolRegistry + MCP
 
 - [文档索引](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
-- [发布说明](docs/release-notes/0.3.1.md)
+- [发布说明](docs/release-notes/0.3.2.md)
 - [发布与 PyPI 指南](docs/publishing.md)
 - [变更记录](CHANGELOG.md)
 - [贡献指南](CONTRIBUTING.md)

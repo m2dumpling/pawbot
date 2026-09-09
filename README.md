@@ -137,19 +137,31 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/install.sh | sh
+```
+
+If `curl` is not available, use `wget` instead:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.1/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a
 dedicated `~/.pawbot/venv` fallback, then opens the WebUI on a fresh desktop.
-Configure the first Provider and model in **Settings → Models** before sending
-your first task.
+Before creating the fallback environment it verifies that Python's `venv` and
+`ensurepip` support is available. If a minimal Debian/Ubuntu image is missing
+`python3.x-venv`, installation stops with the exact package command to run and
+does not print a misleading startup command. On success it runs
+`pawbot --version`; if the launcher is not on the current shell's `PATH`, it
+prints the verified launcher path and the command to use now. Configure the
+first Provider and model in **Settings → Models** before sending your first
+task.
 
 ### From a source checkout
 
@@ -295,7 +307,7 @@ The core source is organized around:
 
 - [Documentation index](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
-- [Release notes](docs/release-notes/0.3.1.md)
+- [Release notes](docs/release-notes/0.3.2.md)
 - [Publishing guide](docs/publishing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)

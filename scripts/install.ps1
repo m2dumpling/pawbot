@@ -8,10 +8,12 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Package = "pawbot-ai"
-$InstallTarget = $Package
+$InstallTarget = if ($env:PAWBOT_INSTALL_TARGET) { $env:PAWBOT_INSTALL_TARGET } else { $Package }
 $InstallSource = "PyPI"
 $script:PawbotRunner = $null
 $script:PawbotPython = $null
+$script:PawbotLauncher = $null
+$script:InstallFailureReason = $null
 $script:LastInstallSucceeded = $false
 
 function Write-Info {
@@ -25,15 +27,30 @@ function Fail {
 }
 
 function Show-InstallFailureHint {
-    [Console]::Error.WriteLine("Error: could not install pawbot from $InstallSource.")
-    [Console]::Error.WriteLine("If pip mentioned externally-managed-environment, use uv, pipx, or a virtual environment instead of system pip.")
-    [Console]::Error.WriteLine("You can also run manually:")
-    [Console]::Error.WriteLine("  uv tool install --force --upgrade $InstallTarget")
-    [Console]::Error.WriteLine("  $Python -m venv `$HOME\.pawbot\venv")
-    [Console]::Error.WriteLine("  `$HOME\.pawbot\venv\Scripts\python.exe -m pip install --upgrade $InstallTarget")
-    [Console]::Error.WriteLine("Then open the WebUI with:")
-    [Console]::Error.WriteLine("  pawbot")
-    throw "could not install pawbot from $InstallSource"
+    [Console]::Error.WriteLine("Pawbot installation failed.")
+    switch ($script:InstallFailureReason) {
+        "venv" {
+            [Console]::Error.WriteLine("Reason: Python's venv/ensurepip support is missing for $Python.")
+            [Console]::Error.WriteLine("Repair or reinstall Python 3.11+ with pip and venv support enabled, then rerun the installer.")
+            [Console]::Error.WriteLine("You can also try:")
+            [Console]::Error.WriteLine("  `"$Python`" -m ensurepip --upgrade")
+            [Console]::Error.WriteLine("  `"$Python`" -m venv `"$HOME\.pawbot\venv`"")
+        }
+        "pip" {
+            [Console]::Error.WriteLine("Reason: pip/ensurepip is unavailable for $Python.")
+            [Console]::Error.WriteLine("Repair or reinstall Python 3.11+ with pip enabled, or install uv, then rerun the installer.")
+            [Console]::Error.WriteLine("Try: `"$Python`" -m ensurepip --upgrade")
+        }
+        "cli" {
+            [Console]::Error.WriteLine("Reason: the package installation completed, but the pawbot CLI could not be started.")
+        }
+        default {
+            [Console]::Error.WriteLine("Reason: the package could not be installed from $InstallSource.")
+            [Console]::Error.WriteLine("If pip reported externally-managed-environment, use uv, pipx, or a virtual environment.")
+        }
+    }
+    [Console]::Error.WriteLine("After fixing the reason above, rerun the Pawbot installer.")
+    throw "Pawbot installation failed."
 }
 
 function Show-Usage {
@@ -87,6 +104,22 @@ function Test-VirtualEnv {
     }
 }
 
+function Test-VirtualEnvSupport {
+    param([string]$Command)
+
+    $ProbePath = Join-Path ([IO.Path]::GetTempPath()) ("pawbot-venv-check-" + [guid]::NewGuid().ToString("N"))
+    try {
+        & $Command -m venv $ProbePath *> $null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
+    } finally {
+        if (Test-Path -LiteralPath $ProbePath) {
+            Remove-Item -LiteralPath $ProbePath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Ensure-Pip {
     param([string]$Command)
 
@@ -101,7 +134,8 @@ function Ensure-Pip {
     Write-Info "pip was not found for $Command. Trying ensurepip..."
     & $Command -m ensurepip --upgrade *> $null
     if ($LASTEXITCODE -ne 0) {
-        Fail "pip is not available. Install pip for $Command, then rerun this command."
+        $script:InstallFailureReason = "pip"
+        Show-InstallFailureHint
     }
 }
 
@@ -125,12 +159,67 @@ function Invoke-Pawbot {
 }
 
 function Get-PawbotCommand {
+    if ($script:PawbotLauncher -and (Test-Path -LiteralPath $script:PawbotLauncher)) {
+        return "& `"$script:PawbotLauncher`""
+    }
     switch ($script:PawbotRunner) {
-        "uv" { return "uv tool run --from $InstallTarget pawbot" }
-        "pipx" { return "pipx run --spec $InstallTarget pawbot" }
-        "python" { return "$script:PawbotPython -m pawbot" }
+        "uv" { return "uv tool run --from `"$InstallTarget`" pawbot" }
+        "pipx" { return "pipx run --spec `"$InstallTarget`" pawbot" }
+        "python" { return "& `"$script:PawbotPython`" -m pawbot" }
         default { return "pawbot" }
     }
+}
+
+function Write-PawbotLauncher {
+    $HomeDir = if ($env:HOME) { $env:HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { $null }
+    if (-not $HomeDir) {
+        return
+    }
+
+    $BinDir = if ($env:PAWBOT_BIN_DIR) { $env:PAWBOT_BIN_DIR } else { Join-Path $HomeDir ".pawbot\bin" }
+    try {
+        New-Item -ItemType Directory -Force -Path $BinDir *> $null
+    } catch {
+        Write-Info "Could not create a Pawbot launcher directory at $BinDir."
+        return
+    }
+
+    $Launcher = Join-Path $BinDir "pawbot.cmd"
+    if ((Test-Path -LiteralPath $Launcher) -and
+        -not ((Get-Content -LiteralPath $Launcher -Raw -ErrorAction SilentlyContinue) -match "Generated by pawbot installer")) {
+        Write-Info "Not updating $Launcher because it already exists."
+        return
+    }
+
+    $LauncherBody = switch ($script:PawbotRunner) {
+        "uv" {
+            "@echo off`r`nuv tool run --from `"$InstallTarget`" pawbot %*`r`n"
+        }
+        "pipx" {
+            "@echo off`r`npipx run --spec `"$InstallTarget`" pawbot %*`r`n"
+        }
+        "python" {
+            "@echo off`r`n`"$script:PawbotPython`" -m pawbot %*`r`n"
+        }
+        default {
+            return
+        }
+    }
+    Set-Content -LiteralPath $Launcher -Value $LauncherBody -Encoding ascii
+    $script:PawbotLauncher = $Launcher
+
+    if ($env:PAWBOT_NO_PATH_UPDATE -ne "1") {
+        $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+        $PathEntries = if ($UserPath) { $UserPath -split ';' } else { @() }
+        if (-not ($PathEntries | Where-Object { $_.TrimEnd('\') -ieq $BinDir.TrimEnd('\') })) {
+            $NewUserPath = if ($UserPath) { "$UserPath;$BinDir" } else { $BinDir }
+            [Environment]::SetEnvironmentVariable("Path", $NewUserPath, "User")
+        }
+        if (-not (($env:Path -split ';') | Where-Object { $_.TrimEnd('\') -ieq $BinDir.TrimEnd('\') })) {
+            $env:Path = "$BinDir;$env:Path"
+        }
+    }
+    Write-Info "Installed a Pawbot launcher at $Launcher."
 }
 
 function Test-FreshPawbotInstall {
@@ -196,6 +285,10 @@ function Install-WithManagedVenv {
     $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 
     if (-not (Test-Path $VenvPython)) {
+        if (-not (Test-VirtualEnvSupport $Python)) {
+            $script:InstallFailureReason = "venv"
+            Show-InstallFailureHint
+        }
         Write-Info "Creating a dedicated virtual environment at $VenvDir..."
         $Parent = Split-Path -Parent $VenvDir
         if ($Parent) {
@@ -220,6 +313,7 @@ function Install-WithManagedVenv {
 
     $script:PawbotRunner = "python"
     $script:PawbotPython = $VenvPython
+    Write-PawbotLauncher
 }
 
 foreach ($Arg in $RemainingArgs) {
@@ -249,6 +343,7 @@ if ($Dev) {
 }
 
 $Python = Find-Python
+$PythonVersion = & $Python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
 $Version = & $Python --version
 Write-Info "Using Python: $Version"
 
@@ -264,11 +359,16 @@ if ($DryRun) {
         Write-Info "Dry run: would run: pipx install --python $Python --force $InstallTarget"
         Write-Info "Dry run: would run pawbot as: pipx run --spec $InstallTarget pawbot"
     } else {
-        $HomeDir = if ($env:HOME) { $env:HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { "~" }
-        $VenvDir = if ($env:PAWBOT_VENV) { $env:PAWBOT_VENV } else { Join-Path $HomeDir ".pawbot\venv" }
-        Write-Info "Dry run: would create or reuse a dedicated virtual environment: $VenvDir"
-        Write-Info "Dry run: would run: $VenvDir\Scripts\python.exe -m pip install --upgrade $InstallTarget"
-        Write-Info "Dry run: would run pawbot as: $VenvDir\Scripts\python.exe -m pawbot"
+        if (Test-VirtualEnvSupport $Python) {
+            $HomeDir = if ($env:HOME) { $env:HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { "~" }
+            $VenvDir = if ($env:PAWBOT_VENV) { $env:PAWBOT_VENV } else { Join-Path $HomeDir ".pawbot\venv" }
+            Write-Info "Dry run: would create or reuse a dedicated virtual environment: $VenvDir"
+            Write-Info "Dry run: would run: $VenvDir\Scripts\python.exe -m pip install --upgrade $InstallTarget"
+            Write-Info "Dry run: would run pawbot as: $VenvDir\Scripts\python.exe -m pawbot"
+        } else {
+            Write-Info "Dry run: would stop because Python venv/ensurepip support is missing."
+            Write-Info "Dry run: install the version-specific python$PythonVersion-venv package first."
+        }
     }
     if ($env:PAWBOT_SKIP_WIZARD -eq "1") {
         Write-Info "Dry run: would skip automatic setup because PAWBOT_SKIP_WIZARD=1."
@@ -312,7 +412,35 @@ if (Test-VirtualEnv $Python) {
 Write-Info "Installed pawbot:"
 Invoke-Pawbot @("--version")
 if ($LASTEXITCODE -ne 0) {
-    Fail "pawbot was installed, but the command could not be started."
+    $script:InstallFailureReason = "cli"
+    Show-InstallFailureHint
+}
+
+if (-not $script:PawbotLauncher) {
+    Write-PawbotLauncher
+}
+Write-Info "Installation successful."
+$ResolvedPawbot = Get-Command pawbot -ErrorAction SilentlyContinue
+$ResolvedPawbotPath = if ($ResolvedPawbot) { $ResolvedPawbot.Source } else { $null }
+$LauncherMatchesPath = $false
+if ($script:PawbotLauncher -and $ResolvedPawbotPath) {
+    $LauncherMatchesPath = [IO.Path]::GetFullPath($ResolvedPawbotPath).TrimEnd('\') -ieq
+        [IO.Path]::GetFullPath($script:PawbotLauncher).TrimEnd('\')
+}
+if ($LauncherMatchesPath) {
+    Write-Info "CLI verified on PATH: $ResolvedPawbotPath"
+    Write-Info "Run: pawbot webui"
+} elseif ($script:PawbotLauncher) {
+    Write-Info "CLI verified at: $script:PawbotLauncher"
+    if ($ResolvedPawbotPath) {
+        Write-Info "This shell currently resolves pawbot to: $ResolvedPawbotPath"
+    } else {
+        Write-Info "This shell does not include the launcher directory in PATH."
+    }
+    Write-Info "Run now: $(Get-PawbotCommand) webui"
+} else {
+    Write-Info "CLI verified through: $(Get-PawbotCommand)"
+    Write-Info "Run: $(Get-PawbotCommand) webui"
 }
 
 if ($env:PAWBOT_SKIP_WIZARD -eq "1") {

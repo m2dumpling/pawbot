@@ -101,6 +101,64 @@ jobs:
           uv pip install --python "$RUNNER_TEMP/pawbot-release-venv/bin/python" dist/*.whl
           "$RUNNER_TEMP/pawbot-release-venv/bin/pawbot" --help
 
+  installer-smoke:
+    name: Installer smoke / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Build a local wheel for the installer smoke test
+        shell: bash
+        env:
+          PAWBOT_SKIP_WEBUI_BUILD: "1"
+        run: uv build --wheel
+
+      - name: Run POSIX installer and verify launcher
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          PAWBOT_BIN_DIR: ${{ runner.temp }}/pawbot-bin
+          PAWBOT_NO_PATH_UPDATE: "1"
+          PAWBOT_SKIP_WIZARD: "1"
+        run: |
+          set -eu
+          sh -n scripts/install.sh
+          wheel="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          test -n "$wheel"
+          PAWBOT_INSTALL_TARGET="$wheel" sh scripts/install.sh
+          "$PAWBOT_BIN_DIR/pawbot" --version
+
+      - name: Run Windows installer and verify launcher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PAWBOT_BIN_DIR: ${{ runner.temp }}\pawbot-bin
+          PAWBOT_NO_PATH_UPDATE: "1"
+          PAWBOT_SKIP_WIZARD: "1"
+        run: |
+          $wheel = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          if (-not $wheel) { throw "No wheel was built" }
+          $env:PAWBOT_INSTALL_TARGET = $wheel
+          $scriptText = Get-Content scripts\install.ps1 -Raw
+          [scriptblock]::Create($scriptText) | Out-Null
+          & .\scripts\install.ps1
+          & (Join-Path $env:PAWBOT_BIN_DIR "pawbot.cmd") --version
+
   record-replay:
     name: Record & Replay fixture
     runs-on: ubuntu-latest

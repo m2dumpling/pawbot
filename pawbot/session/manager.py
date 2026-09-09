@@ -91,7 +91,7 @@ def _archive_offset(data: dict[str, Any]) -> int:
     return 0
 
 
-# TODO(0.3.2): Remove the write_stdin replay migration after 0.3.1.
+# TODO(0.3.3): Remove the write_stdin replay migration after 0.3.2.
 def _migrate_legacy_exec_arguments(container: dict[str, Any]) -> bool:
     raw_arguments = cast(object, container.get("arguments"))
     encoded = isinstance(raw_arguments, str)
