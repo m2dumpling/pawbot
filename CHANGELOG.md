@@ -3,6 +3,19 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.3.5 - 2026-09-10
+
+### Changed
+
+- Reworked the WebUI replay detail into a readable execution trace showing the
+  user request, provider-returned thinking, model decisions, tool calls,
+  tool-result previews, and final answer in order.
+- Kept long parameters and results collapsed behind their own event while
+  preserving a dedicated full-screen raw JSON/JSONL inspector.
+- Clarified that a green replay result is an offline orchestration regression
+  check under recorded inputs and observations, not a model-quality score or a
+  live tool/provider test.
+
 ## 0.3.4 - 2026-09-10
 
 ### Changed

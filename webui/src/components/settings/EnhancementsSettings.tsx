@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
+  Bot,
   Bug,
   CheckCircle2,
   ChevronDown,
@@ -12,12 +13,15 @@ import {
   Info,
   Loader2,
   Maximize2,
+  MessageSquare,
   PauseCircle,
   Play,
   Radio,
   RefreshCw,
   Square,
   Trash2,
+  UserRound,
+  Wrench,
   XCircle,
 } from "lucide-react";
 
@@ -93,6 +97,8 @@ function messageText(value: unknown): string {
   if (isRecord(value)) {
     if (value.content !== undefined) return messageText(value.content);
     if (value.text !== undefined) return messageText(value.text);
+    if (value.thinking !== undefined) return messageText(value.thinking);
+    if (value.reasoning !== undefined) return messageText(value.reasoning);
   }
   return value == null ? "" : formatJson(value);
 }
@@ -149,20 +155,204 @@ function summarizeTools(events: Array<Record<string, unknown>>): string {
   return visible.join(" · ");
 }
 
-function SummaryCard({
+function responseThinking(response: Record<string, unknown>): string {
+  const reasoning = response.reasoning_content;
+  if (typeof reasoning === "string" && reasoning.trim()) return reasoning;
+  if (response.thinking_blocks !== undefined) return messageText(response.thinking_blocks);
+  return "";
+}
+
+function responseToolNames(response: Record<string, unknown>): string[] {
+  if (!Array.isArray(response.tool_calls)) return [];
+  return response.tool_calls
+    .map((call) => {
+      if (!isRecord(call)) return "";
+      if (typeof call.name === "string") return call.name;
+      const functionCall = isRecord(call.function) ? call.function : null;
+      return functionCall && typeof functionCall.name === "string" ? functionCall.name : "";
+    })
+    .filter(Boolean);
+}
+
+function humanizeToolStatus(value: unknown): string {
+  switch (String(value ?? "").toLowerCase()) {
+    case "ok":
+      return "成功";
+    case "error":
+      return "失败";
+    case "blocked":
+      return "已拦截";
+    case "cancelled":
+    case "canceled":
+      return "已取消";
+    case "unknown":
+      return "状态不确定";
+    default:
+      return String(value ?? "未说明");
+  }
+}
+
+function displayValue(value: unknown): string {
+  return typeof value === "string" ? value : formatJson(value);
+}
+
+function InlineRecordPreview({
+  label,
+  value,
+  maxLength = 360,
+}: {
+  label: string;
+  value: unknown;
+  maxLength?: number;
+}) {
+  const fullText = displayValue(value);
+  const preview = compactText(fullText, maxLength);
+  const canExpand = fullText.trim().length > maxLength;
+  return (
+    <div className="min-w-0 rounded-lg border border-settings-border bg-background/70 px-3 py-2">
+      <div className="text-[11px] font-medium text-settings-muted">{label}</div>
+      <div className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-settings-foreground">
+        {preview}
+      </div>
+      {canExpand ? (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[11px] text-settings-muted">展开完整内容</summary>
+          <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-settings-hover/50 p-2 font-mono text-[11px] leading-5 text-settings-foreground">
+            {fullText}
+          </pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function ReplayTimelineEvent({
+  event,
+  index,
+}: {
+  event: Record<string, unknown>;
+  index: number;
+}) {
+  const isTool = event.kind === "tool";
+  const response = isRecord(event.response) ? event.response : null;
+  const iterationNumber = Number(event.iteration);
+  const iteration = Number.isFinite(iterationNumber) ? iterationNumber + 1 : null;
+  const thinking = response ? responseThinking(response) : "";
+  const toolNames = response ? responseToolNames(response) : [];
+  const content = response && typeof response.content === "string" ? response.content : "";
+  const toolStatus = humanizeToolStatus(event.status);
+  return (
+    <div className={`relative rounded-xl border p-3 ${isTool
+      ? "border-orange-200 bg-orange-50/45 dark:border-orange-900 dark:bg-orange-950/15"
+      : "border-blue-200 bg-blue-50/45 dark:border-blue-900 dark:bg-blue-950/15"}`}>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        {isTool ? (
+          <Wrench className="h-4 w-4 text-orange-600" />
+        ) : (
+          <Bot className="h-4 w-4 text-blue-600" />
+        )}
+        <span className="font-semibold text-settings-foreground">
+          {isTool ? "工具执行" : "模型决策"}
+        </span>
+        <span className="text-settings-muted">步骤 {index + 1}</span>
+        {isTool ? (
+          <span className="font-mono text-settings-foreground">{String(event.name ?? "未命名工具")}</span>
+        ) : (
+          <span className="text-settings-muted">
+            {iteration == null ? "未记录决策轮次" : `第 ${iteration} 次决策`}
+          </span>
+        )}
+        <span className={`ml-auto rounded-full px-2 py-0.5 text-[11px] ${isTool
+          ? event.status === "ok"
+            ? "bg-emerald-100 text-emerald-800"
+            : "bg-orange-100 text-orange-800"
+          : "bg-blue-100 text-blue-800"}`}>
+          {isTool ? toolStatus : humanizeStopReason(response?.finish_reason)}
+        </span>
+      </div>
+
+      {isTool ? (
+        <div className="mt-3 grid gap-2 lg:grid-cols-2">
+          <InlineRecordPreview label="传入参数" value={event.args} />
+          <InlineRecordPreview label="工具返回" value={event.result} maxLength={480} />
+          {event.detail ? (
+            <div className="lg:col-span-2 text-xs leading-5 text-settings-muted">{String(event.detail)}</div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mt-3 space-y-2">
+          {thinking ? (
+            <div className="rounded-lg border border-violet-200 bg-violet-50/80 px-3 py-2 dark:border-violet-900 dark:bg-violet-950/20">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-violet-800 dark:text-violet-200">
+                <MessageSquare className="h-3.5 w-3.5" />
+                模型思考记录
+              </div>
+              <div className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-settings-foreground">
+                {compactText(thinking, 720)}
+              </div>
+              {thinking.trim().length > 720 ? (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[11px] text-violet-800 dark:text-violet-200">展开完整思考记录</summary>
+                  <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-white/70 p-2 font-mono text-[11px] leading-5 text-settings-foreground dark:bg-black/20">
+                    {thinking}
+                  </pre>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
+          {toolNames.length > 0 ? (
+            <div className="rounded-lg border border-settings-border bg-background/70 px-3 py-2 text-xs text-settings-foreground">
+              <span className="font-medium">模型决定调用：</span>
+              <span className="ml-1 font-mono">{toolNames.join(" · ")}</span>
+            </div>
+          ) : null}
+          {content ? (
+            <div className="rounded-lg border border-settings-border bg-background/70 px-3 py-2">
+              <div className="text-[11px] font-medium text-settings-muted">模型输出</div>
+              <div className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-settings-foreground">
+                {compactText(content, 720)}
+              </div>
+              {content.trim().length > 720 ? (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[11px] text-settings-muted">展开完整模型输出</summary>
+                  <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-settings-hover/50 p-2 text-xs leading-5 text-settings-foreground">
+                    {content}
+                  </pre>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
+          {!thinking && toolNames.length === 0 && !content ? (
+            <div className="text-xs text-settings-muted">模型没有返回可展示文本，执行器继续处理下一步。</div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConversationCard({
+  icon,
   label,
   value,
   detail,
+  children,
 }: {
+  icon: "user" | "assistant";
   label: string;
-  value: string;
+  value?: string;
   detail?: string;
+  children?: ReactNode;
 }) {
   return (
-    <div className="min-w-0 rounded-xl border border-settings-border bg-background/70 p-3">
-      <div className="text-[11px] font-medium text-settings-muted">{label}</div>
-      <div className="mt-1 break-words text-sm leading-5 text-settings-foreground">{value}</div>
+    <div className="h-fit min-w-0 rounded-xl border border-settings-border bg-background/70 p-3">
+      <div className="flex items-center gap-2 text-[11px] font-medium text-settings-muted">
+        {icon === "user" ? <UserRound className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+        {label}
+      </div>
+      {value ? <div className="mt-2 whitespace-pre-wrap break-words text-sm leading-5 text-settings-foreground">{value}</div> : null}
       {detail ? <div className="mt-1 text-[11px] leading-4 text-settings-muted">{detail}</div> : null}
+      {children}
     </div>
   );
 }
@@ -180,7 +370,6 @@ function ReplayTurnSummary({
   const unknownSideEffects = Array.isArray(diagnostics.unknown_side_effects)
     ? diagnostics.unknown_side_effects
     : [];
-  const toolEvents = detail.events.filter((event) => event.kind === "tool");
   const userRequest = lastMessageText(turn.initial_messages, "user");
   const finalAnswer = typeof turn.final_content === "string" && turn.final_content.trim()
     ? turn.final_content
@@ -192,13 +381,13 @@ function ReplayTurnSummary({
   const statusDescription = hasProblems
     ? `${failedTools.length ? `${failedTools.length} 个工具调用失败` : ""}${failedTools.length && unknownSideEffects.length ? "；" : ""}${unknownSideEffects.length ? `${unknownSideEffects.length} 个工具的执行结果不确定` : ""}。请查看原始记录。`
     : detail.counts.tool_calls > 0
-      ? `Agent 调用了 ${summarizeTools(detail.events)}，然后生成最终回复。`
-      : "Agent 没有调用工具，直接生成了最终回复。";
+      ? `这次执行包含 ${summarizeTools(detail.events)}。`
+      : "这次任务没有调用工具，模型直接生成了最终回复。";
   return (
     <div className="space-y-4 border-t border-settings-border bg-settings-hover/25 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-sm font-semibold text-settings-foreground">本回合摘要</div>
+          <div className="text-sm font-semibold text-settings-foreground">本回合执行过程</div>
           <div className="mt-0.5 font-mono text-[11px] text-settings-muted">{detail.turn_id}</div>
         </div>
         {onFullscreen ? (
@@ -208,40 +397,73 @@ function ReplayTurnSummary({
           </Button>
         ) : null}
       </div>
-      <div className="grid gap-3 lg:grid-cols-2">
-        <SummaryCard
-          label="用户请求"
-          value={compactText(userRequest)}
+      <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+        <ConversationCard
+          icon="user"
+          label="用户消息"
+          value={compactText(userRequest, 360)}
           detail="这次任务开始时发送给 Agent 的内容"
         />
-        <SummaryCard
-          label="最终回复"
-          value={compactText(finalAnswer, 420)}
+        <ConversationCard
+          icon="assistant"
+          label="最终回答"
+          value={compactText(finalAnswer, 720)}
           detail="Agent 最后展示给用户的内容"
-        />
+        >
+          {finalAnswer.trim().length > 720 ? (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-[11px] text-settings-muted">展开完整回答</summary>
+              <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-settings-hover/50 p-2 text-xs leading-5 text-settings-foreground">
+                {finalAnswer}
+              </pre>
+            </details>
+          ) : null}
+        </ConversationCard>
       </div>
 
-      <div className="rounded-xl border border-settings-border bg-background/70 px-3 py-3">
-        <div className="text-[11px] font-medium text-settings-muted">执行概览</div>
-        <div className="mt-1 text-sm leading-6 text-settings-foreground">
-          用户请求 → 模型响应 {detail.counts.llm_responses} 次
-          {detail.counts.tool_calls > 0 ? ` → 工具调用 ${detail.counts.tool_calls} 次` : ""}
-          {" → 最终回复"}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded-full border border-settings-border bg-background/70 px-3 py-1 font-mono text-settings-foreground">
+          模型 · {String(turn.model ?? "未记录")}
+        </span>
+        <span className="rounded-full border border-settings-border bg-background/70 px-3 py-1 text-settings-foreground">
+          模型决策 · {detail.counts.llm_responses} 次
+        </span>
+        <span className="rounded-full border border-settings-border bg-background/70 px-3 py-1 text-settings-foreground">
+          工具执行 · {detail.counts.tool_calls} 次
+        </span>
+        <span className={`rounded-full border px-3 py-1 ${hasProblems
+          ? "border-amber-200 bg-amber-50 text-amber-800"
+          : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+          {statusLabel}
+        </span>
+      </div>
+
+      <div className="rounded-xl border border-settings-border bg-background/55 p-3">
+        <div className="flex items-start gap-2">
+          <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-settings-muted" />
+          <div>
+            <div className="text-sm font-semibold text-settings-foreground">Agent 实际经历的过程</div>
+            <div className="mt-1 text-xs leading-5 text-settings-muted">
+              下面按发生顺序展示模型思考记录、模型决策、工具调用和工具返回。长参数和返回值可以在事件内展开；完整原始 JSON 请点击上方按钮。
+            </div>
+          </div>
         </div>
-      </div>
-
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <SummaryCard label="使用模型" value={String(turn.model ?? "未记录")} />
-        <SummaryCard label="模型决策" value={`${detail.counts.llm_responses} 次`} detail="模型做了几次决策" />
-        <SummaryCard label="工具调用" value={`${detail.counts.tool_calls} 次`} detail={summarizeTools(toolEvents)} />
-        <SummaryCard label="执行结果" value={statusLabel} detail={statusDescription} />
+        <div className="mt-3 space-y-2">
+          {detail.events.length > 0 ? detail.events.map((event, index) => (
+            <ReplayTimelineEvent key={`${String(event.kind ?? "event")}-${index}`} event={event} index={index} />
+          )) : (
+            <div className="rounded-lg border border-dashed border-settings-border px-3 py-4 text-xs text-settings-muted">
+              这个回合没有单独的模型或工具事件记录，可能是旧格式样本。
+            </div>
+          )}
+        </div>
       </div>
 
       <div className={`rounded-xl border px-3 py-3 text-xs leading-5 ${hasProblems
         ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200"
         : "border-settings-border bg-background/70 text-settings-muted"}`}>
-        <div className="font-medium text-settings-foreground">这里先看结论</div>
-        <div className="mt-1">默认只展示本回合的重点。需要查看完整输入、每次模型响应、工具参数和返回值时，请点击上方“查看原始记录”。</div>
+        <div className="font-medium text-settings-foreground">本回合结果</div>
+        <div className="mt-1">{statusDescription} 回放只使用录制中的模型响应和工具结果，不会重新请求模型或执行真实工具。</div>
       </div>
     </div>
   );
@@ -614,7 +836,7 @@ export function EnhancementsSettings() {
                 这里检查的是当前代码能否重走原来的执行流程，不是模型回答质量评分。
               </p>
               <p className="mt-1 text-xs text-settings-muted">
-                点开一个回合先看摘要；需要完整 JSON 时，再点击“查看原始记录”。
+                点开一个回合查看完整的可读执行过程；需要完整 JSON 时，再点击“查看原始记录”。
               </p>
             </div>
           </div>
@@ -665,7 +887,7 @@ export function EnhancementsSettings() {
                       />
                     ) : detailLoading === row.turn_id ? (
                       <div className="border-t border-settings-border px-3 py-5 text-center text-xs text-settings-muted">
-                        正在读取这个回合的摘要…
+                        正在读取这个回合的执行过程…
                       </div>
                     ) : null}
                   </div>
@@ -703,7 +925,7 @@ export function EnhancementsSettings() {
           <DialogHeader className="shrink-0 border-b border-settings-border px-6 py-4 pr-14 text-left">
             <DialogTitle>回合原始记录</DialogTitle>
             <DialogDescription>
-              这是保存下来的完整数据，不做摘要；关闭窗口后返回回合摘要。
+              这是保存下来的完整数据，不做改写；关闭窗口后返回可读执行过程。
             </DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 overflow-hidden">

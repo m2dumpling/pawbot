@@ -110,7 +110,8 @@
       "advanced": "安全",
       "apps": "工具箱",
       "automations": "定时任务",
-      "skills": "指令包"
+      "skills": "指令包",
+      "enhancements": "录制与回放"
     },
     "sections": {
       "interface": "界面",

@@ -110,7 +110,8 @@
       "advanced": "Security",
       "apps": "Toolbox",
       "automations": "Scheduled tasks",
-      "skills": "Prompt packs"
+      "skills": "Prompt packs",
+      "enhancements": "Record & Replay"
     },
     "sections": {
       "interface": "Interface",

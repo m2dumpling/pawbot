@@ -31,18 +31,22 @@ that it can be diagnosed or deleted; it is not presented as a replayable sample.
 Deleting a recording removes its local prompt, response, tool-result, and
 optional HTTP cassette files.
 
-After replay, expand any turn in the report to inspect the raw execution rail:
+After replay, expand any turn in the WebUI to see a readable execution trace:
 
-- the original `initial_messages` context and tool schemas;
-- every recorded LLM response, including tool calls and finish reason;
-- every tool name, JSON argument, status/detail, and returned value;
-- every tool lifecycle state (`planned`, `running`, `succeeded`, `failed`,
-  `blocked`, or `unknown`) and whether a side effect may have occurred;
-- the final message envelope, usage, session, model, and optional HTTP cassette.
+- the user request and final answer;
+- model thinking when the provider actually returned a thinking field;
+- each model decision in order;
+- each tool call, its status, parameter preview, and result preview;
+- the execution outcome and the short reason for it.
+
+Long values can be expanded inside their event. Use **View raw record** for the
+full-screen developer inspector, which shows the complete turn envelope and
+the ordered `tools.jsonl` records without summarizing or rewriting their JSON.
 
 The green summary answers only whether the current orchestration reproduced the
-recorded observable behavior. The expanded detail is the debugging surface for
-answering *why* a turn changed.
+recorded observable behavior under fixed provider responses and tool
+observations. It is not a model-quality score, and the current live provider or
+tool implementation is not executed during replay.
 
 ## Commands
 

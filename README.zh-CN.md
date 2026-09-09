@@ -129,19 +129,19 @@ uv tool install --force --upgrade pawbot-ai; pawbot
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.4/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.5/scripts/install.sh | sh
 ```
 
 如果系统没有 `curl`，也可以使用 `wget`：
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.4/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.5/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.4/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.5/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
@@ -258,6 +258,11 @@ uv run pawbot replay .pawbot/blackbox/demo
 所有回合都会写入同一份样本。残缺样本会保留并显示原因，也可以直接在前端删除，
 不会等到回放时才报错。
 
+回放后，展开任意回合即可看到可读的执行过程：用户请求、Provider 实际返回的模型思考
+记录、模型决策、工具调用、工具返回预览和最终回答，并且按实际发生顺序排列。长参数和
+返回值可以在对应事件内展开；点击“查看原始记录”则会进入全屏窗口查看完整 JSON/JSONL。
+绿色结果只表示在录制输入和工具观测保持不变时没有发现可观察差异，不是模型质量评分。
+
 在指定迭代处暂停并查看重建后的消息：
 
 ```bash
@@ -309,7 +314,7 @@ Provider + ToolRegistry + MCP
 
 - [文档索引](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
-- [发布说明](docs/release-notes/0.3.4.md)
+- [发布说明](docs/release-notes/0.3.5.md)
 - [发布与 PyPI 指南](docs/publishing.md)
 - [变更记录](CHANGELOG.md)
 - [贡献指南](CONTRIBUTING.md)
