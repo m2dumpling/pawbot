@@ -10,6 +10,6 @@ Participants are expected to:
 - avoid harassment, personal attacks, discrimination, and doxxing;
 - protect private prompts, credentials, logs, and user data.
 
-Maintainers may remove comments, close issues, or reject contributions that do
-not meet these standards. For urgent safety or security concerns, follow
+Project administrators may remove comments, close issues, or reject contributions
+that do not meet these standards. For urgent safety or security concerns, follow
 [`SECURITY.md`](SECURITY.md).

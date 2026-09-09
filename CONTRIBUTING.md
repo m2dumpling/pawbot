@@ -10,14 +10,13 @@ needlessly complicated.
 This guide is not only about how to open a PR. It is also about how we hope to build
 software together: with care, clarity, and respect for the next person reading the code.
 
-## Maintainers
+## Project ownership
 
-Maintainers are community stewards who help review, organize, and maintain the project. The list below describes each maintainer's current open-source project responsibilities.
-
-| Maintainer | Role |
-|------------|------|
-| [@re-bin](https://github.com/re-bin) | Project lead; reviews community PRs and handles merges |
-| [@chengyongru](https://github.com/chengyongru) | Reviews community PRs and may approve them; merges are handled by the project lead |
+pawbot is an owner-led open-source project. The repository owner is responsible for
+release decisions, security coordination, and final review of changes. Community
+contributors are welcome to propose improvements through issues and pull requests;
+review responsibility may be delegated for a specific change without creating a
+permanent role roster.
 
 ## Contribution Flow
 

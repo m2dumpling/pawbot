@@ -212,7 +212,7 @@ If you suspect a security breach:
 3. **Check for unexpected file modifications**
 4. **Rotate all credentials**
 5. **Update to latest version**
-6. **Report the incident** to maintainers
+6. **Report the incident** through the project's private security contact
 
 ## Security Features
 
