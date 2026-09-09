@@ -129,19 +129,19 @@ uv tool install --force --upgrade pawbot-ai; pawbot
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.3/scripts/install.sh | sh
 ```
 
 如果系统没有 `curl`，也可以使用 `wget`：
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.3/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.3/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
@@ -150,12 +150,16 @@ iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/inst
 最小镜像缺少 `python3.x-venv`，安装会立即停止并给出准确的依赖安装命令，
 不会继续打印误导性的启动命令。安装成功后会执行 `pawbot --version`；如果
 启动器不在当前 Shell 的 `PATH` 中，会显示已验证的启动器路径和立即运行的
-命令。首次使用前，请在 **Settings → Models** 中配置 Provider 和模型。
+命令。首次使用前，请在 **Settings → Models** 中配置 Provider。Quick Start
+和 WebUI 会在输入凭证后探测兼容 Provider 的 `/models` 接口，自动选择可用
+模型，并用 pawbot 的能力表补全上下文长度和思考档位。如果接口不提供模型
+列表，界面仍会保留手动填写模型 ID 的入口。
 
 ### 从源码安装
 
-要求：Python 3.11+ 和 [uv](https://docs.astral.sh/uv/)。只有修改 WebUI 或
-TUI 时才需要 Bun。
+要求：Python 3.11+ 和 [uv](https://docs.astral.sh/uv/)。发布包第一次执行
+`pawbot agent` 时会按平台下载并校验原生 TUI；从源码开发 WebUI 或 TUI 时才
+需要 Bun。
 
 ```bash
 uv sync --all-extras --dev
@@ -178,8 +182,26 @@ uv run --no-sync python -m scripts.install_channel_dependencies --all-channels
 uv run pawbot webui
 ```
 
-在 **Settings → Models** 中配置 Provider 和模型，创建一个新对话并发送
-`Hello!`。首次启动默认只绑定本机地址。
+在 **Settings → Models** 中配置 Provider，pawbot 会优先探测可用模型；创建
+一个新对话并发送 `Hello!`。首次启动默认只绑定本机地址。
+
+如果 pawbot 运行在 Linux 服务器上，`127.0.0.1` 只代表服务器本机，外部
+电脑无法直接打开。需要远程访问时显式绑定所有网卡：
+
+```bash
+pawbot webui --host 0.0.0.0 --yes --no-open
+```
+
+然后在本地浏览器打开 `http://<服务器IP>:8765`，并填写服务器配置文件中的
+`channels.websocket.tokenIssueSecret`。只放行 WebUI 端口，默认 `18790` 的
+Gateway health 端口必须保持内网；公网使用前应加 HTTPS/reverse proxy。更
+安全的方式是使用 SSH 隧道：
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 <用户>@<服务器>
+```
+
+然后在本地打开 `http://127.0.0.1:8765`。
 
 ### CLI
 
@@ -287,7 +309,7 @@ Provider + ToolRegistry + MCP
 
 - [文档索引](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
-- [发布说明](docs/release-notes/0.3.2.md)
+- [发布说明](docs/release-notes/0.3.3.md)
 - [发布与 PyPI 指南](docs/publishing.md)
 - [变更记录](CHANGELOG.md)
 - [贡献指南](CONTRIBUTING.md)

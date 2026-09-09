@@ -1367,6 +1367,30 @@ def model_capability_for(provider_name: str, model: str) -> ProviderModelSpec | 
     return None
 
 
+def builtin_model_for(provider_name: str, model: str) -> ProviderModelSpec | None:
+    """Resolve a provider-owned built-in model before cross-provider matching.
+
+    Some OAuth providers intentionally expose model IDs that share a suffix
+    with another provider's model family (for example
+    ``openai-codex/gpt-5.6-sol`` and ``gpt-5.6-sol``).  Built-in catalogues are
+    authoritative for those provider-owned IDs and must not inherit the other
+    provider's context limit.
+    """
+    spec = find_by_name(provider_name) if provider_name else None
+    if spec is None:
+        return None
+    normalized_model = model.strip().lower().rstrip("/")
+    for candidate in spec.builtin_models:
+        normalized_candidate = candidate.id.strip().lower().rstrip("/")
+        if (
+            normalized_model == normalized_candidate
+            or normalized_model.endswith(f"/{normalized_candidate}")
+            or normalized_model.rsplit("/", 1)[-1] == normalized_candidate
+        ):
+            return candidate
+    return None
+
+
 LEGACY_CONTEXT_WINDOW_DEFAULTS: frozenset[int] = frozenset({128_000, 200_000})
 SAFE_UNKNOWN_CONTEXT_WINDOW = 200_000
 
@@ -1386,7 +1410,10 @@ def context_window_tokens_for(
     clamped for safety.
     """
     configured_value = configured if isinstance(configured, int) and configured > 0 else None
-    capability = model_capability_for(provider_name, model)
+    capability = builtin_model_for(provider_name, model) or model_capability_for(
+        provider_name,
+        model,
+    )
     known_limit = capability.context_window if capability is not None else None
     if known_limit is None:
         return configured_value or SAFE_UNKNOWN_CONTEXT_WINDOW
@@ -1415,7 +1442,8 @@ def reasoning_effort_values_for(provider_name: str, model: str) -> list[str]:
     implicit-reasoning models) plus per-model overrides, never hard-coded in
     the frontend.
     """
-    capability = model_capability_for(provider_name.strip(), model)
+    builtin = builtin_model_for(provider_name.strip(), model)
+    capability = builtin or model_capability_for(provider_name.strip(), model)
     if capability is not None and capability.reasoning_effort_values:
         return list(capability.reasoning_effort_values)
     if not provider_name.strip():

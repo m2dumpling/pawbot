@@ -46,6 +46,7 @@ __all__ = [
     "_open_webui_browser",
     "_prepare_webui_bundle_for_gateway",
     "_print_foreground_port_conflict",
+    "_print_webui_access_instructions",
     "_print_webui_foreground_lifecycle",
     "_resolve_webui_config_path",
     "_run_quick_start_for_webui",
@@ -274,13 +275,54 @@ def _webui_display_url(url: str) -> str:
     return f"{prefix}{marker}<redacted>"
 
 
+def _webui_url_host(host: str) -> str:
+    """Return a safe, user-facing host placeholder for a WebUI URL."""
+    normalized = host.strip()
+    if normalized in {"", "0.0.0.0"}:
+        return "<server-ip>"
+    if normalized == "::":
+        return "<server-ipv6>"
+    if ":" in normalized and not normalized.startswith("["):
+        return f"[{normalized}]"
+    return normalized
+
+
+def _print_webui_access_instructions(config: Config, config_path: Path) -> None:
+    """Explain how to reach a non-loopback WebUI without exposing its secret."""
+    ws_cfg = _webui_config_dict(config)
+    host = str(ws_cfg.get("host") or "127.0.0.1").strip()
+    if is_loopback_host(host):
+        return
+    port = int(ws_cfg.get("port") or 8765)
+    remote_host = _webui_url_host(host)
+    console.print()
+    console.print("[bold]Remote WebUI access[/bold]")
+    console.print(
+        f"  Open from another machine: [cyan]http://{remote_host}:{port}[/cyan]"
+    )
+    console.print(
+        "  Authentication: enter [cyan]channels.websocket.tokenIssueSecret[/cyan] "
+        f"from [cyan]{escape(str(config_path))}[/cyan] in the WebUI."
+    )
+    console.print(
+        "  Security: expose only this WebUI port on a trusted network; keep the "
+        "gateway health port on localhost and use HTTPS/reverse proxy for the public Internet."
+    )
+    console.print(
+        "  Private alternative: [cyan]ssh -N -L "
+        f"{port}:127.0.0.1:{port} <user>@<server>[/cyan], then open "
+        f"[cyan]http://127.0.0.1:{port}[/cyan] locally."
+    )
+
+
 def _ensure_local_webui_channel(
     config: Config,
     *,
     port: int | None,
+    host: str | None = None,
     yes: bool,
 ) -> tuple[bool, bool]:
-    """Enable the local WebUI channel with safe localhost defaults."""
+    """Enable the WebUI channel, keeping localhost safe unless host is explicit."""
     from pawbot.channels.websocket.runtime import WebSocketConfig
 
     current: Any = getattr(config.channels, "websocket", None) or {}
@@ -288,28 +330,39 @@ def _ensure_local_webui_channel(
     changed = False
     generated_secret = False
 
+    requested_host = host.strip() if host is not None else None
+    if requested_host == "":
+        raise ValueError("WebUI host must not be empty")
     needs_enable = not model.enabled
     needs_port = port is not None and model.port != port
+    needs_host = requested_host is not None and model.host != requested_host
     needs_secret = not model.token_issue_secret.strip() and not model.token.strip()
-    if not needs_enable and not needs_port and not needs_secret:
+    if not needs_enable and not needs_port and not needs_host and not needs_secret:
         return False, False
 
     target_port = port if port is not None else model.port
+    target_host = requested_host if requested_host is not None else model.host
     console.print()
-    console.print("[bold]Local WebUI setup[/bold]")
-    console.print(f"  URL: [cyan]http://127.0.0.1:{target_port}[/cyan]")
-    console.print("  Bind: [cyan]127.0.0.1 only[/cyan] (not exposed to your LAN)")
+    is_remote = not is_loopback_host(target_host)
+    console.print("[bold]WebUI setup[/bold]")
+    if is_remote:
+        console.print(
+            f"  Bind: [cyan]{escape(target_host)}:{target_port}[/cyan] "
+            "(remote access enabled explicitly)"
+        )
+    else:
+        console.print(f"  URL: [cyan]http://127.0.0.1:{target_port}[/cyan]")
+        console.print("  Bind: [cyan]127.0.0.1 only[/cyan] (not exposed to your LAN)")
     console.print("  Auth: generated WebUI bootstrap secret stored in config")
-    console.print(
-        "  LAN access requires an explicit host change plus a WebUI password in config."
-    )
-    _confirm_webui_action("Update the local WebUI channel in this config?", yes=yes)
+    if not is_remote:
+        console.print("  Remote access requires an explicit --host plus WebUI authentication.")
+    _confirm_webui_action("Update the WebUI channel in this config?", yes=yes)
 
     if not model.enabled:
         model.enabled = True
         changed = True
-    if model.host != "127.0.0.1":
-        model.host = "127.0.0.1"
+    if model.host != target_host:
+        model.host = target_host
         changed = True
     if port is not None and model.port != port:
         model.port = port

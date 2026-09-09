@@ -137,19 +137,19 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.3/scripts/install.sh | sh
 ```
 
 If `curl` is not available, use `wget` instead:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.3/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.2/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.3/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a
@@ -160,13 +160,18 @@ Before creating the fallback environment it verifies that Python's `venv` and
 does not print a misleading startup command. On success it runs
 `pawbot --version`; if the launcher is not on the current shell's `PATH`, it
 prints the verified launcher path and the command to use now. Configure the
-first Provider and model in **Settings → Models** before sending your first
-task.
+first Provider in **Settings → Models** before sending your first task. Quick
+Start and the WebUI probe a compatible provider's `/models` endpoint after
+credentials are entered, then enrich returned models with pawbot's capability
+table (context window and reasoning levels). If an endpoint does not publish a
+model list, the UI keeps manual model entry available.
 
 ### From a source checkout
 
-Requirements: Python 3.11+ and [uv](https://docs.astral.sh/uv/). Bun is only
-needed when developing the WebUI or TUI.
+Requirements: Python 3.11+ and [uv](https://docs.astral.sh/uv/). Released
+packages download a checksum-verified native TUI for the current platform on
+the first `pawbot agent` launch; Bun is only needed when developing from a
+source checkout.
 
 ```bash
 uv sync --all-extras --dev
@@ -189,9 +194,28 @@ The browser workspace is the easiest first run:
 uv run pawbot webui
 ```
 
-Configure your first provider and model in **Settings → Models**, start a new
-conversation, and send `Hello!`. The first-run WebUI binds to localhost by
-default.
+Configure your first provider in **Settings → Models**; the model picker loads
+available models after credentials are saved. Start a new conversation and send
+`Hello!`. The first-run WebUI binds to localhost by default.
+
+On a Linux server, localhost is intentionally private to the server. Bind the
+WebUI explicitly when you need to open it from another machine:
+
+```bash
+pawbot webui --host 0.0.0.0 --yes --no-open
+```
+
+Then open `http://<server-ip>:8765` and enter the
+`channels.websocket.tokenIssueSecret` value from the server's config file. Keep
+the gateway health port (`18790` by default) private, allow only the WebUI port
+through the firewall, and use HTTPS/reverse proxy before exposing it to the
+public Internet. For a private setup, use an SSH tunnel instead:
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 <user>@<server>
+```
+
+Then open `http://127.0.0.1:8765` on your own computer.
 
 ### CLI
 
@@ -307,7 +331,7 @@ The core source is organized around:
 
 - [Documentation index](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
-- [Release notes](docs/release-notes/0.3.2.md)
+- [Release notes](docs/release-notes/0.3.3.md)
 - [Publishing guide](docs/publishing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)

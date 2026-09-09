@@ -596,6 +596,32 @@ def test_release_tui_is_verified_and_cached(
     assert len(downloads) == 2
 
 
+def test_release_tui_uses_the_public_release_base_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    asset = "pawbot-tui-linux-x64"
+    archive, checksum = _release_archive(asset)
+    downloads: list[str] = []
+
+    def read_asset(url: str, *, max_bytes: int) -> bytes:
+        downloads.append(url)
+        return checksum if url.endswith(".sha256") else archive
+
+    monkeypatch.delenv("PAWBOT_TUI_RELEASE_BASE_URL", raising=False)
+    monkeypatch.setattr("pawbot.cli.tui_launcher.__version__", "9.9.9")
+    monkeypatch.setattr("pawbot.cli.tui_launcher.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("pawbot.cli.tui_launcher._read_release_asset", read_asset)
+
+    assert _download_release_tui(asset) == tmp_path / "bin" / "tui" / "9.9.9" / asset
+    assert downloads == [
+        "https://github.com/m2dumpling/pawbot/releases/download/v9.9.9/"
+        "pawbot-tui-linux-x64.zip.sha256",
+        "https://github.com/m2dumpling/pawbot/releases/download/v9.9.9/"
+        "pawbot-tui-linux-x64.zip",
+    ]
+
+
 def test_release_tui_replaces_a_corrupted_cached_binary(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

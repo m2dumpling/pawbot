@@ -2259,6 +2259,44 @@ def test_webui_yes_creates_config_and_enables_local_websocket(
     assert "stop_timeout" not in seen
 
 
+def test_webui_host_option_enables_explicit_remote_access(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "instance" / "config.json"
+    seen: dict[str, object] = {}
+    _patch_webui_provider_ready(monkeypatch)
+    _patch_gateway_ports_free(monkeypatch)
+    monkeypatch.setattr("pawbot.cli.webui.sync_workspace_templates", lambda _path: None)
+    _patch_webui_managed_gateway(monkeypatch, seen)
+
+    result = runner.invoke(
+        app,
+        [
+            "webui",
+            "--config",
+            str(config_file),
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8899",
+            "--yes",
+            "--no-open",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(config_file.read_text(encoding="utf-8"))
+    websocket = data["channels"]["websocket"]
+    assert websocket["host"] == "0.0.0.0"
+    assert websocket["port"] == 8899
+    assert websocket["websocketRequiresToken"] is True
+    compact_output = re.sub(r"\s+", " ", _strip_ansi(result.stdout))
+    assert "Remote WebUI access" in compact_output
+    assert "http://<server-ip>:8899" in compact_output
+    assert "gateway health port on localhost" in compact_output
+
+
 def test_webui_background_points_to_the_single_persistent_gateway_command(
     tmp_path: Path,
 ) -> None:

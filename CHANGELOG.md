@@ -3,6 +3,20 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.3.3 - 2026-09-09
+
+### Fixed
+
+- Published checksum-verified native TUI archives for the supported desktop and
+  server platforms; packaged installs now download the matching client instead
+  of failing with a missing-archive message.
+- Made Quick Start discover models from a configured compatible provider and
+  apply the shared context-window and reasoning-capability metadata to the
+  generated preset, with manual entry retained for unsupported catalogues.
+- Added explicit remote WebUI binding with safe authentication and operator
+  guidance; localhost remains the default.
+- Re-enabled registry-backed terminal model autocomplete and recommendations.
+
 ## 0.3.2 - 2026-09-09
 
 ### Fixed

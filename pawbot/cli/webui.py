@@ -26,6 +26,7 @@ from pawbot.cli.webui_support import (
     _open_webui_browser,
     _prepare_webui_bundle_for_gateway,
     _print_foreground_port_conflict,
+    _print_webui_access_instructions,
     _resolve_webui_config_path,
     _run_quick_start_for_webui,
     _tcp_endpoint_reachable,
@@ -72,6 +73,11 @@ def _wait_with_existing_foreground_gateway(
 
 def webui(
     port: int | None = typer.Option(None, "--port", "-p", help="WebUI port"),
+    host: str | None = typer.Option(
+        None,
+        "--host",
+        help="WebUI bind host; use 0.0.0.0 on a server for remote access",
+    ),
     gateway_port: int | None = typer.Option(
         None,
         "--gateway-port",
@@ -97,7 +103,7 @@ def webui(
         help="Apply safe local WebUI defaults without prompting",
     ),
 ) -> None:
-    """Prepare the local WebUI, start the gateway, and open the browser workbench."""
+    """Prepare the WebUI, start the gateway, and open the browser workbench."""
     from pawbot.config.loader import resolve_config_env_vars, save_config
     from pawbot.gateway import (
         GatewayClientLease,
@@ -161,6 +167,7 @@ def webui(
         changed_webui, generated_bootstrap_secret = _ensure_local_webui_channel(
             setup_config,
             port=port,
+            host=host,
             yes=yes,
         )
         _warn_webui_bind_scope(setup_config)
@@ -197,6 +204,7 @@ def webui(
         console.print(f"WebUI gateway: [cyan]{_webui_display_url(webui_url)}[/cyan]")
     else:
         console.print(f"WebUI: [cyan]{_webui_display_url(webui_url)}[/cyan]")
+    _print_webui_access_instructions(setup_config, config_path)
     gateway_health_url = _gateway_health_url(
         runtime_config.gateway.host,
         effective_gateway_port,

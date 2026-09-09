@@ -63,6 +63,7 @@ _TUI_RELEASE_LIMITS = {
     "pawbot-tui-source.tar.gz": 20 * 1024 * 1024,
     "MANIFEST.sha256": 64 * 1024,
 }
+_DEFAULT_TUI_RELEASE_BASE_URL = "https://github.com/m2dumpling/pawbot/releases/download"
 # Keep in sync with TUI_DETACH_EXIT_CODE in tui/src/index.ts.
 _TUI_DETACH_EXIT_CODE = 90
 _GATEWAY_READY_TIMEOUT_S = 20.0
@@ -254,9 +255,10 @@ def _download_release_tui(asset: str) -> Path | None:
     if not version or version.endswith((".dev0", "+dev")):
         return None
 
-    release_base = os.environ.get("PAWBOT_TUI_RELEASE_BASE_URL", "").strip().rstrip("/")
-    if not release_base:
-        return None
+    release_base = (
+        os.environ.get("PAWBOT_TUI_RELEASE_BASE_URL", "").strip().rstrip("/")
+        or _DEFAULT_TUI_RELEASE_BASE_URL
+    )
 
     target_dir = get_data_dir() / "bin" / "tui" / version
     cached = _cached_release_tui(target_dir, asset)

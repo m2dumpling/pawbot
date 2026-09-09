@@ -22,6 +22,14 @@ def test_capability_lookup_matches_gateway_model_ids() -> None:
     ) == 1_048_576
 
 
+def test_provider_owned_builtin_model_keeps_its_own_context_limit() -> None:
+    assert context_window_tokens_for(
+        "openai_codex",
+        "openai-codex/gpt-5.6-sol",
+        200_000,
+    ) == 372_000
+
+
 def test_mainstream_model_families_are_in_the_registry() -> None:
     assert model_capability_for("openai", "gpt-5.5").context_window == 1_050_000
     assert model_capability_for("dashscope", "qwen3.5-plus").context_window == 1_000_000

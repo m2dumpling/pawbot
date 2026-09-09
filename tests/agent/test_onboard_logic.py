@@ -8,6 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import httpx
+import pytest
 from pydantic import BaseModel, Field
 
 from pawbot.cli import onboard as onboard_wizard
@@ -905,6 +907,14 @@ class TestMainMenuUpdate:
         assert "[S] Save and Exit" in dirty_choices
         assert "[X] Exit Without Saving" in dirty_choices
 
+    @pytest.fixture(autouse=True)
+    def block_live_model_discovery(self, monkeypatch):
+        """Keep onboarding tests deterministic and independent of provider uptime."""
+        def fail_model_probe(*_args, **_kwargs):
+            raise RuntimeError("live provider discovery is disabled in unit tests")
+
+        monkeypatch.setattr(httpx, "get", fail_model_probe)
+
     def test_run_onboard_quick_start_edit(self, monkeypatch):
         """run_onboard should route [Q] to Quick Start."""
         initial_config = Config()
@@ -1034,12 +1044,11 @@ class TestMainMenuUpdate:
         assert onboard_wizard._configure_quick_start_provider(config) is True
 
         assert oauth_calls == [(config, "openai_codex")]
-        assert model_prompts == [
-            ("Model ID", "openai-codex/gpt-5.6-sol", "openai_codex")
-        ]
+        assert model_prompts == []
         assert config.providers.openai_codex.api_key is None
         assert config.model_presets["primary"].provider == "openai_codex"
         assert config.model_presets["primary"].model == "openai-codex/gpt-5.6-sol"
+        assert config.model_presets["primary"].context_window_tokens == 372_000
 
     def test_quick_start_openai_codex_login_failure_does_not_create_preset(self, monkeypatch):
         """A failed Codex login must not leave a ready-looking model preset."""
@@ -1267,6 +1276,34 @@ class TestMainMenuUpdate:
         assert websocket["enabled"] is True
         assert websocket["websocketRequiresToken"] is True
         assert websocket["tokenIssueSecret"] == "webui-secret"
+
+    def test_quick_start_discovers_model_and_capabilities_from_provider(self, monkeypatch):
+        """A successful /models response should remove the manual model step."""
+        config = Config()
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"data": [{"id": "deepseek-v4-flash"}]}
+
+        monkeypatch.setattr(onboard_wizard, "_show_quick_start_progress", lambda *_args: None)
+        monkeypatch.setattr(onboard_wizard, "_select_with_back", lambda *a, **kw: "DeepSeek")
+        monkeypatch.setattr(onboard_wizard, "_input_text", lambda *a, **kw: "sk-ds-test")
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: FakeResponse())
+        monkeypatch.setattr(
+            onboard_wizard,
+            "_input_model_with_autocomplete",
+            lambda *a, **kw: pytest.fail("model input should be skipped after discovery"),
+        )
+
+        assert onboard_wizard._configure_quick_start_provider(config) is True
+
+        preset = config.model_presets["primary"]
+        assert preset.model == "deepseek-v4-flash"
+        assert preset.provider == "deepseek"
+        assert preset.context_window_tokens == 1_048_576
 
     def test_quick_start_provider_menu_escape_returns_back(self, monkeypatch):
         """Esc from the first Quick Start menu should return to the main menu."""

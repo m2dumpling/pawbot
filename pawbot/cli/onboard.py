@@ -1591,11 +1591,27 @@ def _pause(message: str = "Press Enter to continue...") -> None:
 # --- Quick Start ---
 
 
-def _set_primary_quick_start_preset(config: Config, provider_name: str, model: str) -> None:
-    """Store the primary preset used by Quick Start."""
+def _set_primary_quick_start_preset(
+    config: Config,
+    provider_name: str,
+    model: str,
+    *,
+    context_window_tokens: int | None = None,
+) -> None:
+    """Store the primary preset used by Quick Start.
+
+    The registry is also consulted here as a final safety net.  This means a
+    known model such as DeepSeek V4 keeps its real 1M context window even when
+    the provider's ``/models`` response does not expose capability metadata.
+    """
+    if context_window_tokens is None:
+        from pawbot.providers.registry import context_window_tokens_for
+
+        context_window_tokens = context_window_tokens_for(provider_name, model)
     config.model_presets["primary"] = ModelPresetConfig(
         model=model,
         provider=provider_name,
+        context_window_tokens=context_window_tokens,
     )
     config.agents.defaults.model_preset = "primary"
     _sync_preset_cache(config)
@@ -1736,6 +1752,229 @@ def _quick_start_requires_base_url(provider_name: str, info: _QuickStartProvider
     )
 
 
+def _quick_start_model_id_matches(model: str, candidate: str) -> bool:
+    """Match an API model row to a preferred or curated model ID."""
+    normalized_model = model.strip().lower().rstrip("/")
+    normalized_candidate = candidate.strip().lower().rstrip("/")
+    return bool(
+        normalized_model
+        and normalized_candidate
+        and (
+            normalized_model == normalized_candidate
+            or normalized_model.endswith(f"/{normalized_candidate}")
+            or normalized_model.rsplit("/", 1)[-1] == normalized_candidate
+        )
+    )
+
+
+def _quick_start_select_model_row(
+    provider_name: str,
+    rows: list[dict[str, Any]],
+    preferred_model: str,
+) -> dict[str, Any] | None:
+    """Choose a stable model from a provider response.
+
+    A provider's own default wins first.  If it has no default, prefer a row
+    that is known by the shared capability registry; otherwise preserve the
+    provider's response order rather than inventing a model ID that the
+    account may not support.
+    """
+    if preferred_model:
+        preferred = next(
+            (
+                row
+                for row in rows
+                if isinstance(row.get("id"), str)
+                and _quick_start_model_id_matches(str(row["id"]), preferred_model)
+            ),
+            None,
+        )
+        if preferred is not None:
+            return preferred
+
+    from pawbot.providers.registry import model_capability_for
+
+    known = next(
+        (
+            row
+            for row in rows
+            if isinstance(row.get("id"), str)
+            and model_capability_for(provider_name, str(row["id"])) is not None
+        ),
+        None,
+    )
+    return known or (rows[0] if rows else None)
+
+
+def _quick_start_discover_model(
+    config: Config,
+    provider_name: str,
+    provider_info: _QuickStartProviderInfo | None,
+    *,
+    api_key: str | None,
+    api_base: str,
+) -> tuple[str, dict[str, Any]] | None:
+    """Probe a configured provider once and select an available model.
+
+    The probe uses the same settings-domain implementation as the WebUI, so
+    authentication headers, provider-specific ``/models`` paths and registry
+    capability enrichment stay consistent across clients.  The input config
+    is copied: a failed probe never leaves a half-written credential behind in
+    the onboarding draft.
+    """
+    if provider_info and provider_info.is_oauth and provider_info.default_model:
+        model = provider_info.default_model
+        from pawbot.providers.registry import find_by_name
+
+        spec = find_by_name(provider_name)
+        builtin_model = next(
+            (
+                candidate
+                for candidate in (spec.builtin_models if spec is not None else ())
+                if _quick_start_model_id_matches(model, candidate.id)
+            ),
+            None,
+        )
+        context_window = (
+            builtin_model.context_window
+            if builtin_model is not None and builtin_model.context_window
+            else 200_000
+        )
+        reasoning_values = (
+            list(builtin_model.reasoning_effort_values)
+            if builtin_model is not None
+            else []
+        )
+        return model, {
+            "source": "built-in catalogue",
+            "model_count": 1,
+            "context_window": context_window,
+            "reasoning_effort_values": reasoning_values,
+        }
+
+    probe_config = config.model_copy(deep=True)
+    provider_config = getattr(probe_config.providers, provider_name, None)
+    if provider_config is None:
+        return None
+    if api_key is not None:
+        provider_config.api_key = api_key
+    if api_base:
+        provider_config.api_base = api_base
+
+    try:
+        import httpx
+
+        from pawbot.webui.settings_models import provider_models_payload
+
+        payload = provider_models_payload(
+            probe_config,
+            {"provider": [provider_name]},
+            http_get=httpx.get,
+        )
+    except Exception:
+        # Provider endpoints are user-controlled and may be offline, private,
+        # or incompatible.  This is a normal fallback to manual model entry,
+        # not a fatal onboarding error.
+        logger.debug("Quick Start model discovery failed for provider {}", provider_name)
+        return None
+
+    raw_rows: object = payload.get("models")
+    if payload.get("status") != "available" or not isinstance(raw_rows, list):
+        return None
+    rows: list[dict[str, Any]] = []
+    for raw_row in cast(list[object], raw_rows):
+        if not isinstance(raw_row, dict):
+            continue
+        row = cast(dict[str, Any], raw_row)
+        if isinstance(row.get("id"), str) and str(row["id"]).strip():
+            rows.append(row)
+    selected = _quick_start_select_model_row(
+        provider_name,
+        rows,
+        provider_info.default_model if provider_info else "",
+    )
+    if selected is None:
+        return None
+
+    model = str(selected["id"]).strip()
+    from pawbot.providers.registry import context_window_tokens_for, reasoning_effort_values_for
+
+    raw_context = selected.get("context_window")
+    context_window = (
+        raw_context
+        if isinstance(raw_context, int) and not isinstance(raw_context, bool) and raw_context > 0
+        else context_window_tokens_for(provider_name, model)
+    )
+    raw_efforts = selected.get("reasoning_effort_values")
+    if isinstance(raw_efforts, (list, tuple)):
+        efforts: list[str] = [str(value) for value in cast(list[Any] | tuple[Any, ...], raw_efforts)]
+    else:
+        efforts = reasoning_effort_values_for(provider_name, model)
+    return model, {
+        "source": "provider /models",
+        "model_count": len(rows),
+        "context_window": context_window,
+        "reasoning_effort_values": efforts,
+    }
+
+
+def _quick_start_model_input(
+    config: Config,
+    provider_name: str,
+    provider_info: _QuickStartProviderInfo | None,
+    provider_display: str,
+    *,
+    api_key: str | None,
+    api_base: str,
+) -> tuple[str | None | object, dict[str, Any]]:
+    """Use discovery first and keep manual entry as an explicit fallback."""
+    discovered = _quick_start_discover_model(
+        config,
+        provider_name,
+        provider_info,
+        api_key=api_key,
+        api_base=api_base,
+    )
+    if discovered is not None:
+        model, metadata = discovered
+        count = metadata.get("model_count")
+        source = str(metadata.get("source") or "provider catalogue")
+        console.print(
+            f"[{_UI_SUCCESS}]✓ Detected {count} available model(s) from {source}; "
+            f"selected {model}[/]"
+        )
+        context_window = metadata.get("context_window")
+        if isinstance(context_window, int) and context_window > 0:
+            raw_efforts = metadata.get("reasoning_effort_values")
+            efforts: list[str] = (
+                [str(value) for value in cast(list[Any] | tuple[Any, ...], raw_efforts)]
+                if isinstance(raw_efforts, (list, tuple))
+                else []
+            )
+            effort_text = ", ".join(
+                "default" if not str(value) else str(value) for value in efforts
+            )
+            suffix = f" · reasoning: {effort_text}" if effort_text else ""
+            console.print(
+                f"[{_UI_MUTED}]Context window: {format_token_count(context_window)} tokens"
+                f"{suffix}[/]"
+            )
+        return model, metadata
+
+    console.print(
+        f"[{_UI_MUTED}]No usable model list was returned by {provider_display}; "
+        "enter a model ID manually.[/]"
+    )
+    return (
+        _input_model_with_autocomplete(
+            "Model ID",
+            provider_info.default_model if provider_info else "",
+            provider_name,
+        ),
+        {},
+    )
+
+
 def _select_quick_start_api_base(
     provider_name: str,
     provider_display: str,
@@ -1837,10 +2076,13 @@ def _configure_quick_start_provider(config: Config) -> bool | object:
             console.print(f"[red]Unknown provider: {provider_name}[/red]")
             return False
 
-        model = _input_model_with_autocomplete(
-            "Model ID",
-            provider_info.default_model if provider_info else "",
+        model, model_metadata = _quick_start_model_input(
+            config,
             provider_name,
+            provider_info,
+            answer,
+            api_key=api_key,
+            api_base=api_base,
         )
         if model is _BACK_PRESSED:
             continue
@@ -1865,6 +2107,11 @@ def _configure_quick_start_provider(config: Config) -> bool | object:
             config,
             provider_name,
             model,
+            context_window_tokens=(
+                model_metadata.get("context_window")
+                if isinstance(model_metadata.get("context_window"), int)
+                else None
+            ),
         )
         return True
 
@@ -1953,7 +2200,7 @@ def _configure_quick_start(config: Config) -> bool:
     console.clear()
     _show_section_header(
         "Quick Start",
-        "Choose provider endpoint, add credentials and model, then enable the local WebUI channel.",
+        "Choose a provider, add credentials, let pawbot find a model, then enable the local WebUI channel.",
     )
     draft = config.model_copy(deep=True)
     provider_result = _configure_quick_start_provider(draft)
