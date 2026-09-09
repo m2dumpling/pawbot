@@ -45,7 +45,7 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
     if not turns_path.exists():
         return {
             "status": "invalid",
-            "message": "录制文件缺失，无法回放",
+            "message": "找不到录制文件，无法检查",
             "turns": 0,
         }
 
@@ -96,18 +96,18 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
     if malformed_lines:
         return {
             "status": "invalid",
-            "message": "录制文件格式损坏，无法回放",
+            "message": "录制文件格式有问题，无法检查",
             "turns": valid_turns,
         }
     if valid_turns == 0:
         return {
             "status": "invalid",
-            "message": "没有有效的 Turn 记录，无法回放",
+        "message": "没有找到有效的任务记录，无法检查",
             "turns": 0,
         }
     return {
         "status": "ready",
-        "message": "可回放",
+        "message": "记录完整",
         "turns": valid_turns,
     }
 
@@ -326,7 +326,7 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         raise BlackboxActionError(
             422,
-            f"这个录制无法回放：{exc}",
+            f"这个样本无法检查：{exc}",
         ) from exc
     if not controller.turns:
         raise BlackboxActionError(404, f"no recorded turns in {directory!r}")
@@ -347,9 +347,9 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
             "ok": ok,
             "diffs": _json_safe(diffs),
             "summary": (
-                "可见回答、工具调用和消息结构一致"
+                "未发现可观察差异"
                 if ok
-                else f"发现 {len(diffs)} 处可观察差异，请展开查看"
+                else f"当前执行与原样本有 {len(diffs)} 处差异"
             ),
         }
         for turn_id, ok, diffs in results
@@ -362,9 +362,9 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
         "deterministic_turns": deterministic,
         "all_deterministic": total > 0 and deterministic == total,
         "summary": (
-            f"{deterministic}/{total} 个回合的可观察行为一致"
+            f"{deterministic}/{total} 个回合未发现可观察差异"
             if total
-            else "没有可回放的回合"
+            else "没有可以检查的回合"
         ),
         "results": rows,
     }

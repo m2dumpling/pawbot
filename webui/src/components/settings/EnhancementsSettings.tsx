@@ -67,7 +67,7 @@ function StatCard({
 }
 
 function recordingStatusLabel(recording: BlackboxRecording): string {
-  return recording.status === "ready" ? "可回放" : "文件不完整";
+  return recording.status === "ready" ? "记录完整" : "记录不完整";
 }
 
 function recordingStatusClass(recording: BlackboxRecording): string {
@@ -85,53 +85,89 @@ function formatJson(value: unknown): string {
   return result === undefined ? String(value) : result;
 }
 
-function RawJsonBlock({
-  title,
-  value,
-  open = false,
-}: {
-  title: string;
-  value: unknown;
-  open?: boolean;
-}) {
-  return (
-    <details open={open} className="rounded-lg border border-settings-border bg-background/70">
-      <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-settings-foreground">
-        {title}
-      </summary>
-      <pre className="max-h-[28rem] overflow-auto border-t border-settings-border px-3 py-3 font-mono text-[11px] leading-5 text-settings-foreground">
-        {formatJson(value)}
-      </pre>
-    </details>
-  );
+function messageText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value.map(messageText).filter(Boolean).join("\n");
+  }
+  if (isRecord(value)) {
+    if (value.content !== undefined) return messageText(value.content);
+    if (value.text !== undefined) return messageText(value.text);
+  }
+  return value == null ? "" : formatJson(value);
 }
 
-function RailCard({
-  title,
-  source,
-  description,
+function lastMessageText(messages: unknown, role: string): string {
+  if (!Array.isArray(messages)) return "";
+  for (const message of [...messages].reverse()) {
+    if (!isRecord(message) || message.role !== role) continue;
+    const content = messageText(message.content);
+    if (content.trim()) return content;
+  }
+  return "";
+}
+
+function compactText(value: string, maxLength = 320): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "未记录";
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength).trimEnd()}…`
+    : normalized;
+}
+
+function humanizeStopReason(value: unknown): string {
+  const reason = String(value ?? "").toLowerCase();
+  switch (reason) {
+    case "completed":
+    case "stop":
+      return "正常完成";
+    case "tool_calls":
+      return "等待工具结果";
+    case "max_iterations":
+      return "达到执行上限";
+    case "cancelled":
+    case "canceled":
+      return "已取消";
+    case "error":
+      return "执行出错";
+    default:
+      return reason && reason !== "unknown" ? reason : "未说明";
+  }
+}
+
+function summarizeTools(events: Array<Record<string, unknown>>): string {
+  const counts = new Map<string, number>();
+  for (const event of events) {
+    if (event.kind !== "tool") continue;
+    const name = String(event.name ?? "未命名工具");
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  if (counts.size === 0) return "未调用工具";
+  const entries = [...counts.entries()];
+  const visible = entries.slice(0, 4).map(([name, count]) => `${name} × ${count}`);
+  if (entries.length > visible.length) visible.push(`另有 ${entries.length - visible.length} 种`);
+  return visible.join(" · ");
+}
+
+function SummaryCard({
+  label,
   value,
-  muted = false,
+  detail,
 }: {
-  title: string;
-  source: string;
-  description: string;
+  label: string;
   value: string;
-  muted?: boolean;
+  detail?: string;
 }) {
   return (
-    <div className={`rounded-lg border px-3 py-3 ${muted ? "border-settings-border bg-settings-hover/30" : "border-settings-border bg-background/70"}`}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-semibold text-settings-foreground">{title}</span>
-        <span className="text-[11px] text-settings-muted">{value}</span>
-      </div>
-      <div className="mt-1 text-[11px] leading-4 text-settings-muted">{description}</div>
-      <div className="mt-2 font-mono text-[10px] text-settings-muted">{source}</div>
+    <div className="min-w-0 rounded-xl border border-settings-border bg-background/70 p-3">
+      <div className="text-[11px] font-medium text-settings-muted">{label}</div>
+      <div className="mt-1 break-words text-sm leading-5 text-settings-foreground">{value}</div>
+      {detail ? <div className="mt-1 text-[11px] leading-4 text-settings-muted">{detail}</div> : null}
     </div>
   );
 }
 
-function ReplayTurnDetail({
+function ReplayTurnSummary({
   detail,
   onFullscreen,
 }: {
@@ -139,194 +175,122 @@ function ReplayTurnDetail({
   onFullscreen?: () => void;
 }) {
   const turn = detail.turn;
-  const usage = isRecord(turn.usage) ? turn.usage : null;
   const diagnostics = isRecord(detail.diagnostics) ? detail.diagnostics : {};
   const failedTools = Array.isArray(diagnostics.failed_tools) ? diagnostics.failed_tools : [];
   const unknownSideEffects = Array.isArray(diagnostics.unknown_side_effects)
     ? diagnostics.unknown_side_effects
     : [];
+  const toolEvents = detail.events.filter((event) => event.kind === "tool");
+  const userRequest = lastMessageText(turn.initial_messages, "user");
+  const finalAnswer = typeof turn.final_content === "string" && turn.final_content.trim()
+    ? turn.final_content
+    : lastMessageText(turn.final_messages, "assistant");
+  const hasProblems = failedTools.length > 0 || unknownSideEffects.length > 0;
+  const statusLabel = hasProblems
+    ? "需要关注"
+    : humanizeStopReason(diagnostics.stop_reason ?? turn.stop_reason);
+  const statusDescription = hasProblems
+    ? `${failedTools.length ? `${failedTools.length} 个工具调用失败` : ""}${failedTools.length && unknownSideEffects.length ? "；" : ""}${unknownSideEffects.length ? `${unknownSideEffects.length} 个工具的执行结果不确定` : ""}。请查看原始记录。`
+    : detail.counts.tool_calls > 0
+      ? `Agent 调用了 ${summarizeTools(detail.events)}，然后生成最终回复。`
+      : "Agent 没有调用工具，直接生成了最终回复。";
   return (
-    <div className="space-y-3 border-t border-settings-border bg-settings-hover/35 p-3">
+    <div className="space-y-4 border-t border-settings-border bg-settings-hover/25 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-sm font-semibold text-settings-foreground">回合详情</div>
+          <div className="text-sm font-semibold text-settings-foreground">本回合摘要</div>
           <div className="mt-0.5 font-mono text-[11px] text-settings-muted">{detail.turn_id}</div>
         </div>
         {onFullscreen ? (
           <Button type="button" variant="outline" size="sm" onClick={onFullscreen}>
             <Maximize2 className="mr-1.5 h-3.5 w-3.5" />
-            全屏查看
+            查看原始记录
           </Button>
         ) : null}
       </div>
-      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200">
-        下面是录制时保存的原始数据。回放不会重新请求模型，而是按这些模型响应和工具结果重建执行。
-        内容可能包含 Prompt、文件路径和敏感信息。
+      <div className="grid gap-3 lg:grid-cols-2">
+        <SummaryCard
+          label="用户请求"
+          value={compactText(userRequest)}
+          detail="这次任务开始时发送给 Agent 的内容"
+        />
+        <SummaryCard
+          label="最终回复"
+          value={compactText(finalAnswer, 420)}
+          detail="Agent 最后展示给用户的内容"
+        />
       </div>
 
-      <div className="rounded-lg border border-settings-border bg-background/70 px-3 py-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-settings-foreground">本轮发生了什么</span>
-          <span className="rounded-full bg-settings-hover px-2 py-0.5 text-[11px] text-settings-muted">
-            结束：{String(diagnostics.stop_reason ?? turn.stop_reason ?? "unknown")}
-          </span>
-          <span className="rounded-full bg-settings-hover px-2 py-0.5 text-[11px] text-settings-muted">
-            工具失败：{failedTools.length}
-          </span>
-          <span className="rounded-full bg-settings-hover px-2 py-0.5 text-[11px] text-settings-muted">
-            未确认副作用：{unknownSideEffects.length}
-          </span>
+      <div className="rounded-xl border border-settings-border bg-background/70 px-3 py-3">
+        <div className="text-[11px] font-medium text-settings-muted">执行概览</div>
+        <div className="mt-1 text-sm leading-6 text-settings-foreground">
+          用户请求 → 模型响应 {detail.counts.llm_responses} 次
+          {detail.counts.tool_calls > 0 ? ` → 工具调用 ${detail.counts.tool_calls} 次` : ""}
+          {" → 最终回复"}
         </div>
-        <div className="mt-2 text-xs leading-5 text-settings-muted">
-          {String(diagnostics.message ?? "先看这里，再按需展开下面的原始轨道。")}
-        </div>
-        {failedTools.length > 0 || unknownSideEffects.length > 0 ? (
-          <div className="mt-2 space-y-1 text-xs text-settings-foreground">
-            {failedTools.map((item, index) => (
-              <div key={`failed-${index}`}>工具失败：{isRecord(item) ? String(item.name ?? "unknown") : String(item)}</div>
-            ))}
-            {unknownSideEffects.map((item, index) => (
-              <div key={`unknown-${index}`}>需要确认副作用：{isRecord(item) ? String(item.name ?? "unknown") : String(item)}</div>
-            ))}
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <SummaryCard label="使用模型" value={String(turn.model ?? "未记录")} />
+        <SummaryCard label="模型决策" value={`${detail.counts.llm_responses} 次`} detail="模型做了几次决策" />
+        <SummaryCard label="工具调用" value={`${detail.counts.tool_calls} 次`} detail={summarizeTools(toolEvents)} />
+        <SummaryCard label="执行结果" value={statusLabel} detail={statusDescription} />
+      </div>
+
+      <div className={`rounded-xl border px-3 py-3 text-xs leading-5 ${hasProblems
+        ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200"
+        : "border-settings-border bg-background/70 text-settings-muted"}`}>
+        <div className="font-medium text-settings-foreground">这里先看结论</div>
+        <div className="mt-1">默认只展示本回合的重点。需要查看完整输入、每次模型响应、工具参数和返回值时，请点击上方“查看原始记录”。</div>
+      </div>
+    </div>
+  );
+}
+
+function RawExecutionViewer({ detail }: { detail: BlackboxDetail }) {
+  const rawEvents = detail.events.map((event) => JSON.stringify(event)).join("\n");
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-settings-surface">
+      <div className="shrink-0 border-b border-settings-border px-6 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3 pr-12">
+          <div>
+            <div className="text-base font-semibold text-settings-foreground">完整原始记录</div>
+            <div className="mt-1 break-all font-mono text-xs text-settings-muted">{detail.turn_id}</div>
           </div>
-        ) : null}
+          <div className="rounded-full bg-settings-hover px-3 py-1 text-xs text-settings-muted">
+            不做摘要 · 不改写内容
+          </div>
+        </div>
+        <p className="mt-3 max-w-4xl text-xs leading-5 text-settings-muted">
+          这里展示这个回合保存下来的全部 JSON 数据：回合总记录，以及按执行顺序排列的模型响应和工具调用。内容可能包含 Prompt、文件路径和其他敏感信息。
+        </p>
       </div>
-
-      <div>
-        <div className="mb-2 text-xs font-semibold text-settings-foreground">回放数据轨</div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <RailCard
-            title="LLM Response Rail"
-            source="tools.jsonl · kind=llm"
-            value={`${detail.counts.llm_responses} 次响应`}
-            description="固定模型响应、finish reason、usage 和模型发出的 Tool Call；回放时由 ReplayProvider 提供。"
-          />
-          <RailCard
-            title="Tool Observation Rail"
-            source="tools.jsonl · kind=tool"
-            value={`${detail.counts.tool_calls} 次调用`}
-            description="固定工具名称、参数、状态和返回值；回放时不会执行真实工具副作用。"
-          />
-          <RailCard
-            title="Turn Envelope"
-            source="turns.jsonl · kind=turn"
-            value="1 个回合"
-            description="保存输入上下文、工具 Schema、最终消息、stop reason、session 和 model。"
-          />
-          <RailCard
-            title="HTTP Audit Cassette"
-            source={detail.files.cassette ?? "未生成 YAML cassette"}
-            value={detail.files.cassette ? "可查看" : "可选"}
-            muted={!detail.files.cassette}
-            description="provider HTTP 交互审计记录；不是回放正确性的唯一依据，缺失不影响 JSON rail 回放。"
-          />
-        </div>
-      </div>
-
-      <div className="grid gap-2 text-xs sm:grid-cols-4">
-        <div className="rounded-lg border border-settings-border bg-background/70 px-3 py-2">
-          <div className="text-settings-muted">会话</div>
-          <div className="mt-1 break-all font-mono text-settings-foreground">{String(turn.session_key ?? "—")}</div>
-        </div>
-        <div className="rounded-lg border border-settings-border bg-background/70 px-3 py-2">
-          <div className="text-settings-muted">模型</div>
-          <div className="mt-1 break-all font-mono text-settings-foreground">{String(turn.model ?? "—")}</div>
-        </div>
-        <div className="rounded-lg border border-settings-border bg-background/70 px-3 py-2">
-          <div className="text-settings-muted">模型响应</div>
-          <div className="mt-1 font-semibold text-settings-foreground">{detail.counts.llm_responses} 次</div>
-        </div>
-        <div className="rounded-lg border border-settings-border bg-background/70 px-3 py-2">
-          <div className="text-settings-muted">工具调用</div>
-          <div className="mt-1 font-semibold text-settings-foreground">{detail.counts.tool_calls} 次</div>
-        </div>
-      </div>
-
-      {usage ? (
-        <div className="text-xs text-settings-muted">
-          录制 Token：输入 {String(usage.input_tokens ?? usage.prompt_tokens ?? "?")} · 输出 {String(usage.output_tokens ?? usage.completion_tokens ?? "?")} · 总计 {String(usage.total_tokens ?? "?")}
-        </div>
-      ) : null}
-
-      <RawJsonBlock title="输入上下文（initial_messages）" value={turn.initial_messages} />
-      <RawJsonBlock title="工具定义（tools schema）" value={turn.tools} />
-
-      <div>
-        <div className="text-xs font-semibold text-settings-foreground">Agent 执行时间线</div>
-        <div className="mb-2 mt-1 text-[11px] leading-4 text-settings-muted">
-          一个“回合”是一次用户任务；下面的“Agent 循环”是该任务内部的模型决策与工具执行阶段，从 1 开始计数。
-        </div>
-        <div className="space-y-2">
-          {detail.events.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-settings-border px-3 py-4 text-xs text-settings-muted">
-              没有单独的工具/模型 rail；可能是空回合或旧格式录制。
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        <div className="mx-auto max-w-[1600px] space-y-5">
+          <section>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h4 className="text-sm font-semibold text-settings-foreground">回合总记录</h4>
+              <span className="font-mono text-[11px] text-settings-muted">turns.jsonl · kind=turn</span>
             </div>
-          ) : detail.events.map((event, index) => {
-            const eventKind = String(event.kind ?? "unknown");
-            const response = isRecord(event.response) ? event.response : null;
-            const tool = eventKind === "tool";
-            const rawIteration = Number(event.iteration);
-            const iteration = Number.isFinite(rawIteration) ? rawIteration + 1 : null;
-            const responseNumber = event.response_index == null
-              ? null
-              : Number(event.response_index) + 1;
-            const invocationNumber = event.invocation_index == null
-              ? null
-              : Number(event.invocation_index) + 1;
-            return (
-              <div key={`${eventKind}-${index}`} className={`rounded-lg border bg-background/70 p-3 ${tool ? "border-orange-200" : "border-blue-200"}`}>
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className={`rounded-full px-2 py-0.5 font-medium ${tool ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}>
-                    {tool ? "Tool Observation Rail" : "LLM Response Rail"}
-                  </span>
-                  <span className="font-medium text-settings-foreground">
-                    {iteration == null ? "Agent 循环" : `Agent 循环 ${iteration}`}
-                  </span>
-                  {tool ? (
-                    <span className="font-mono text-settings-foreground">
-                      {invocationNumber == null ? "工具调用" : `工具调用 #${invocationNumber}`} · {String(event.name ?? "unknown tool")}
-                    </span>
-                  ) : (
-                    <span className="text-settings-muted">
-                      {responseNumber == null ? "模型响应" : `模型响应 #${responseNumber}`}
-                    </span>
-                  )}
-                  <span className="ml-auto text-settings-muted">
-                    {tool ? `状态：${String(event.status ?? "unknown")}` : `结束：${String(response?.finish_reason ?? "?")}`}
-                  </span>
-                </div>
+            <pre className="overflow-auto rounded-xl border border-settings-border bg-slate-950 p-4 font-mono text-[11px] leading-5 text-slate-100">
+              {formatJson(detail.turn)}
+            </pre>
+          </section>
 
-                {tool ? (
-                  <div className="mt-3 space-y-2">
-                    {event.detail ? <div className="text-xs text-settings-muted">{String(event.detail)}</div> : null}
-                    <RawJsonBlock title="Tool arguments（传入参数）" value={event.args} />
-                    <RawJsonBlock title="Tool result（工具返回值）" value={event.result} />
-                  </div>
-                ) : response ? (
-                  <div className="mt-3 space-y-2">
-                    {typeof response.content === "string" && response.content ? (
-                      <div className="rounded-lg bg-settings-hover/60 px-3 py-2 text-xs leading-5 text-settings-foreground">
-                        <div className="mb-1 font-medium text-settings-muted">模型可见回答</div>
-                        <div className="whitespace-pre-wrap break-words">{response.content}</div>
-                      </div>
-                    ) : null}
-                    <RawJsonBlock title="Tool calls（模型发出的工具调用）" value={response.tool_calls ?? []} />
-                    {response.reasoning_content ? (
-                      <RawJsonBlock title="Reasoning content（模型内部推理）" value={response.reasoning_content} />
-                    ) : null}
-                    <RawJsonBlock title="LLM response 原始 JSON" value={response} />
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
+          <section>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h4 className="text-sm font-semibold text-settings-foreground">执行过程原始记录</h4>
+              <span className="font-mono text-[11px] text-settings-muted">tools.jsonl · {detail.events.length} 条记录</span>
+            </div>
+            <pre className="min-h-32 overflow-auto whitespace-pre-wrap break-all rounded-xl border border-settings-border bg-slate-950 p-4 font-mono text-[11px] leading-5 text-slate-100">
+              {rawEvents || "这个回合没有单独的模型或工具事件记录。"}
+            </pre>
+          </section>
+
+          <div className="text-xs text-settings-muted">
+            关联文件：turns.jsonl{detail.files.tools ? " · tools.jsonl" : ""}{detail.files.cassette ? ` · ${detail.files.cassette}` : ""}
+          </div>
         </div>
-      </div>
-
-      <RawJsonBlock title="最终消息（final_messages）" value={turn.final_messages} />
-      <RawJsonBlock title="Turn Envelope 原始 JSON" value={turn} />
-      <div className="text-[11px] text-settings-muted">
-        文件：turns.jsonl{detail.files.tools ? " · tools.jsonl" : ""}{detail.files.cassette ? ` · ${detail.files.cassette}` : ""}
       </div>
     </div>
   );
@@ -468,26 +432,26 @@ export function EnhancementsSettings() {
           <Bug className="mt-0.5 h-5 w-5 shrink-0 text-violet-600" />
           <div>
             <h2 className="text-lg font-semibold text-settings-foreground">
-              {t("settings.enhancements.title", { defaultValue: "Record & Replay" })}
+              {t("settings.enhancements.title", { defaultValue: "录制与回放" })}
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-settings-foreground">
               {t("settings.enhancements.explainer", {
                 defaultValue:
-                  "先真实运行一次 Agent，再用同一组模型响应和工具结果离线重跑。它用来判断：你修改 Agent 代码后，工具顺序、上下文处理和最终回答有没有回归。",
+                  "先把一次真实任务保存成可重走的执行样本。之后可以不请求模型、不执行真实工具，离线检查当前 Agent 的执行流程有没有变化。",
               })}
             </p>
             <div className="mt-4 grid gap-3 text-xs text-settings-foreground sm:grid-cols-3">
               <div className="rounded-xl bg-white/70 p-3 dark:bg-black/20">
-                <div className="font-semibold">1. 录制真实执行</div>
-                <div className="mt-1 text-settings-muted">模型和工具会正常工作。</div>
+                <div className="font-semibold">1. 保存一次真实任务</div>
+                <div className="mt-1 text-settings-muted">输入、模型回答、工具调用和结果都会保留。</div>
               </div>
               <div className="rounded-xl bg-white/70 p-3 dark:bg-black/20">
-                <div className="font-semibold">2. 修改 Agent 代码</div>
-                <div className="mt-1 text-settings-muted">例如修改 Tool、Context 或 Runner。</div>
+                <div className="font-semibold">2. 修改代码或排查问题</div>
+                <div className="mt-1 text-settings-muted">适合检查模型循环、上下文和工具处理。</div>
               </div>
               <div className="rounded-xl bg-white/70 p-3 dark:bg-black/20">
-                <div className="font-semibold">3. 离线回放比较</div>
-                <div className="mt-1 text-settings-muted">不请求模型，不执行真实工具。</div>
+                <div className="font-semibold">3. 离线重走并比较</div>
+                <div className="mt-1 text-settings-muted">不花 Token、不联网，也不会产生工具副作用。</div>
               </div>
             </div>
           </div>
@@ -513,12 +477,12 @@ export function EnhancementsSettings() {
             />
             <div>
               <h3 className="text-base font-semibold text-settings-foreground">
-                {status?.recording ? "正在录制当前对话" : "录制控制"}
+                {status?.recording ? "正在收集执行样本" : "录制一次任务"}
               </h3>
               <p className="text-xs text-settings-muted">
                 {status?.recording
-                  ? "停止前，所有会话的每个 Agent 回合都会写入当前录制。"
-                  : "点击开始后，再执行你想保留为回归样本的任务。"}
+                  ? "停止前，所有会话中的任务都会继续写入这份样本。"
+                  : "点击开始，执行你想保存下来、以后重复检查的任务。"}
               </p>
             </div>
           </div>
@@ -543,24 +507,24 @@ export function EnhancementsSettings() {
 
         {status?.recording && status.directory ? (
           <div className="mb-4 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-300">
-            当前录制：<span className="font-mono">{status.directory.split(/[\\/]/).pop()}</span>
+            当前样本：<span className="font-mono">{status.directory.split(/[\\/]/).pop()}</span>
           </div>
         ) : null}
 
         {status?.recording ? (
           <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-300">
-            录制范围是这次“开始录制 → 停止录制”的时间段，不绑定某一个会话；你可以切换或新开会话，回合会追加到同一份录制。
+            从“开始”到“停止”期间，不论你在哪个会话中执行任务，所有回合都会追加到同一个样本。
           </div>
         ) : null}
 
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-settings-border bg-settings-hover/40 px-3 py-2 text-xs text-settings-muted">
           <Info className="h-4 w-4 shrink-0" />
-          回放只使用录制文件中的模型响应和工具结果；回放期间不会产生新的模型请求或真实工具副作用。
+          离线检查只使用样本里的模型响应和工具结果；不会产生新的模型请求，也不会真的执行工具。
         </div>
 
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <PauseCircle className="h-4 w-4 text-settings-muted" />
-          <span className="text-xs text-settings-muted">断点回放（可选）：在第</span>
+          <span className="text-xs text-settings-muted">暂停检查（可选）：在第</span>
           <Input
             type="number"
             min={1}
@@ -569,7 +533,7 @@ export function EnhancementsSettings() {
             placeholder="N"
             className="h-7 w-16"
           />
-          <span className="text-xs text-settings-muted">轮暂停并查看消息</span>
+          <span className="text-xs text-settings-muted">个模型决策处暂停</span>
         </div>
 
         {recordings.length > 0 ? (
@@ -597,7 +561,7 @@ export function EnhancementsSettings() {
                         </span>
                       </div>
                       <div className="mt-1 text-xs text-settings-muted">
-                        {isReady ? `${recording.turns} 个回合可回放` : recording.message}
+                        {isReady ? `${recording.turns} 个任务已保存` : recording.message}
                       </div>
                     </div>
                   </div>
@@ -609,7 +573,7 @@ export function EnhancementsSettings() {
                       disabled={busy !== null || !isReady}
                     >
                       {replayBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                      {breakAt ? "断点回放" : "开始回放"}
+                      {breakAt ? "暂停检查" : "离线检查"}
                     </Button>
                     <Button
                       variant="ghost"
@@ -628,7 +592,7 @@ export function EnhancementsSettings() {
           </div>
         ) : (
           <div className="rounded-xl border border-dashed border-settings-border px-4 py-6 text-center text-sm text-settings-muted">
-            还没有录制。点击“开始录制”，执行一次任务，再回来点击“停止录制”。
+            还没有执行样本。点击“开始”，执行一次任务，再回来点击“停止”。
           </div>
         )}
       </section>
@@ -642,13 +606,15 @@ export function EnhancementsSettings() {
               <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
             )}
             <div>
-              <h3 className="text-base font-semibold text-settings-foreground">回放报告</h3>
-              <p className="mt-1 text-sm text-settings-foreground">{replay.summary}</p>
-              <p className="mt-1 text-xs text-settings-muted">
-                这里检查的是 Agent 编排是否复现，不是模型回答质量评分。
+              <h3 className="text-base font-semibold text-settings-foreground">离线检查结果</h3>
+              <p className="mt-1 text-sm text-settings-foreground">
+                {replay.deterministic_turns}/{replay.total_turns} 个回合未发现可观察差异
               </p>
               <p className="mt-1 text-xs text-settings-muted">
-                点击下面任意回合，可查看原始上下文、模型响应、Tool Call 参数、工具返回值和最终消息。
+                这里检查的是当前代码能否重走原来的执行流程，不是模型回答质量评分。
+              </p>
+              <p className="mt-1 text-xs text-settings-muted">
+                点开一个回合先看摘要；需要完整 JSON 时，再点击“查看原始记录”。
               </p>
             </div>
           </div>
@@ -665,9 +631,11 @@ export function EnhancementsSettings() {
                   ) : (
                     <XCircle className="h-4 w-4 shrink-0 text-amber-500" />
                   )}
-                  <span className="text-sm font-medium text-settings-foreground">第 {index + 1} 回合</span>
+                  <span className="whitespace-nowrap text-sm font-medium text-settings-foreground">第 {index + 1} 回合</span>
                   <span className="min-w-0 truncate font-mono text-xs text-settings-muted">{row.turn_id}</span>
-                  <span className="ml-auto text-xs text-settings-muted">{row.summary}</span>
+                  <span className={`ml-auto whitespace-nowrap text-xs ${row.ok ? "text-emerald-700" : "text-amber-700"}`}>
+                    {row.ok ? "未发现可观察差异" : `发现 ${row.diffs.length} 处差异`}
+                  </span>
                   {detailLoading === row.turn_id ? (
                     <Loader2 className="h-4 w-4 animate-spin text-settings-muted" />
                   ) : expandedTurn === row.turn_id ? (
@@ -680,7 +648,7 @@ export function EnhancementsSettings() {
                   <div>
                     {row.diffs.length > 0 ? (
                       <div className="border-t border-settings-border bg-settings-hover/50 p-3">
-                        <div className="mb-2 text-xs font-medium text-settings-muted">可观察差异</div>
+                        <div className="mb-2 text-xs font-medium text-settings-muted">当前结果与原样本的不同之处</div>
                         <div className="flex flex-col gap-2">
                           {row.diffs.map((diff, diffIndex) => (
                             <pre key={diffIndex} className="whitespace-pre-wrap break-all font-mono text-xs text-settings-foreground">
@@ -691,13 +659,13 @@ export function EnhancementsSettings() {
                       </div>
                     ) : null}
                     {detailByTurn[row.turn_id] ? (
-                      <ReplayTurnDetail
+                      <ReplayTurnSummary
                         detail={detailByTurn[row.turn_id]}
                         onFullscreen={() => setFullscreenDetail(detailByTurn[row.turn_id])}
                       />
                     ) : detailLoading === row.turn_id ? (
                       <div className="border-t border-settings-border px-3 py-5 text-center text-xs text-settings-muted">
-                        正在读取原始执行数据…
+                        正在读取这个回合的摘要…
                       </div>
                     ) : null}
                   </div>
@@ -712,7 +680,7 @@ export function EnhancementsSettings() {
         <section className="rounded-xl border border-amber-300 bg-amber-50 p-4">
           <div className="flex items-center gap-2 text-sm font-medium text-amber-800">
             <PauseCircle className="h-4 w-4" />
-            断点命中 · Agent 循环 {breakpoint.iteration + 1}
+            已在第 {breakpoint.iteration + 1} 个模型决策处暂停
             {breakpoint.turn_id ? ` · ${breakpoint.turn_id}` : ""}
           </div>
           <div className="mt-2 max-h-72 overflow-auto rounded bg-white/60 p-2">
@@ -731,15 +699,15 @@ export function EnhancementsSettings() {
           if (!open) setFullscreenDetail(null);
         }}
       >
-        <DialogContent className="h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] gap-0 overflow-hidden p-0">
+        <DialogContent className="flex h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden p-0">
           <DialogHeader className="shrink-0 border-b border-settings-border px-6 py-4 pr-14 text-left">
-            <DialogTitle>回合原始执行详情</DialogTitle>
+            <DialogTitle>回合原始记录</DialogTitle>
             <DialogDescription>
-              全屏查看输入上下文、LLM Response Rail、Tool Observation Rail 和原始 JSON。
+              这是保存下来的完整数据，不做摘要；关闭窗口后返回回合摘要。
             </DialogDescription>
           </DialogHeader>
-          <div className="min-h-0 overflow-y-auto">
-            {fullscreenDetail ? <ReplayTurnDetail detail={fullscreenDetail} /> : null}
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {fullscreenDetail ? <RawExecutionViewer detail={fullscreenDetail} /> : null}
           </div>
         </DialogContent>
       </Dialog>

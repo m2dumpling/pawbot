@@ -36,14 +36,14 @@
     "isDynamicEntry": true
   },
   "../pawbot/channels/feishu/webui/FeishuAssistantsPanel.tsx": {
-    "file": "assets/FeishuAssistantsPanel-D5PmkJeQ.js",
+    "file": "assets/FeishuAssistantsPanel-DJlf1ejW.js",
     "name": "FeishuAssistantsPanel",
     "src": "../pawbot/channels/feishu/webui/FeishuAssistantsPanel.tsx",
     "isDynamicEntry": true,
     "imports": [
       "_react-vendor-BfwZRLtO.js",
       "_sidebar-ui-C67PEh1y.js",
-      "_ChannelInstancesPanel-Bw1kxalm.js",
+      "_ChannelInstancesPanel-CF-QVsSi.js",
       "_thread-ui-B31Io0zj.js",
       "_ChannelQrConnectFlow-CHAd-lXB.js",
       "index.html",
@@ -196,7 +196,7 @@
     ]
   },
   "../pawbot/channels/weixin/webui/WeixinPanel.tsx": {
-    "file": "assets/WeixinPanel-D-s5jBtt.js",
+    "file": "assets/WeixinPanel-ClaFJ779.js",
     "name": "WeixinPanel",
     "src": "../pawbot/channels/weixin/webui/WeixinPanel.tsx",
     "isDynamicEntry": true,
@@ -235,8 +235,8 @@
     "src": "../pawbot/channels/whatsapp/webui/locales/zh-CN.json",
     "isDynamicEntry": true
   },
-  "_ChannelInstancesPanel-Bw1kxalm.js": {
-    "file": "assets/ChannelInstancesPanel-Bw1kxalm.js",
+  "_ChannelInstancesPanel-CF-QVsSi.js": {
+    "file": "assets/ChannelInstancesPanel-CF-QVsSi.js",
     "name": "ChannelInstancesPanel",
     "imports": [
       "_react-vendor-BfwZRLtO.js",
@@ -2982,7 +2982,7 @@
     ]
   },
   "index.html": {
-    "file": "assets/index-mtDOrkqz.js",
+    "file": "assets/index-DfnRbpfM.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -3002,7 +3002,7 @@
       "src/components/RenameChatDialog.tsx"
     ],
     "css": [
-      "assets/index-DoEDB-lw.css"
+      "assets/index-AeAWAGVH.css"
     ]
   },
   "node_modules/katex/dist/fonts/KaTeX_AMS-Regular.ttf": {
@@ -3290,7 +3290,7 @@
     ]
   },
   "src/components/settings/SettingsView.tsx": {
-    "file": "assets/SettingsView-D7Ouxm5c.js",
+    "file": "assets/SettingsView-D9ZTPy5o.js",
     "name": "SettingsView",
     "src": "src/components/settings/SettingsView.tsx",
     "isDynamicEntry": true,
@@ -3302,7 +3302,7 @@
       "index.html",
       "_dialog-DR4t5y87.js",
       "_CredentialForm-qj_ytsTw.js",
-      "_ChannelInstancesPanel-Bw1kxalm.js",
+      "_ChannelInstancesPanel-CF-QVsSi.js",
       "_workbench-ui-DWPFYOdI.js"
     ]
   },
