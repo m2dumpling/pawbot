@@ -579,19 +579,30 @@ def maybe_persist_tool_result(
         return content
 
     text_payload: str | None = None
+    serialized_payload: str | None = None
     suffix = "txt"
     if isinstance(content, str):
         text_payload = content
     elif isinstance(content, list):
-        text_payload = stringify_text_blocks(cast(list[object], content))
-        if text_payload is None:
-            return cast(Any, content)
+        # Keep the complete JSON for multimodal and structured results.  The
+        # old implementation silently skipped non-text blocks, which made a
+        # large result impossible to recover from during a later turn.
+        serialized_payload = json.dumps(content, ensure_ascii=False, indent=2, default=repr)
+        text_payload = stringify_text_blocks(cast(list[object], content)) or serialized_payload
         suffix = "json"
     else:
         return content
 
-    if len(text_payload) <= max_chars:
+    if len(text_payload) <= max_chars and (
+        serialized_payload is None or len(serialized_payload) <= max_chars
+    ):
         return cast(Any, content)
+
+    # Never persist our own reference again.  Context governance may see the
+    # same placeholder on a subsequent pass; treating it as fresh output
+    # would create a persist -> read -> persist loop and unstable references.
+    if isinstance(content, str) and content.startswith("[tool output persisted]\n"):
+        return content
 
     root = ensure_dir(workspace / _TOOL_RESULTS_DIR)
     bucket = ensure_dir(root / safe_filename(session_key or "default"))
@@ -600,11 +611,13 @@ def maybe_persist_tool_result(
     except Exception:
         logger.exception("Failed to clean stale tool result buckets in {}", root)
     path = bucket / f"{safe_filename(tool_call_id)}.{suffix}"
-    if not path.exists():
-        if suffix == "json" and isinstance(content, list):
-            _write_text_atomic(path, json.dumps(content, ensure_ascii=False, indent=2))
-        else:
-            _write_text_atomic(path, text_payload)
+    # The filename is stable for a tool-call id, but the content may be
+    # refreshed after a retry or a provider reuses an id.  Atomic replacement
+    # keeps the reference stable without serving stale bytes.
+    if suffix == "json" and serialized_payload is not None:
+        _write_text_atomic(path, serialized_payload)
+    else:
+        _write_text_atomic(path, text_payload)
 
     preview = text_payload[:_TOOL_RESULT_PREVIEW_CHARS]
     return _render_tool_result_reference(

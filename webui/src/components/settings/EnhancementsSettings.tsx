@@ -140,6 +140,11 @@ function ReplayTurnDetail({
 }) {
   const turn = detail.turn;
   const usage = isRecord(turn.usage) ? turn.usage : null;
+  const diagnostics = isRecord(detail.diagnostics) ? detail.diagnostics : {};
+  const failedTools = Array.isArray(diagnostics.failed_tools) ? diagnostics.failed_tools : [];
+  const unknownSideEffects = Array.isArray(diagnostics.unknown_side_effects)
+    ? diagnostics.unknown_side_effects
+    : [];
   return (
     <div className="space-y-3 border-t border-settings-border bg-settings-hover/35 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -157,6 +162,34 @@ function ReplayTurnDetail({
       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200">
         下面是录制时保存的原始数据。回放不会重新请求模型，而是按这些模型响应和工具结果重建执行。
         内容可能包含 Prompt、文件路径和敏感信息。
+      </div>
+
+      <div className="rounded-lg border border-settings-border bg-background/70 px-3 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-settings-foreground">本轮发生了什么</span>
+          <span className="rounded-full bg-settings-hover px-2 py-0.5 text-[11px] text-settings-muted">
+            结束：{String(diagnostics.stop_reason ?? turn.stop_reason ?? "unknown")}
+          </span>
+          <span className="rounded-full bg-settings-hover px-2 py-0.5 text-[11px] text-settings-muted">
+            工具失败：{failedTools.length}
+          </span>
+          <span className="rounded-full bg-settings-hover px-2 py-0.5 text-[11px] text-settings-muted">
+            未确认副作用：{unknownSideEffects.length}
+          </span>
+        </div>
+        <div className="mt-2 text-xs leading-5 text-settings-muted">
+          {String(diagnostics.message ?? "先看这里，再按需展开下面的原始轨道。")}
+        </div>
+        {failedTools.length > 0 || unknownSideEffects.length > 0 ? (
+          <div className="mt-2 space-y-1 text-xs text-settings-foreground">
+            {failedTools.map((item, index) => (
+              <div key={`failed-${index}`}>工具失败：{isRecord(item) ? String(item.name ?? "unknown") : String(item)}</div>
+            ))}
+            {unknownSideEffects.map((item, index) => (
+              <div key={`unknown-${index}`}>需要确认副作用：{isRecord(item) ? String(item.name ?? "unknown") : String(item)}</div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div>

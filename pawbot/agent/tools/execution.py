@@ -22,12 +22,13 @@ stage is called through its static interface.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import time
+from typing import Any, cast
 
 from loguru import logger
 
 from pawbot.agent.hook import AgentHook, AgentHookContext
-from pawbot.agent.tools.registry import ToolRegistry, is_tool_error_result
+from pawbot.agent.tools.registry import ToolRegistry, ToolResult, is_tool_error_result
 from pawbot.providers.base import ToolCallRequest
 from pawbot.utils.runtime import (
     repeated_external_lookup_error,
@@ -193,20 +194,63 @@ class CallExecutor:
         workspace_violation_counts: dict[str, int],
         hook: AgentHook,
         context: AgentHookContext,
+        denied_tool_capabilities: frozenset[str] = frozenset(),
     ) -> None:
         self._tools = tools
         self._external_lookup_counts = external_lookup_counts
         self._hook = hook
         self._context = context
         self._classifier = ViolationClassifier(workspace_violation_counts)
+        self._denied_tool_capabilities = denied_tool_capabilities
+
+    def _state_record(self, tool_call: ToolCallRequest) -> dict[str, Any]:
+        record: dict[str, Any] = {
+            "call_id": tool_call.id,
+            "name": tool_call.name,
+            "state": "planned",
+            "side_effect": "unknown",
+            "started_at": None,
+            "finished_at": None,
+            "duration_ms": None,
+        }
+        self._context.tool_states.append(record)
+        return record
+
+    @staticmethod
+    def _finish_state(
+        state: dict[str, Any],
+        *,
+        lifecycle: str,
+        side_effect: str,
+        started_at: float,
+    ) -> None:
+        finished_at = time.time()
+        state.update({
+            "state": lifecycle,
+            "side_effect": side_effect,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "duration_ms": max(0, int((finished_at - started_at) * 1000)),
+        })
+
+    @staticmethod
+    def _side_effect_class(tool: Any) -> str:
+        return "none" if bool(getattr(tool, "read_only", False)) else "may_have_occurred"
 
     async def run(self, tool_call: ToolCallRequest) -> tuple[Any, dict[str, str]]:
+        lifecycle = self._state_record(tool_call)
         lookup_error = repeated_external_lookup_error(
             tool_call.name,
             tool_call.arguments,
             self._external_lookup_counts,
         )
         if lookup_error:
+            self._finish_state(
+                lifecycle,
+                lifecycle="blocked",
+                side_effect="not_started",
+                started_at=time.time(),
+            )
             event = {
                 "name": tool_call.name,
                 "status": "error",
@@ -219,6 +263,12 @@ class CallExecutor:
             tool_call.arguments,
         )
         if prep_error:
+            self._finish_state(
+                lifecycle,
+                lifecycle="failed",
+                side_effect="not_started",
+                started_at=time.time(),
+            )
             event = {
                 "name": tool_call.name,
                 "status": "error",
@@ -234,6 +284,28 @@ class CallExecutor:
                 return handled
             return prep_error + _RETRY_HINT, event
 
+        default_capabilities: frozenset[str] = frozenset()
+        raw_capabilities = cast(Any, getattr(tool, "capabilities", default_capabilities))
+        tool_capabilities: frozenset[str] = frozenset(
+            str(value) for value in raw_capabilities
+        )
+        denied = sorted(tool_capabilities & self._denied_tool_capabilities)
+        if denied:
+            detail = f"blocked by tool capability policy: {', '.join(denied)}"
+            self._finish_state(
+                lifecycle,
+                lifecycle="blocked",
+                side_effect="not_started",
+                started_at=time.time(),
+            )
+            event = {"name": tool_call.name, "status": "error", "detail": detail}
+            return ToolResult.error(
+                f"Error: tool '{tool_call.name}' requires denied capabilities: {', '.join(denied)}"
+            ), event
+
+        started_at = time.time()
+        lifecycle["state"] = "running"
+        lifecycle["started_at"] = started_at
         await self._hook.before_execute_tool(self._context, tool_call, tool, params)
         try:
             # ADR-004 replay rail: when a recorded turn is re-executed
@@ -244,6 +316,12 @@ class CallExecutor:
 
             found, replayed = lookup_replay_result(tool_call.name, params)
             if found:
+                self._finish_state(
+                    lifecycle,
+                    lifecycle="failed" if is_tool_error_result(replayed) else "succeeded",
+                    side_effect="not_executed",
+                    started_at=started_at,
+                )
                 if is_tool_error_result(replayed):
                     await self._hook.on_execute_tool_error(
                         self._context,
@@ -272,8 +350,26 @@ class CallExecutor:
             else:
                 result = await self._tools.execute(tool_call.name, params)
         except asyncio.CancelledError:
+            self._finish_state(
+                lifecycle,
+                lifecycle="unknown",
+                side_effect=self._side_effect_class(tool),
+                started_at=started_at,
+            )
+            await self._hook.on_execute_tool_cancelled(
+                self._context,
+                tool_call,
+                tool,
+                params,
+            )
             raise
         except Exception as exc:
+            self._finish_state(
+                lifecycle,
+                lifecycle="failed",
+                side_effect=self._side_effect_class(tool),
+                started_at=started_at,
+            )
             await self._hook.on_execute_tool_error(
                 self._context, tool_call, tool, params, exc
             )
@@ -295,6 +391,12 @@ class CallExecutor:
             return payload, event
 
         if is_tool_error_result(result):
+            self._finish_state(
+                lifecycle,
+                lifecycle="failed",
+                side_effect=self._side_effect_class(tool),
+                started_at=started_at,
+            )
             await self._hook.on_execute_tool_error(
                 self._context, tool_call, tool, params, result
             )
@@ -314,6 +416,12 @@ class CallExecutor:
             return result + _RETRY_HINT, event
 
         await self._hook.after_execute_tool(self._context, tool_call, tool, params, result)
+        self._finish_state(
+            lifecycle,
+            lifecycle="succeeded",
+            side_effect=self._side_effect_class(tool),
+            started_at=started_at,
+        )
         return result, {"name": tool_call.name, "status": "ok", "detail": _ok_detail(result)}
 
 
@@ -326,6 +434,7 @@ async def execute_tool_calls(
     workspace_violation_counts: dict[str, int],
     hook: AgentHook,
     context: AgentHookContext,
+    denied_tool_capabilities: frozenset[str] = frozenset(),
 ) -> tuple[list[Any], list[dict[str, str]]]:
     """Execute one model response's tool calls in stable result order.
 
@@ -338,6 +447,7 @@ async def execute_tool_calls(
         workspace_violation_counts=workspace_violation_counts,
         hook=hook,
         context=context,
+        denied_tool_capabilities=denied_tool_capabilities,
     )
     results: list[Any] = []
     events: list[dict[str, str]] = []

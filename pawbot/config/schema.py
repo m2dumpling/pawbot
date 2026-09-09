@@ -138,6 +138,48 @@ class AgentDefaults(Base):
     temperature: float = 0.1
     fallback_models: list[FallbackCandidate] = Field(default_factory=list)
     max_tool_iterations: int = 200
+    max_tool_calls: int | None = Field(
+        default=None,
+        ge=1,
+        validation_alias=AliasChoices("maxToolCalls", "max_tool_calls"),
+        serialization_alias="maxToolCalls",
+    )
+    max_turn_seconds: float | None = Field(
+        default=None,
+        gt=0,
+        validation_alias=AliasChoices("maxTurnSeconds", "max_turn_seconds"),
+        serialization_alias="maxTurnSeconds",
+    )
+    max_input_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        validation_alias=AliasChoices("maxInputTokens", "max_input_tokens"),
+        serialization_alias="maxInputTokens",
+    )
+    max_output_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        validation_alias=AliasChoices("maxOutputTokens", "max_output_tokens"),
+        serialization_alias="maxOutputTokens",
+    )
+    max_turn_cost_usd: float | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("maxTurnCostUsd", "max_turn_cost_usd"),
+        serialization_alias="maxTurnCostUsd",
+    )
+    input_cost_per_million_usd: float | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("inputCostPerMillionUsd", "input_cost_per_million_usd"),
+        serialization_alias="inputCostPerMillionUsd",
+    )
+    output_cost_per_million_usd: float | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("outputCostPerMillionUsd", "output_cost_per_million_usd"),
+        serialization_alias="outputCostPerMillionUsd",
+    )
     max_concurrent_subagents: int = Field(default=4, ge=1)
     max_tool_result_chars: int = 16_000
     provider_retry_mode: Literal["standard", "persistent"] = "standard"
@@ -411,6 +453,11 @@ class ToolsConfig(Base):
     )
     max_session_messages_per_minute: int = Field(default=6, ge=1)
     restrict_to_workspace: bool = False  # policy intent: keep tool access inside workspace when possible
+    denied_capabilities: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("deniedCapabilities", "denied_capabilities"),
+        serialization_alias="deniedCapabilities",
+    )  # Optional coarse policy labels, e.g. ["network", "execute"]
     webui_allow_local_service_access: bool = Field(
         default=True,
         validation_alias=AliasChoices(

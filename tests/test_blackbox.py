@@ -8,6 +8,8 @@ assert the message sequence matches structurally — while proving the tool was
 
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -19,7 +21,7 @@ from pawbot.agent.blackbox.replayer import (
     ReplayProvider,
     compare_messages,
 )
-from pawbot.agent.hook import AgentRunHookContext
+from pawbot.agent.hook import AgentHookContext, AgentRunHookContext
 from pawbot.agent.runner import AgentRunner, AgentRunSpec
 from pawbot.agent.tools import ToolResult
 from pawbot.agent.tools.base import Tool, tool_parameters
@@ -364,3 +366,44 @@ async def test_public_sanitized_fixture_is_loadable() -> None:
     second = await provider.chat_with_retry([])
     assert first.tool_calls[0].name == "echo"
     assert second.content == "done"
+
+
+async def test_cancelled_recording_keeps_unknown_side_effect_evidence(tmp_path: Path) -> None:
+    directory = tmp_path / "cancelled"
+    controller = BlackboxController(str(directory))
+    recorder = controller.turn_hook(
+        "cancelled-turn",
+        [{"role": "user", "content": "run"}],
+        session_key="test",
+        model="fake-model",
+    )
+    context = AgentHookContext(
+        iteration=0,
+        messages=[],
+        tool_states=[{
+            "call_id": "call-1",
+            "name": "echo",
+            "state": "unknown",
+            "side_effect": "may_have_occurred",
+        }],
+    )
+    await recorder.on_execute_tool_cancelled(
+        context,
+        ToolCallRequest(id="call-1", name="echo", arguments={"text": "hi"}),
+        object(),
+        {"text": "hi"},
+    )
+    await recorder.on_finally(AgentRunHookContext(
+        messages=[],
+        stop_reason="cancelled",
+        exception=asyncio.CancelledError(),
+        tool_states=context.tool_states,
+    ))
+
+    records = [
+        json.loads(line)
+        for line in (directory / "tools.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert records[0]["status"] == "unknown"
+    assert records[0]["execution"]["side_effect"] == "may_have_occurred"
+    assert json.loads((directory / "turns.jsonl").read_text(encoding="utf-8"))["complete"] is False

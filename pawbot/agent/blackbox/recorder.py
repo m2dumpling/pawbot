@@ -130,6 +130,7 @@ class TurnRecorder(AgentHook):
         self._initial_messages = initial_messages
         self._tools_definitions = tools_definitions or []
         self._response_index = 0
+        self._turn_written = False
 
     def _append_tools(self, record: dict[str, Any]) -> None:
         with open(self._dir / _TOOL_JSONL, "a", encoding="utf-8") as fh:
@@ -139,6 +140,41 @@ class TurnRecorder(AgentHook):
         # Nothing to do at iteration start; the LLM rail is written after each
         # response is observed (see after_iteration).
         return
+
+    async def on_execute_tool_cancelled(
+        self,
+        context: AgentHookContext,
+        tool_call: ToolCallRequest,
+        tool: Any,
+        params: Any,
+    ) -> None:
+        """Persist an unknown-side-effect marker before cancellation unwinds."""
+        del tool
+        args = cast(dict[str, Any], params) if isinstance(params, dict) else {}
+        execution = (
+            context.tool_states[-1]
+            if context.tool_states
+            else {
+                "call_id": tool_call.id,
+                "name": tool_call.name,
+                "state": "unknown",
+                "side_effect": "may_have_occurred",
+            }
+        )
+        self._append_tools({
+            "kind": "tool",
+            "schema_version": _BLACKBOX_SCHEMA_VERSION,
+            "turn_id": self._turn_id,
+            "iteration": context.iteration,
+            "invocation_index": len(context.tool_states) - 1,
+            "name": tool_call.name,
+            "key": tool_key(tool_call.name, args),
+            "args": _json_safe(args),
+            "status": "unknown",
+            "detail": "tool execution cancelled; side effect status is unknown",
+            "execution": _json_safe(execution),
+            "result": "Tool execution was cancelled; inspect the external system before retrying.",
+        })
 
     async def after_iteration(self, context: AgentHookContext) -> None:
         """Record the provider response and final classified tool results."""
@@ -198,6 +234,11 @@ class TurnRecorder(AgentHook):
                 "args": _json_safe(args),
                 "status": str(event.get("status") or "ok"),
                 "detail": event.get("detail", ""),
+                "execution": _json_safe(
+                    context.tool_states[index]
+                    if index < len(context.tool_states)
+                    else {"state": "succeeded"},
+                ),
                 "result": _json_safe(result),
             })
 
@@ -206,6 +247,7 @@ class TurnRecorder(AgentHook):
             fh.write(json.dumps({
                 "kind": "turn",
                 "schema_version": _BLACKBOX_SCHEMA_VERSION,
+                "complete": True,
                 "turn_id": self._turn_id,
                 "session_key": self._session_key,
                 "model": self._model,
@@ -217,7 +259,33 @@ class TurnRecorder(AgentHook):
                 "usage": (
                     context.usage.to_dict() if context.usage is not None else None
                 ),
+                "tool_states": _json_safe(context.tool_states),
+                "budget": _json_safe(context.budget),
             }, ensure_ascii=False, default=repr) + "\n")
+        self._turn_written = True
+
+    async def on_finally(self, context: AgentRunHookContext) -> None:
+        """Keep an aborted turn visible as an incomplete diagnostic artifact."""
+        if self._turn_written:
+            return
+        with open(self._dir / _TURNS_JSONL, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "kind": "turn",
+                "schema_version": _BLACKBOX_SCHEMA_VERSION,
+                "complete": False,
+                "turn_id": self._turn_id,
+                "session_key": self._session_key,
+                "model": self._model,
+                "initial_messages": _json_safe(self._initial_messages),
+                "final_messages": _json_safe(context.messages),
+                "final_content": context.final_content,
+                "stop_reason": context.stop_reason or "cancelled",
+                "error": context.error,
+                "tools": _json_safe(self._tools_definitions),
+                "tool_states": _json_safe(context.tool_states),
+                "budget": _json_safe(context.budget),
+            }, ensure_ascii=False, default=repr) + "\n")
+        self._turn_written = True
 
 
 class BlackboxController:

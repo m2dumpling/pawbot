@@ -271,6 +271,10 @@ class ExecTool(Tool):
     def exclusive(self) -> bool:
         return True
 
+    @property
+    def capabilities(self) -> frozenset[str]:
+        return frozenset({"execute", "write"})
+
     async def execute(
         self, command: str | None = None, cmd: str | None = None,
         working_dir: str | None = None, workdir: str | None = None,

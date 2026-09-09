@@ -1013,11 +1013,29 @@ class Consolidator:
             return []
         return session.get_history()
 
-    def _persist_last_summary(self, session: Session, summary: str | None) -> None:
+    def _persist_last_summary(
+        self,
+        session: Session,
+        summary: str | None,
+        *,
+        trigger: str = "token_threshold",
+        archive_start: int | None = None,
+        archive_end: int | None = None,
+        estimated_tokens: int | None = None,
+        context_window_tokens: int | None = None,
+    ) -> None:
         if summary and summary != "(nothing)":
             session.metadata["_last_summary"] = {
                 "text": summary,
                 "last_active": session.updated_at.isoformat(),
+            }
+            session.metadata["_summary_checkpoint"] = {
+                "trigger": trigger,
+                "archive_start": archive_start,
+                "archive_end": archive_end,
+                "estimated_tokens": estimated_tokens,
+                "context_window_tokens": context_window_tokens,
+                "created_at": session.updated_at.isoformat(),
             }
             self.sessions.save(session)
 
@@ -1170,7 +1188,14 @@ class Consolidator:
             # Persist the last summary to session metadata so it can be injected
             # into the runtime context on the next prepare_session() call, aligning
             # the summary injection strategy with AutoCompact._archive().
-            self._persist_last_summary(session, last_summary)
+            self._persist_last_summary(
+                session,
+                last_summary,
+                archive_start=end_idx - len(chunk),
+                archive_end=end_idx,
+                estimated_tokens=estimated,
+                context_window_tokens=runtime.context_window_tokens,
+            )
 
     async def compact_idle_session(
         self,
@@ -1214,6 +1239,14 @@ class Consolidator:
                 session.metadata["_last_summary"] = {
                     "text": summary,
                     "last_active": last_active.isoformat(),
+                }
+                session.metadata["_summary_checkpoint"] = {
+                    "trigger": "idle_timeout",
+                    "archive_start": archive_start,
+                    "archive_end": archive_end,
+                    "estimated_tokens": None,
+                    "context_window_tokens": runtime.context_window_tokens,
+                    "created_at": last_active.isoformat(),
                 }
 
             # A turn can append while the provider call is in flight. Advance only

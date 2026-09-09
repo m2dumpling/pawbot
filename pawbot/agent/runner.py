@@ -14,11 +14,13 @@ from typing import Any, cast
 
 from loguru import logger
 
+from pawbot.agent.budget import TurnBudget, TurnBudgetReason, budget_limit_message
 from pawbot.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
 )
 from pawbot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
+from pawbot.agent.tools.base import ToolResult
 from pawbot.agent.tools.execution import execute_tool_calls
 from pawbot.agent.tools.registry import ToolRegistry
 from pawbot.llm_usage.context import (
@@ -116,6 +118,8 @@ class AgentRunSpec:
     finalize_on_max_iterations: bool = True
     provider_state: ProviderConversationState | None = None
     llm_usage_source: LLMUsageSource | None = None
+    budget: TurnBudget | None = None
+    denied_tool_capabilities: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(slots=True)
@@ -133,6 +137,8 @@ class AgentRunResult:
     # Terminal tail to emit when the preceding final-content prefix was already streamed.
     pending_stream_content: str | None = None
     provider_state: ProviderConversationState | None = field(default=None, repr=False)
+    tool_states: list[dict[str, Any]] = field(default_factory=list)
+    budget: dict[str, Any] | None = None
 
 
 @dataclass
@@ -159,6 +165,7 @@ class _TurnState:
     injection_cycles: int = 0
     compacted_tool_call_ids: set[str] = field(default_factory=set)
     pending_stream_content: str | None = None
+    tool_states: list[dict[str, Any]] = field(default_factory=list)
 
 
 class AgentRunner:
@@ -449,12 +456,16 @@ class AgentRunner:
             context.messages = deepcopy(messages)
             context.stop_reason = "cancelled"
             context.error = None
+            if spec.budget is not None:
+                context.budget = spec.budget.snapshot()
             context.exception = exc
             raise
         except Exception as exc:
             context.messages = deepcopy(messages)
             context.stop_reason = "error"
             context.error = f"Error: {type(exc).__name__}: {exc}"
+            if spec.budget is not None:
+                context.budget = spec.budget.snapshot()
             context.exception = exc
             await hook.on_error(context)
             raise
@@ -466,7 +477,9 @@ class AgentRunner:
             context.stop_reason = result.stop_reason
             context.error = result.error
             context.tool_events = deepcopy(result.tool_events)
+            context.tool_states = deepcopy(result.tool_states)
             context.had_injections = result.had_injections
+            context.budget = deepcopy(result.budget)
             context.exception = None
             if context.error is not None:
                 await hook.on_error(context)
@@ -503,6 +516,8 @@ class AgentRunner:
         instead of sending an ungoverned copy.
         """
         state = _TurnState()
+        budget = spec.budget or TurnBudget(max_iterations=spec.max_iterations)
+        budget.start()
         conversation_state = ProviderConversationStateController(
             provider=spec.runtime.provider,
             model=spec.runtime.model,
@@ -524,6 +539,11 @@ class AgentRunner:
         )
 
         for iteration in range(spec.max_iterations):
+            budget.note_iteration(iteration)
+            budget_reason = budget.limit_reason()
+            if budget_reason is not None:
+                self._finish_budget_limit(messages, state, budget, budget_reason)
+                break
             messages_for_model = self.context_governor.prepare_for_model(
                 governance_config,
                 messages,
@@ -533,6 +553,7 @@ class AgentRunner:
                 iteration=iteration,
                 messages=messages,
                 session_key=spec.session_key,
+                budget=budget.snapshot(),
             )
             await hook.before_iteration(context)
             provider_context = conversation_state.prepare_request(
@@ -561,6 +582,8 @@ class AgentRunner:
             response.content = cleaned_content
             raw_usage = self._usage_or_estimate(spec, messages_for_model, response)
             context.usage = raw_usage
+            budget.observe_usage(raw_usage)
+            context.budget = budget.snapshot()
             state.usage = self._merge_usage(state.usage, raw_usage)
             if reasoning_text and not context.streamed_reasoning:
                 await hook.emit_reasoning(reasoning_text)
@@ -568,6 +591,24 @@ class AgentRunner:
                 context.streamed_reasoning = True
 
             if response.should_execute_tools:
+                tool_budget_reason = budget.try_consume_tool_calls(len(response.tool_calls))
+                if tool_budget_reason is None:
+                    # A model response can itself consume the remaining token,
+                    # wall-time, or cost allowance. Do not start its tools in
+                    # that case; the response is still captured as evidence.
+                    tool_budget_reason = budget.limit_reason()
+                if tool_budget_reason is not None:
+                    await self._finish_blocked_tool_calls(
+                        spec,
+                        hook,
+                        messages,
+                        response,
+                        context,
+                        state,
+                        budget,
+                        tool_budget_reason,
+                    )
+                    break
                 await self._run_tool_iteration(
                     spec,
                     hook,
@@ -579,6 +620,7 @@ class AgentRunner:
                     iteration,
                     state,
                 )
+                state.tool_states.extend(context.tool_states)
                 continue
 
             outcome = await self._run_terminal_iteration(
@@ -592,6 +634,7 @@ class AgentRunner:
                 conversation_state,
                 iteration,
                 state,
+                budget,
             )
             if outcome == "continue":
                 continue
@@ -599,7 +642,7 @@ class AgentRunner:
                 break
         else:
             await self._run_max_iterations_fallback(
-                spec, hook, messages, conversation_state, state
+                spec, hook, messages, conversation_state, state, budget
             )
 
         return AgentRunResult(
@@ -613,7 +656,74 @@ class AgentRunner:
             had_injections=state.had_injections,
             pending_stream_content=state.pending_stream_content,
             provider_state=conversation_state.finish(messages),
+            tool_states=state.tool_states,
+            budget=budget.snapshot(),
         )
+
+    @staticmethod
+    def _finish_budget_limit(
+        messages: list[dict[str, Any]],
+        state: _TurnState,
+        budget: TurnBudget,
+        reason: TurnBudgetReason,
+    ) -> None:
+        content = budget_limit_message(reason, budget)
+        state.stop_reason = reason
+        state.final_content = content
+        AgentRunner._append_final_message(messages, content)
+
+    async def _finish_blocked_tool_calls(
+        self,
+        spec: AgentRunSpec,
+        hook: AgentHook,
+        messages: list[dict[str, Any]],
+        response: Any,
+        context: AgentHookContext,
+        state: _TurnState,
+        budget: TurnBudget,
+        reason: TurnBudgetReason,
+    ) -> None:
+        """Close a turn with valid assistant/tool pairs when tools are blocked."""
+        assistant_message = build_assistant_message(
+            response.content or "",
+            tool_calls=[tc.to_openai_tool_call() for tc in response.tool_calls],
+            reasoning_content=response.reasoning_content,
+            thinking_blocks=response.thinking_blocks,
+        )
+        messages.append(assistant_message)
+        blocked_content = budget_limit_message(reason, budget)
+        context.tool_results = []
+        context.tool_events = []
+        for tool_call in response.tool_calls:
+            result = ToolResult.error(blocked_content)
+            event = {
+                "name": tool_call.name,
+                "status": "error",
+                "detail": f"blocked by turn budget: {reason}",
+            }
+            context.tool_results.append(result)
+            context.tool_events.append(event)
+            context.tool_states.append({
+                "call_id": tool_call.id,
+                "name": tool_call.name,
+                "state": "blocked",
+                "side_effect": "not_started",
+                "reason": reason,
+            })
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "name": tool_call.name,
+                "content": str(result),
+            })
+        state.tool_events.extend(context.tool_events)
+        state.tool_states.extend(context.tool_states)
+        state.stop_reason = reason
+        state.final_content = blocked_content
+        context.final_content = blocked_content
+        context.stop_reason = reason
+        await hook.after_iteration(context)
+        self._append_final_message(messages, blocked_content)
 
     async def _run_tool_iteration(
         self,
@@ -665,6 +775,7 @@ class AgentRunner:
             workspace_violation_counts=state.workspace_violation_counts,
             hook=hook,
             context=context,
+            denied_tool_capabilities=spec.denied_tool_capabilities,
         )
         state.tool_events.extend(new_events)
         state.tools_used.extend(
@@ -737,6 +848,7 @@ class AgentRunner:
         conversation_state: ProviderConversationStateController,
         iteration: int,
         state: _TurnState,
+        budget: TurnBudget,
     ) -> str | None:
         """Handle a non-tool response, returning the loop control signal.
 
@@ -785,6 +897,8 @@ class AgentRunner:
                 conversation_state=conversation_state,
             )
             retry_usage = self._usage_or_estimate(spec, retry_messages, response)
+            budget.observe_usage(retry_usage)
+            context.budget = budget.snapshot()
             state.usage = self._merge_usage(state.usage, retry_usage)
             context.usage = self._merge_usage(context.usage, retry_usage)
             context.response = response
@@ -955,6 +1069,7 @@ class AgentRunner:
         messages: list[dict[str, Any]],
         conversation_state: ProviderConversationStateController,
         state: _TurnState,
+        budget: TurnBudget,
     ) -> None:
         """Run the for-else branch: drain injections and finalize on budget exhaustion."""
         state.stop_reason = "max_iterations"
@@ -974,6 +1089,7 @@ class AgentRunner:
                 messages,
                 state.usage,
                 conversation_state,
+                budget=budget,
             )
         if terminal_content is None:
             terminal_content = self._max_iterations_fallback(spec)
@@ -1302,6 +1418,8 @@ class AgentRunner:
         messages: list[dict[str, Any]],
         usage: LLMUsage | None,
         conversation_state: ProviderConversationStateController,
+        *,
+        budget: TurnBudget,
     ) -> tuple[str | None, LLMUsage | None]:
         retry_messages = self._budget_exhausted_finalization_messages(messages)
         try:
@@ -1320,6 +1438,7 @@ class AgentRunner:
             return None, usage
 
         raw_usage = self._usage_or_estimate(spec, retry_messages, response)
+        budget.observe_usage(raw_usage)
         usage = self._merge_usage(usage, raw_usage)
         if response.finish_reason == "error" or response.has_tool_calls:
             logger.warning(

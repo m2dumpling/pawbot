@@ -100,3 +100,25 @@ jobs:
           uv venv "$RUNNER_TEMP/pawbot-release-venv" --python 3.11
           uv pip install --python "$RUNNER_TEMP/pawbot-release-venv/bin/python" dist/*.whl
           "$RUNNER_TEMP/pawbot-release-venv/bin/pawbot" --help
+
+  record-replay:
+    name: Record & Replay fixture
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Replay sanitized fixture
+        run: >-
+          uv run --no-sync pytest -q
+          tests/test_blackbox.py::test_public_sanitized_fixture_is_loadable
+          tests/test_blackbox.py::test_record_then_replay_is_deterministic

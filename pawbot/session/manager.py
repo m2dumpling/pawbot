@@ -484,6 +484,7 @@ class Session:
         self.provider_state = None
         self.updated_at = datetime.now()
         self.metadata.pop("_last_summary", None)
+        self.metadata.pop("_summary_checkpoint", None)
 
     def retain_recent_legal_suffix(
         self,
@@ -2028,6 +2029,7 @@ class SessionManager:
         last_consolidated = min(source.last_archived, len(copied))
         if source.last_archived > len(copied):
             metadata.pop("_last_summary", None)
+            metadata.pop("_summary_checkpoint", None)
             last_consolidated = 0
 
         now = datetime.now()

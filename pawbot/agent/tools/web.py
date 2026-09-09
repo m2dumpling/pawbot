@@ -464,6 +464,10 @@ class WebSearchTool(Tool):
         return True
 
     @property
+    def capabilities(self) -> frozenset[str]:
+        return frozenset({"network", "read"})
+
+    @property
     def exclusive(self) -> bool:
         """DuckDuckGo searches are serialized because ddgs is not concurrency-safe."""
         return self._effective_provider() == "duckduckgo"
@@ -1095,6 +1099,10 @@ class WebFetchTool(Tool):
     @property
     def read_only(self) -> bool:
         return True
+
+    @property
+    def capabilities(self) -> frozenset[str]:
+        return frozenset({"network", "read"})
 
     async def execute(
         self,

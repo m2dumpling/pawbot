@@ -61,7 +61,11 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
                 except (json.JSONDecodeError, TypeError):
                     malformed_lines += 1
                     continue
-                if isinstance(raw_record, dict) and cast(dict[str, Any], raw_record).get("kind") == "turn":
+                if (
+                    isinstance(raw_record, dict)
+                    and cast(dict[str, Any], raw_record).get("kind") == "turn"
+                    and cast(dict[str, Any], raw_record).get("complete") is not False
+                ):
                     valid_turns += 1
                 else:
                     malformed_lines += 1
@@ -128,6 +132,45 @@ def _cassette_name(turn_id: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in turn_id) + ".yaml"
 
 
+def _turn_diagnostics(turn: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build a compact explanation layer above the raw replay rails."""
+    tool_events = [event for event in events if event.get("kind") == "tool"]
+    failed_tools = [
+        {
+            "name": event.get("name"),
+            "status": event.get("status"),
+            "detail": event.get("detail", ""),
+        }
+        for event in tool_events
+        if event.get("status") not in {None, "ok"}
+    ]
+    unknown_side_effects = [
+        {
+            "name": event.get("name"),
+            "call_id": (
+                event.get("execution", {}).get("call_id")
+                if isinstance(event.get("execution"), dict)
+                else None
+            ),
+            "detail": "工具被取消或执行状态未知，请人工确认副作用",
+        }
+        for event in tool_events
+        if isinstance(event.get("execution"), dict)
+        and event["execution"].get("state") == "unknown"
+    ]
+    return {
+        "stop_reason": turn.get("stop_reason") or "unknown",
+        "failed_tools": failed_tools,
+        "unknown_side_effects": unknown_side_effects,
+        "budget": turn.get("budget"),
+        "message": (
+            "本轮正常结束"
+            if not failed_tools and not unknown_side_effects
+            else "本轮包含失败工具或未确认副作用，请先查看对应工具记录"
+        ),
+    }
+
+
 async def _detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
     """Return the raw rails for one turn without re-running the agent."""
     directory_name = str(payload.get("directory") or "")
@@ -173,6 +216,7 @@ async def _detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
         "turn_id": turn_id,
         "turn": _json_safe(turn),
         "events": _json_safe(events),
+        "diagnostics": _json_safe(_turn_diagnostics(turn, events)),
         "counts": {
             "llm_responses": sum(1 for event in events if event.get("kind") == "llm"),
             "tool_calls": sum(1 for event in events if event.get("kind") == "tool"),

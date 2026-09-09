@@ -1,5 +1,6 @@
 """Agent core module."""
 
+from pawbot.agent.budget import TurnBudget
 from pawbot.agent.context import ContextBuilder
 from pawbot.agent.hook import (
     AgentHook,
@@ -23,6 +24,7 @@ __all__ = [
     "AgentLoop",
     "CompositeHook",
     "ContextBuilder",
+    "TurnBudget",
     "MemoryStore",
     "SkillsLoader",
     "SubagentManager",

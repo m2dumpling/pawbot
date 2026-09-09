@@ -4,7 +4,11 @@ import sys
 from pathlib import Path
 
 from pawbot.cli import entry
-from pawbot.cli.entry import _agent_invocation_args, _native_tui_candidate
+from pawbot.cli.entry import (
+    _agent_invocation_args,
+    _native_tui_candidate,
+    _replay_invocation_args,
+)
 
 
 def test_root_command_routes_to_agent_without_copying_agent_options() -> None:
@@ -15,6 +19,17 @@ def test_root_command_routes_to_agent_without_copying_agent_options() -> None:
         "./project",
     ]
     assert _agent_invocation_args(["-mhello"]) == ["-mhello"]
+
+
+def test_replay_alias_routes_directory_to_agent_flag() -> None:
+    assert _replay_invocation_args(["replay", ".pawbot/blackbox/run-1", "--break-at", "2"]) == [
+        "--replay",
+        ".pawbot/blackbox/run-1",
+        "--break-at",
+        "2",
+    ]
+    assert _replay_invocation_args(["replay"]) == ["--replay"]
+    assert _replay_invocation_args(["replay", "--help"]) == ["--help"]
 
 
 def test_root_metadata_and_subcommands_keep_the_root_cli() -> None:

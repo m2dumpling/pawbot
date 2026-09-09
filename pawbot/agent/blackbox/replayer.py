@@ -97,7 +97,7 @@ class ReplayStore:
             return False, None
         record = records[index]
         result = record.get("result")
-        if record.get("status") == "error":
+        if record.get("status") in {"error", "unknown", "cancelled", "blocked"}:
             from pawbot.agent.tools.base import ToolResult
 
             return True, ToolResult.error(str(result))
@@ -312,6 +312,7 @@ class ReplayController:
         # (e.g. the WebUI) can surface the dumped messages instead of a bare
         # exception.
         self.last_breakpoint: dict[str, Any] | None = None
+        self.last_benchmark: list[dict[str, Any]] = []
 
     def _load_turns(self) -> list[RecordedTurn]:
         turns: list[RecordedTurn] = []
@@ -319,6 +320,8 @@ class ReplayController:
             for index, line in enumerate(fh):
                 record = json.loads(line)
                 if record.get("kind") != "turn":
+                    continue
+                if record.get("complete") is False:
                     continue
                 turns.append(RecordedTurn(
                     turn_id=record.get("turn_id", f"turn_{index}"),

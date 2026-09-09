@@ -197,6 +197,17 @@ class Tool(ABC):
         return self.read_only and not self.exclusive
 
     @property
+    def capabilities(self) -> frozenset[str]:
+        """Coarse capability labels used by turn-level policy checks.
+
+        Tool implementations may override this with more precise labels such
+        as ``network`` or ``execute``.  The default deliberately stays small
+        so third-party tools remain compatible: read-only tools are ``read``;
+        other tools are treated as potentially mutating ``write`` tools.
+        """
+        return frozenset({"read" if self.read_only else "write"})
+
+    @property
     def exclusive(self) -> bool:
         """Whether this tool should run alone even if concurrency is enabled."""
         return False

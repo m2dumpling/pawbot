@@ -23,6 +23,9 @@ class AgentHookContext:
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     tool_results: list[Any] = field(default_factory=list)
     tool_events: list[dict[str, str]] = field(default_factory=list)
+    # Detailed lifecycle records are intentionally separate from the legacy
+    # ``tool_events`` projection consumed by channels and existing clients.
+    tool_states: list[dict[str, Any]] = field(default_factory=list)
     streamed_content: bool = False
     streamed_reasoning: bool = False
     stream_continues_current_message: bool = False
@@ -30,6 +33,7 @@ class AgentHookContext:
     stop_reason: str | None = None
     error: str | None = None
     session_key: str | None = None
+    budget: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -43,8 +47,10 @@ class AgentRunHookContext:
     stop_reason: str | None = None
     error: str | None = None
     tool_events: list[dict[str, str]] = field(default_factory=list)
+    tool_states: list[dict[str, Any]] = field(default_factory=list)
     had_injections: bool = False
     exception: BaseException | None = None
+    budget: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -130,6 +136,16 @@ class AgentHook:
         params: Any,
         error: Any,
     ) -> None:
+        pass
+
+    async def on_execute_tool_cancelled(
+        self,
+        context: AgentHookContext,
+        tool_call: ToolCallRequest,
+        tool: Any,
+        params: Any,
+    ) -> None:
+        """Observe cancellation after a tool may already have side effects."""
         pass
 
     async def emit_reasoning(self, reasoning_content: str | None) -> None:
@@ -255,6 +271,21 @@ class CompositeHook(AgentHook):
             error,
         )
 
+    async def on_execute_tool_cancelled(
+        self,
+        context: AgentHookContext,
+        tool_call: ToolCallRequest,
+        tool: Any,
+        params: Any,
+    ) -> None:
+        await self._for_each_hook_safe(
+            "on_execute_tool_cancelled",
+            context,
+            tool_call,
+            tool,
+            params,
+        )
+
     async def emit_reasoning(self, reasoning_content: str | None) -> None:
         await self._for_each_hook_safe("emit_reasoning", reasoning_content)
 
@@ -288,7 +319,9 @@ class SDKCaptureHook(AgentHook):
         self.stop_reason: str | None = None
         self.error: str | None = None
         self.tool_events: list[dict[str, str]] = []
+        self.tool_states: list[dict[str, Any]] = []
         self.had_injections: bool = False
+        self.budget: dict[str, Any] | None = None
 
     async def after_iteration(self, context: AgentHookContext) -> None:
         for call in context.tool_calls:
@@ -298,6 +331,7 @@ class SDKCaptureHook(AgentHook):
         self.stop_reason = context.stop_reason
         self.error = context.error
         self.tool_events = list(context.tool_events)
+        self.tool_states = list(context.tool_states)
 
     async def after_run(self, context: AgentRunHookContext) -> None:
         self.tools_used = list(context.tools_used)
@@ -306,4 +340,6 @@ class SDKCaptureHook(AgentHook):
         self.stop_reason = context.stop_reason
         self.error = context.error
         self.tool_events = list(context.tool_events)
+        self.tool_states = list(context.tool_states)
         self.had_injections = context.had_injections
+        self.budget = context.budget

@@ -36,6 +36,8 @@ After replay, expand any turn in the report to inspect the raw execution rail:
 - the original `initial_messages` context and tool schemas;
 - every recorded LLM response, including tool calls and finish reason;
 - every tool name, JSON argument, status/detail, and returned value;
+- every tool lifecycle state (`planned`, `running`, `succeeded`, `failed`,
+  `blocked`, or `unknown`) and whether a side effect may have occurred;
 - the final message envelope, usage, session, model, and optional HTTP cassette.
 
 The green summary answers only whether the current orchestration reproduced the
@@ -50,6 +52,12 @@ pawbot agent \
   --record .pawbot/blackbox/run-1
 
 pawbot agent --replay .pawbot/blackbox/run-1
+
+# concise equivalent
+pawbot replay .pawbot/blackbox/run-1
+
+# include provider-free local timing metrics
+pawbot replay .pawbot/blackbox/run-1 --benchmark
 
 pawbot agent \
   --replay .pawbot/blackbox/run-1 \
@@ -67,7 +75,37 @@ pawbot agent \
 ```
 
 The JSON rails are authoritative. The optional HTTP cassette is an audit layer
-and is not required for replay.
+and is not required for replay. A turn envelope also carries a budget snapshot
+when resource limits are configured, including iterations, tool calls, elapsed
+time, input/output tokens, and estimated cost when pricing is known.
+
+## Turn budgets and capability policy
+
+The limits are configured under `agents.defaults` and are optional. Existing
+configurations keep their previous behavior when these fields are omitted:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "maxToolCalls": 40,
+      "maxTurnSeconds": 900,
+      "maxInputTokens": 400000,
+      "maxOutputTokens": 80000,
+      "maxTurnCostUsd": 1.0,
+      "inputCostPerMillionUsd": 0.2,
+      "outputCostPerMillionUsd": 0.8
+    }
+  },
+  "tools": {
+    "deniedCapabilities": ["execute"]
+  }
+}
+```
+
+The runner stops before starting the next operation once a configured limit is
+reached. `deniedCapabilities` is a coarse defense-in-depth policy; workspace
+scope, SSRF checks, sandboxing, and per-tool validation still apply.
 
 ## Privacy boundary
 

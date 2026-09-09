@@ -8,7 +8,7 @@ public technical documents that are useful for users and contributors.
 
 - [Record & Replay](record-replay.md)
 - [Model capability registry](model-capabilities.md)
-- [Release notes](release-notes/0.3.0.md)
+- [Release notes](release-notes/0.3.1.md)
 - [Changelog](../CHANGELOG.md)
 
 The detailed interview learning materials under `docs/interview/` are local

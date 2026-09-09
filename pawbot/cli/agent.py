@@ -98,6 +98,11 @@ def agent(
     break_at: int | None = typer.Option(
         None, "--break-at", help="In replay mode: pause at iteration N and dump messages",
     ),
+    benchmark: bool = typer.Option(
+        False,
+        "--benchmark/--no-benchmark",
+        help="In replay mode: print local replay timing and resource metrics",
+    ),
 ):
     """Chat in the terminal or send one message non-interactively."""
     message = _option_value(message, None)
@@ -111,8 +116,11 @@ def agent(
     record = _option_value(record, None)
     replay = _option_value(replay, None)
     break_at = _option_value(break_at, None)
+    benchmark = _option_value(benchmark, False)
     if record is not None and replay is not None:
         raise typer.BadParameter("--record and --replay are mutually exclusive", param_hint="--record")
+    if benchmark and replay is None:
+        raise typer.BadParameter("--benchmark requires --replay", param_hint="--benchmark")
     runtime_config = _load_runtime_config(config, workspace)
     theme = theme.strip().lower()
     if theme not in {"auto", "dark", "light"}:
@@ -289,6 +297,13 @@ def agent(
             print(
                 f"\nReplay complete: {len(results) - failed}/{len(results)} turns deterministic"
             )
+            if benchmark:
+                print("\nReplay benchmark (local, provider-free):")
+                for row in getattr(blackbox, "last_benchmark", []):
+                    print(
+                        "  {turn_id}: {elapsed_ms} ms, {messages} messages, "
+                        "{diffs} diffs".format(**row)
+                    )
             if failed:
                 raise SystemExit(1)
 

@@ -21,6 +21,7 @@ from pawbot.agent import context as agent_context
 from pawbot.agent import model_presets as preset_helpers
 from pawbot.agent.autocompact import AutoCompact
 from pawbot.agent.automation_turns import publish_next_deferred_turn
+from pawbot.agent.budget import TurnBudget
 from pawbot.agent.context import ContextBuilder, PersistedPromptContextResolver
 from pawbot.agent.cron_turns import CronTurnCoordinator
 from pawbot.agent.hook import AgentHook, AgentTurnHookFactory
@@ -189,6 +190,13 @@ class AgentLoop(TurnStagesMixin):
         workspace: Path,
         model: str | None = None,
         max_iterations: int | None = None,
+        max_tool_calls: int | None = None,
+        max_turn_seconds: float | None = None,
+        max_input_tokens: int | None = None,
+        max_output_tokens: int | None = None,
+        max_turn_cost_usd: float | None = None,
+        input_cost_per_million_usd: float | None = None,
+        output_cost_per_million_usd: float | None = None,
         max_concurrent_subagents: int | None = None,
         context_window_tokens: int | None = None,
         context_block_limit: int | None = None,
@@ -253,6 +261,13 @@ class AgentLoop(TurnStagesMixin):
         self.max_iterations = (
             max_iterations if max_iterations is not None else defaults.max_tool_iterations
         )
+        self.max_tool_calls = max_tool_calls
+        self.max_turn_seconds = max_turn_seconds
+        self.max_input_tokens = max_input_tokens
+        self.max_output_tokens = max_output_tokens
+        self.max_turn_cost_usd = max_turn_cost_usd
+        self.input_cost_per_million_usd = input_cost_per_million_usd
+        self.output_cost_per_million_usd = output_cost_per_million_usd
         initial_context_window = (
             context_window_tokens
             if context_window_tokens is not None
@@ -285,6 +300,7 @@ class AgentLoop(TurnStagesMixin):
             else defaults.tool_hint_max_length
         )
         self.tools_config = _tc
+        self.denied_tool_capabilities = frozenset(_tc.denied_capabilities)
         self.web_config = _tc.web
         self.exec_config = _tc.exec
         self._image_generation_provider_configs = dict(image_generation_provider_configs or {})
@@ -443,6 +459,13 @@ class AgentLoop(TurnStagesMixin):
             workspace=config.workspace_path,
             model=model,
             max_iterations=defaults.max_tool_iterations,
+            max_tool_calls=defaults.max_tool_calls,
+            max_turn_seconds=defaults.max_turn_seconds,
+            max_input_tokens=defaults.max_input_tokens,
+            max_output_tokens=defaults.max_output_tokens,
+            max_turn_cost_usd=defaults.max_turn_cost_usd,
+            input_cost_per_million_usd=defaults.input_cost_per_million_usd,
+            output_cost_per_million_usd=defaults.output_cost_per_million_usd,
             max_concurrent_subagents=defaults.max_concurrent_subagents,
             context_window_tokens=context_window_tokens,
             context_block_limit=defaults.context_block_limit,
@@ -1179,6 +1202,16 @@ class AgentLoop(TurnStagesMixin):
                 tools=effective_tools,
                 runtime=runtime,
                 max_iterations=self.max_iterations,
+                budget=TurnBudget(
+                    max_iterations=self.max_iterations,
+                    max_tool_calls=self.max_tool_calls,
+                    max_wall_seconds=self.max_turn_seconds,
+                    max_input_tokens=self.max_input_tokens,
+                    max_output_tokens=self.max_output_tokens,
+                    max_cost_usd=self.max_turn_cost_usd,
+                    input_cost_per_million_usd=self.input_cost_per_million_usd,
+                    output_cost_per_million_usd=self.output_cost_per_million_usd,
+                ),
                 max_tool_result_chars=self.max_tool_result_chars,
                 hook=hook,
                 concurrent_tools=True,
@@ -1205,6 +1238,7 @@ class AgentLoop(TurnStagesMixin):
                     message_metadata=request_metadata,
                 ),
                 provider_state=provider_state,
+                denied_tool_capabilities=self.denied_tool_capabilities,
                 llm_usage_source=source_from_request(
                     active_session_key,
                     channel=request_ctx.channel,
@@ -1972,8 +2006,10 @@ class AgentLoop(TurnStagesMixin):
         from pawbot.agent.blackbox import ReplayBreakpoint, ReplayProvider, compare_messages
 
         results: list[tuple[str, bool, list[str]]] = []
+        benchmark_rows: list[dict[str, Any]] = []
         runtime = self.llm_runtime()
         for turn in controller.turns:
+            replay_started_at = time.perf_counter()
             probe = controller.probe_hook(turn)
             replay_provider = ReplayProvider(runtime.provider, controller.store, turn.turn_id)
             replay_runtime = LLMRuntime.capture(
@@ -2008,6 +2044,15 @@ class AgentLoop(TurnStagesMixin):
                 raise
             diffs = compare_messages(result.messages, turn.final_messages)
             results.append((turn.turn_id, not diffs, diffs))
+            benchmark_rows.append({
+                "turn_id": turn.turn_id,
+                "elapsed_ms": max(0, int((time.perf_counter() - replay_started_at) * 1000)),
+                "messages": len(result.messages),
+                "diffs": len(diffs),
+                "tool_calls": len(result.tool_states),
+            })
+        if hasattr(controller, "last_benchmark"):
+            controller.last_benchmark = benchmark_rows
         return results
 
     async def process_direct(

@@ -42,6 +42,39 @@ pawbot 最适合 Agent 开发者的能力是 **Record & Replay（录制与回放
 - 通过 WebUI、CLI/TUI、API 或聊天通道访问同一个 Agent；
 - 提供 Python SDK 和 OpenAI 兼容 API，方便集成到自己的应用。
 
+## 一次回合是怎样执行的？
+
+所有入口最终都会进入同一套回合流水线。核心边界在于：编排循环和
+Provider/工具轨道彼此分离，因此一次执行可以被预算、取消、checkpoint、
+恢复和离线回放，而不需要把真实 Provider 或工具带进回归测试。
+
+```mermaid
+flowchart LR
+    A[WebUI / CLI / API / 聊天通道] --> B[Gateway / Message Bus]
+    B --> C[AgentLoop 回合流水线]
+    C --> C1[恢复 Session]
+    C1 --> C2[压缩上下文]
+    C2 --> C3[分发命令]
+    C3 --> C4[构建 Provider 请求]
+    C4 --> D[AgentRunner ReAct 循环]
+    D --> E[Provider 响应]
+    D --> F[Tool Registry]
+    F --> G[批处理规划]
+    G --> H[工具执行器]
+    H --> I[工具观测]
+    D --> J[预算 + checkpoint]
+    J --> K[Session 恢复]
+    E --> L[LLM 响应轨]
+    I --> M[工具观测轨]
+    L --> N[Record & Replay]
+    M --> N
+    N --> O[离线回放 + 结构化 diff]
+    D --> P[回合投递 / UI 事件]
+```
+
+因此，一次执行不再只是一个无边界的 `while` 循环，而是一个具备资源
+上限、恢复 checkpoint、工具副作用边界和离线证据链的执行单元。
+
 ## 为什么是 pawbot？
 
 ### 一个 Agent，多种入口
@@ -96,13 +129,13 @@ uv tool install --force --upgrade pawbot-ai; pawbot
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.1/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.0/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.1/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
@@ -179,6 +212,15 @@ uv run pawbot agent \
 uv run pawbot agent --replay .pawbot/blackbox/demo
 ```
 
+也可以使用简写：
+
+```bash
+uv run pawbot replay .pawbot/blackbox/demo
+```
+
+加上 `--benchmark` 可以输出不请求 Provider 的本地回放耗时，以及消息和 diff
+数量。
+
 在 WebUI 的 **设置 → Record & Replay** 中也可以完成同样的流程：点击“开始录制”，
 可以切换或新开多个会话，最后点击“停止录制”。录制窗口属于整个 Agent，停止前的
 所有回合都会写入同一份样本。残缺样本会保留并显示原因，也可以直接在前端删除，
@@ -235,7 +277,7 @@ Provider + ToolRegistry + MCP
 
 - [文档索引](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
-- [发布说明](docs/release-notes/0.3.0.md)
+- [发布说明](docs/release-notes/0.3.1.md)
 - [发布与 PyPI 指南](docs/publishing.md)
 - [变更记录](CHANGELOG.md)
 - [贡献指南](CONTRIBUTING.md)

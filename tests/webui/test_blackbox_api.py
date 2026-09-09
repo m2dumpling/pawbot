@@ -117,3 +117,5 @@ async def test_detail_returns_raw_turn_and_execution_rail(tmp_path: Path) -> Non
     assert [event["kind"] for event in result["events"]] == ["llm", "tool"]
     assert result["events"][1]["result"] == "echo:hi"
     assert result["counts"] == {"llm_responses": 1, "tool_calls": 1}
+    assert result["diagnostics"]["stop_reason"] == "unknown"
+    assert result["diagnostics"]["failed_tools"] == []

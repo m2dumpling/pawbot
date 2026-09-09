@@ -1169,6 +1169,7 @@ export interface BlackboxDetail {
     llm_responses: number;
     tool_calls: number;
   };
+  diagnostics: Record<string, unknown>;
   files: {
     turns: string;
     tools: string | null;

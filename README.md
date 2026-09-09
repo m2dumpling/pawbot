@@ -45,6 +45,40 @@ without another model request, another token bill, or real tool side effects.
 - Reach the same agent from the WebUI, CLI/TUI, API, or supported chat channels.
 - Expose a Python SDK and an OpenAI-compatible API for your own applications.
 
+## How a turn works
+
+Every entry point reaches the same turn pipeline. The important boundary is
+between the orchestration loop and the provider/tool rails: the former can be
+budgeted, cancelled, checkpointed, and replayed without making the provider or
+real tools part of a regression test.
+
+```mermaid
+flowchart LR
+    A[WebUI / CLI / API / chat channels] --> B[Gateway / Message Bus]
+    B --> C[AgentLoop turn pipeline]
+    C --> C1[Restore session]
+    C1 --> C2[Compact context]
+    C2 --> C3[Dispatch command]
+    C3 --> C4[Build provider request]
+    C4 --> D[AgentRunner ReAct loop]
+    D --> E[Provider response]
+    D --> F[Tool Registry]
+    F --> G[Batch planner]
+    G --> H[Call executor]
+    H --> I[Tool observation]
+    D --> J[Budget + checkpoint]
+    J --> K[Session recovery]
+    E --> L[LLM response rail]
+    I --> M[Tool observation rail]
+    L --> N[Record & Replay]
+    M --> N
+    N --> O[Offline replay + structural diff]
+    D --> P[Turn delivery / UI events]
+```
+
+The result is one execution unit with explicit resource limits, recovery
+checkpoints, tool side-effect boundaries, and an offline evidence trail.
+
 ## Why pawbot?
 
 ### One agent, several ways to use it
@@ -103,13 +137,13 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.1/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.0/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.1/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a
@@ -188,6 +222,15 @@ Replay it offline:
 uv run pawbot agent --replay .pawbot/blackbox/demo
 ```
 
+The concise equivalent is:
+
+```bash
+uv run pawbot replay .pawbot/blackbox/demo
+```
+
+Add `--benchmark` to print provider-free local replay timing and message/diff
+counts.
+
 In the WebUI, **Settings → Record & Replay** provides the same workflow:
 click **Start recording**, run tasks across as many chat sessions as needed,
 then click **Stop recording**. The recording window belongs to the agent, so
@@ -252,7 +295,7 @@ The core source is organized around:
 
 - [Documentation index](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
-- [Release notes](docs/release-notes/0.3.0.md)
+- [Release notes](docs/release-notes/0.3.1.md)
 - [Publishing guide](docs/publishing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)

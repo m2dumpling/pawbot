@@ -31,6 +31,17 @@ def _agent_invocation_args(args: list[str]) -> list[str] | None:
     return None
 
 
+def _replay_invocation_args(args: list[str]) -> list[str] | None:
+    """Translate the concise ``pawbot replay DIR`` form to the agent command."""
+    if not args or args[0] != "replay":
+        return None
+    if len(args) == 1:
+        return ["--replay"]
+    if args[1] in {"--help", "-h"}:
+        return [args[1]]
+    return ["--replay", args[1], *args[2:]]
+
+
 def _native_tui_candidate(args: list[str]) -> bool:
     """Return whether ``agent`` can start without the classic agent stack."""
     if not args or args[0] != "agent":
@@ -87,6 +98,12 @@ def main() -> None:
     # and pass the request through this environment variable. Keep those requests
     # on the root command so subcommands remain discoverable.
     shell_completion = bool(os.environ.get("_PAWBOT_COMPLETE"))
+    replay_args = None if shell_completion else _replay_invocation_args(raw_args)
+    if replay_args is not None:
+        set_cli_process_identity(["agent", *replay_args])
+        _configure_windows_console()
+        _run_agent(replay_args, prog_name="pawbot replay")
+        return
     if not raw_args and not shell_completion:
         set_cli_process_identity(["webui"])
         _configure_windows_console()
