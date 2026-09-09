@@ -2879,7 +2879,11 @@ describe("PawbotTui layout", () => {
     setup = await createRenderer({ width: 72, height: 20, screenMode: "alternate-screen" })
     const app = mount(setup, sent)
     const composer = (app as unknown as { composer: TextareaRenderable }).composer
-    const state = app as unknown as { unsentSubmit: boolean; ready: boolean }
+    const state = app as unknown as {
+      unsentSubmit: boolean
+      submitPending: boolean
+      ready: boolean
+    }
     const connection = app as unknown as {
       handleStatus(
         status: "reconnecting" | "connected",
@@ -2898,9 +2902,9 @@ describe("PawbotTui layout", () => {
     connection.handleStatus("connected")
     composer.setText("draft before attach")
     composer.submit()
-    await waitUntil(() => state.unsentSubmit)
+    await waitUntil(() => state.unsentSubmit && !state.submitPending)
     composer.submit()
-    await waitUntil(() => state.unsentSubmit)
+    await waitUntil(() => state.unsentSubmit && !state.submitPending)
 
     expect(sent).toEqual([])
     expect(composer.plainText).toBe("draft before attach")
