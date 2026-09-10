@@ -22,15 +22,18 @@ from pawbot.cli.webui_support import (
     _gateway_health_url,
     _gateway_instance_command,
     _host_for_local_browser,
+    _is_headless_environment,
     _load_webui_setup_config,
     _open_webui_browser,
     _prepare_webui_bundle_for_gateway,
     _print_foreground_port_conflict,
+    _print_headless_webui_instructions,
     _print_webui_access_instructions,
     _resolve_webui_config_path,
     _run_quick_start_for_webui,
     _tcp_endpoint_reachable,
     _warn_webui_bind_scope,
+    _webui_access_url,
     _webui_browser_url,
     _webui_build_mode_for_interactive,
     _webui_display_url,
@@ -78,6 +81,11 @@ def webui(
         "--host",
         help="WebUI bind host; use 0.0.0.0 on a server for remote access",
     ),
+    remote: bool = typer.Option(
+        False,
+        "--remote",
+        help="Bind the WebUI to all interfaces for access from another machine",
+    ),
     gateway_port: int | None = typer.Option(
         None,
         "--gateway-port",
@@ -112,6 +120,13 @@ def webui(
     )
 
     cli_terminal._ensure_interactive_tty_mode()
+    if remote:
+        if host is not None and host.strip() not in {"0.0.0.0", "::"}:
+            raise typer.BadParameter(
+                "--remote cannot be combined with a non-wildcard --host",
+                param_hint="--host",
+            )
+        host = host or "0.0.0.0"
     config_path = _resolve_webui_config_path(config)
     if background:
         import shlex
@@ -186,6 +201,13 @@ def webui(
         console.print(f"[red]Error: invalid WebUI channel config: {exc}[/red]")
         raise typer.Exit(1) from exc
 
+    headless = _is_headless_environment()
+    if headless and not no_open:
+        no_open = True
+        console.print(
+            "[yellow]No graphical browser detected; keeping the WebUI command-line only.[/yellow]"
+        )
+
     if created_config or provider_error or changed_webui or workspace:
         save_config(setup_config, config_path)
         console.print(f"[green]✓[/green] Saved config: {config_path}")
@@ -203,8 +225,11 @@ def webui(
         console.print(f"WebUI dev: [cyan]{_webui_display_url(dev_browser_url)}[/cyan]")
         console.print(f"WebUI gateway: [cyan]{_webui_display_url(webui_url)}[/cyan]")
     else:
-        console.print(f"WebUI: [cyan]{_webui_display_url(webui_url)}[/cyan]")
+        display_url = _webui_access_url(setup_config)
+        console.print(f"WebUI: [cyan]{_webui_display_url(display_url)}[/cyan]")
     _print_webui_access_instructions(setup_config, config_path)
+    if headless:
+        _print_headless_webui_instructions(setup_config, config_path)
     gateway_health_url = _gateway_health_url(
         runtime_config.gateway.host,
         effective_gateway_port,
@@ -343,7 +368,7 @@ def webui(
     webui_port_taken = webui_ready
     if gateway_port_taken or webui_port_taken:
         _print_foreground_port_conflict(
-            webui_url=webui_url,
+            webui_url=_webui_access_url(setup_config),
             gateway_host=runtime_config.gateway.host,
             gateway_port=effective_gateway_port,
         )

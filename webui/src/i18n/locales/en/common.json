@@ -192,6 +192,167 @@
       "detectedReasoning": "Detected",
       "reasoningLevels": "Thinking"
     },
+    "enhancements": {
+      "title": "Record & Replay",
+      "explainer": "Save a real agent run as a test sample. Replay it offline with the recorded model responses and tool results to see whether the current orchestration still follows the same path.",
+      "steps": {
+        "recordTitle": "1. Record a real task",
+        "recordDetail": "The request, model decisions, tool calls, and observations are saved.",
+        "changeTitle": "2. Change code or investigate",
+        "changeDetail": "Useful when checking the agent loop, context handling, or tool flow.",
+        "replayTitle": "3. Replay and compare",
+        "replayDetail": "No token cost, no network calls, and no real tool side effects."
+      },
+      "status": {
+        "ready": "Ready to replay",
+        "incomplete": "Incomplete recording",
+        "notRecorded": "Not recorded",
+        "notReported": "Not reported",
+        "unnamedTool": "Unnamed tool",
+        "noTools": "No tools called",
+        "moreTools": "{{count}} more tool types",
+        "missingTurnFile": "Turn record is missing",
+        "unreadable": "Recording cannot be read",
+        "malformed": "Recording format is invalid",
+        "noValidTurns": "No valid turns were found"
+      },
+      "stopReason": {
+        "completed": "Completed",
+        "toolCalls": "Waiting for tool results",
+        "maxIterations": "Execution limit reached",
+        "cancelled": "Cancelled",
+        "error": "Execution error",
+        "unknown": "Not reported"
+      },
+      "toolStatus": {
+        "ok": "Succeeded",
+        "error": "Failed",
+        "blocked": "Blocked",
+        "cancelled": "Cancelled",
+        "unknown": "Uncertain",
+        "notReported": "Not reported"
+      },
+      "expand": {
+        "fullContent": "Show full content",
+        "fullThinking": "Show full thinking trace",
+        "fullModelOutput": "Show full model output",
+        "fullAnswer": "Show full answer"
+      },
+      "timeline": {
+        "toolExecution": "Tool execution",
+        "modelDecision": "Model decision",
+        "providerError": "Model request failed",
+        "step": "Step {{number}}",
+        "decision": "Decision {{number}}",
+        "unrecordedDecision": "Decision number not recorded",
+        "arguments": "Arguments",
+        "result": "Tool result",
+        "detail": "Execution detail",
+        "thinking": "Model thinking trace",
+        "modelCalls": "Model decided to call:",
+        "modelOutput": "Model output",
+        "noVisibleText": "The model returned no displayable text; the runner continued to the next step."
+      },
+      "turn": {
+        "processTitle": "Turn execution",
+        "userMessage": "User request",
+        "userMessageDetail": "The content sent to the agent when this task started",
+        "finalAnswer": "Final answer",
+        "finalAnswerDetail": "The content the agent showed to the user",
+        "model": "Model",
+        "modelDecisions": "Model decisions",
+        "toolExecutions": "Tool executions",
+        "failedToolCount": "{{count}} tool call(s) failed",
+        "providerErrorCount": "{{count}} model request(s) failed",
+        "unknownSideEffectCount": "{{count}} tool result(s) are uncertain",
+        "inspectRaw": "Inspect the readable trace or raw record for details.",
+        "attention": "Needs attention",
+        "attentionDescription": "{{failed}} failed tool calls{{separator}}{{uncertain}} tool results are uncertain. Inspect the raw record.",
+        "toolSummary": "This run included {{tools}}.",
+        "noToolSummary": "This task did not call a tool; the model produced the final answer directly.",
+        "traceTitle": "What happened in this turn",
+        "traceDescription": "The timeline follows the recorded order: model thinking, model decisions, tool calls, and tool results. Expand long values when needed. For the untouched JSON, open the raw record.",
+        "noEvents": "This turn has no separate model or tool events. It may come from an older recording format.",
+        "resultTitle": "Turn result",
+        "replaySafety": "Replay uses only the recorded model responses and tool results. It does not call the provider again or execute real tools.",
+        "rawRecord": "View raw record",
+        "turnId": "Turn ID"
+      },
+      "raw": {
+        "title": "Complete raw record",
+        "badge": "No summary · No rewriting",
+        "description": "This is every JSON value saved for the turn: the turn envelope plus model and tool events in execution order. It may contain prompts, file paths, and other sensitive information.",
+        "turnRecord": "Turn envelope",
+        "events": "Raw execution events",
+        "eventCount": "tools.jsonl · {{count}} events",
+        "noEvents": "This turn has no separate model or tool events.",
+        "associatedFiles": "Files: turns.jsonl{{tools}}{{cassette}}",
+        "dialogTitle": "Turn raw record",
+        "dialogDescription": "This is the saved data without rewriting. Close the window to return to the readable execution view."
+      },
+      "recording": {
+        "activeTitle": "Collecting an execution sample",
+        "inactiveTitle": "Record a task",
+        "activeHint": "Every task from every session will be added until you stop recording.",
+        "inactiveHint": "Start recording, run the task you want to keep, then stop when it is complete.",
+        "stop": "Stop recording",
+        "start": "Start recording",
+        "refresh": "Refresh",
+        "currentSample": "Current sample:",
+        "allSessions": "Every session is included between Start and Stop.",
+        "offlineInfo": "Offline replay uses the sample's model responses and tool results. It will not make a new model request or execute a real tool.",
+        "breakpointPrefix": "Optional breakpoint: pause at model decision",
+        "breakpointSuffix": "",
+        "savedTurns": "{{count}} task(s) saved",
+        "replay": "Replay offline",
+        "breakpointReplay": "Replay to breakpoint",
+        "empty": "No execution samples yet. Start recording, run a task, then come back and stop recording.",
+        "deleteConfirm": "Delete recording “{{name}}”? This removes its prompts, model responses, and tool results permanently.",
+        "loadingDetail": "Loading this turn's execution trace…"
+      },
+      "result": {
+        "title": "Offline replay result",
+        "replayLabel": "Replay result",
+        "originalLabel": "Original execution",
+        "replaySummary": "{{matched}}/{{total}} turns replayed consistently",
+        "replayConsistent": "Consistent",
+        "replayDifferencesShort": "{{count}} difference(s)",
+        "replayConsistentHint": "The current orchestration produced the same observable messages and tool flow.",
+        "replayDifferenceHint": "Open a turn to inspect the recorded and replayed message differences.",
+        "originalHealthy": "No recorded errors",
+        "originalIssues": "{{count}} turn(s) originally contained errors",
+        "originalBreakdown": "{{tools}} failed tool call(s) · {{models}} failed model request(s) · {{unknown}} uncertain side effect(s)",
+        "description": "Replay consistency and the original run's health are shown separately. Replay does not grade the model's answer quality.",
+        "detailHint": "Open a turn for the readable trace. Use View raw record for the complete JSON.",
+        "turn": "Turn {{number}}",
+        "matched": "No orchestration difference found",
+        "differences": "{{count}} difference(s) found",
+        "differenceTitle": "Differences from the recording",
+        "loading": "Loading this turn's execution trace…"
+      },
+      "original": {
+        "success": "Completed without recorded errors",
+        "toolError": "Tool execution failed",
+        "modelError": "Model request failed",
+        "multipleErrors": "Model and tool errors",
+        "unknownSideEffect": "Tool side effect is uncertain",
+        "cancelled": "Original run was cancelled",
+        "executionError": "Original run ended with an error",
+        "unknown": "Original result not reported"
+      },
+      "breakpoint": {
+        "paused": "Paused at model decision {{number}}",
+        "messages": "Messages at the breakpoint"
+      },
+      "budget": {
+        "title": "Context budget",
+        "estimatedTokens": "Estimated tokens",
+        "contextWindow": "Context window",
+        "messages": "Messages",
+        "usage": "Window usage",
+        "hint": "{{tools}} tools · {{model}}"
+      }
+    },
     "rows": {
       "theme": "Theme",
       "language": "Language",
@@ -1299,7 +1460,11 @@
           },
           "model": {
             "title": "Model",
-            "description": "Show or switch the active model preset."
+            "description": "Show available models or switch the model for this session."
+          },
+          "models": {
+            "title": "List available models",
+            "description": "Refresh the current provider's model catalogue."
           },
           "history": {
             "title": "Show conversation history",

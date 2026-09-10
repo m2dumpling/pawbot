@@ -13,12 +13,15 @@
 
 ### A self-hosted AI agent for your browser, terminal, and chat apps.
 
+> **Choose your interface:** run `pawbot` for the WebUI, or run `pawbot agent`
+> for the native terminal UI (TUI).
+
 Give pawbot a task and it can read and write files, run commands, search the
 web, call MCP tools, remember conversations, and run scheduled work. Use the
 WebUI when you want a visual workspace, the terminal when you want speed, or a
 chat app when you want your agent to be available wherever you are.
 
-The feature that makes pawbot different to develop is **Record & Replay**:
+The feature that makes pawbot different is **Record & Replay**:
 record one real agent turn, then replay it offline while you change the code —
 without another model request, another token bill, or real tool side effects.
 
@@ -202,10 +205,10 @@ On a Linux server, localhost is intentionally private to the server. Bind the
 WebUI explicitly when you need to open it from another machine:
 
 ```bash
-pawbot webui --host 0.0.0.0 --yes --no-open
+pawbot webui --remote --yes --no-open
 ```
 
-Then open `http://<server-ip>:8765` and enter the
+Then open `http://<server-ip>:8765` from your own computer and enter the
 `channels.websocket.tokenIssueSecret` value from the server's config file. Keep
 the gateway health port (`18790` by default) private, allow only the WebUI port
 through the firewall, and use HTTPS/reverse proxy before exposing it to the
@@ -219,8 +222,10 @@ Then open `http://127.0.0.1:8765` on your own computer.
 
 ### CLI
 
-Run `pawbot` without a subcommand to open the WebUI. Use `pawbot agent` when
-you explicitly want the terminal/TUI client.
+`pawbot` opens the WebUI. `pawbot agent` opens the native terminal UI (TUI).
+On a headless Linux server, `pawbot` keeps the WebUI on localhost and prints a
+ready-to-copy SSH tunnel command; use `pawbot webui --remote --yes --no-open`
+when you deliberately want to access it from another machine.
 
 Run one request and exit:
 
@@ -295,12 +300,18 @@ governance, continuation, and the final message structure. See
 boundary.
 
 When choosing a model in **Settings → Models**, pawbot also reads capability
-metadata from the provider's `/models` response when available, then applies
-curated metadata for known model IDs. Context length and supported reasoning
-levels are shown before saving; if an API does not advertise them, the UI says
-so and keeps the value manually editable. See the curated
+metadata from the provider's `/models` response when available. For known model
+IDs, the curated capability registry wins over stale or generic provider values;
+unknown models use provider metadata and remain manually editable. Context
+length and supported reasoning levels are shown before saving. See the curated
 [model capability registry](docs/model-capabilities.md) for the fallback table
 and context-window migration rules.
+
+Inside the TUI, `/model` lists the current provider's discovered models and
+their known context/reasoning metadata. `/model <model-id>` pins a discovered
+or manually entered model to the current session; `/model default` returns to
+the configured default. The global configuration is not changed by a session
+pin.
 
 ## Channels and integrations
 

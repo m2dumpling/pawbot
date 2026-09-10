@@ -72,8 +72,24 @@ export interface WorkspaceScopePayload {
 }
 
 export interface RuntimeControls {
-  modelPresets: Array<{ name: string; model: string }>
+  modelPresets: Array<{
+    name: string
+    model: string
+    contextWindow?: number
+    reasoningEffortValues?: string[]
+  }>
+  availableModels?: RuntimeModelOption[]
+  modelProvider?: string
   canUseFullAccess: boolean
+}
+
+export interface RuntimeModelOption {
+  id: string
+  label?: string
+  provider?: string
+  contextWindow?: number
+  reasoningEffortValues?: string[]
+  description?: string
 }
 
 export type RecoveryStatus = "resuming" | "awaiting_user" | "recovered" | "failed"
@@ -92,6 +108,8 @@ export type InboundEvent =
       event: "attached"
       chat_id: string
       model_preset?: string | null
+      model_name?: string
+      context_window_tokens?: number
       usage?: TokenUsage
       recovery_state?: RecoveryState
     }
@@ -326,6 +344,7 @@ export interface SessionSummary {
   updatedAt: string | null
   runStartedAt: number | null
   modelPreset: string | null
+  modelName?: string | null
   recoveryState?: RecoveryState | null
   workspaceScope?: WorkspaceScopePayload | null
   pinned: boolean
@@ -497,6 +516,8 @@ function decodeInboundEvent(value: unknown): InboundEvent | null | undefined {
     && ((record.model_preset !== undefined
       && record.model_preset !== null
       && typeof record.model_preset !== "string")
+      || !optional(record.model_name, "string")
+      || !optional(record.context_window_tokens, "number")
       || (record.usage !== undefined && !isTokenUsage(record.usage))
       || (record.recovery_state !== undefined && !isRecoveryState(record.recovery_state)))
   ) return null
@@ -750,7 +771,9 @@ export async function fetchRuntimeControls(
   apiToken: string,
   reauthenticate?: ApiReauthenticator,
 ): Promise<RuntimeControls> {
-  if (!apiUrl || !apiToken) return { modelPresets: [], canUseFullAccess: false }
+  if (!apiUrl || !apiToken) {
+    return { modelPresets: [], availableModels: [], modelProvider: "", canUseFullAccess: false }
+  }
   const [settingsResponse, workspacesResponse] = await Promise.all([
     fetchApi(apiUrl, apiToken, "/api/settings", reauthenticate),
     fetchApi(apiUrl, apiToken, "/api/workspaces", reauthenticate).catch(() => null),
@@ -758,7 +781,10 @@ export async function fetchRuntimeControls(
   if (!settingsResponse.ok) {
     throw new Error(`settings request failed: HTTP ${settingsResponse.status}`)
   }
-  const settings = await settingsResponse.json() as { model_presets?: unknown[] }
+  const settings = await settingsResponse.json() as {
+    model_presets?: unknown[]
+    agent?: unknown
+  }
   const workspaces = workspacesResponse?.ok
     ? await workspacesResponse.json() as { controls?: unknown }
     : {}
@@ -767,11 +793,60 @@ export async function fetchRuntimeControls(
       return []
     }
     const name = value.name.trim()
-    return name ? [{ name, model: value.model.trim() }] : []
+    if (!name || !value.model.trim()) return []
+    const contextWindow = typeof value.context_window_tokens === "number"
+      && value.context_window_tokens > 0
+      ? value.context_window_tokens
+      : undefined
+    const reasoningEffortValues = Array.isArray(value.reasoning_effort_values)
+      ? value.reasoning_effort_values.filter((item): item is string => typeof item === "string")
+      : undefined
+    return [{
+      name,
+      model: value.model.trim(),
+      ...(contextWindow !== undefined ? { contextWindow } : {}),
+      ...(reasoningEffortValues?.length ? { reasoningEffortValues } : {}),
+    }]
   })
+  const agent = isRecord(settings.agent) ? settings.agent : {}
+  const modelProvider = typeof agent.resolved_provider === "string"
+    ? agent.resolved_provider.trim()
+    : typeof agent.provider === "string" ? agent.provider.trim() : ""
+  let availableModels: RuntimeModelOption[] = []
+  if (modelProvider && modelProvider !== "auto") {
+    const modelResponse = await fetchApi(
+      apiUrl,
+      apiToken,
+      `/api/settings/provider-models?provider=${encodeURIComponent(modelProvider)}`,
+      reauthenticate,
+    ).catch(() => null)
+    if (modelResponse?.ok) {
+      const payload = await modelResponse.json() as { models?: unknown[] }
+      availableModels = (payload.models || []).flatMap((value): RuntimeModelOption[] => {
+        if (!isRecord(value) || typeof value.id !== "string" || !value.id.trim()) return []
+        const contextWindow = typeof value.context_window === "number"
+          && value.context_window > 0 ? value.context_window : undefined
+        const reasoningEffortValues = Array.isArray(value.reasoning_effort_values)
+          ? value.reasoning_effort_values.filter((item): item is string => typeof item === "string")
+          : undefined
+        return [{
+          id: value.id.trim(),
+          ...(typeof value.label === "string" && value.label.trim()
+            ? { label: value.label.trim() } : {}),
+          provider: modelProvider,
+          ...(contextWindow !== undefined ? { contextWindow } : {}),
+          ...(reasoningEffortValues?.length ? { reasoningEffortValues } : {}),
+          ...(typeof value.description === "string" && value.description.trim()
+            ? { description: value.description.trim() } : {}),
+        }]
+      })
+    }
+  }
   const controls = isRecord(workspaces.controls) ? workspaces.controls : {}
   return {
     modelPresets,
+    ...(availableModels.length ? { availableModels } : {}),
+    ...(modelProvider ? { modelProvider } : {}),
     canUseFullAccess: controls.can_use_full_access === true,
   }
 }
@@ -819,6 +894,9 @@ export async function fetchSessions(
       modelPreset: typeof value.model_preset === "string" && value.model_preset.trim()
         ? value.model_preset.trim()
         : null,
+      ...(typeof value.model_name === "string" && value.model_name.trim()
+        ? { modelName: value.model_name.trim() }
+        : {}),
       ...(isRecoveryState(value.recovery_state)
         ? { recoveryState: value.recovery_state }
         : {}),

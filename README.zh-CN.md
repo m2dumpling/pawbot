@@ -13,6 +13,9 @@
 
 ### 一个可以运行在浏览器、终端和聊天应用里的自托管 AI Agent。
 
+> **选择使用界面：** 运行 `pawbot` 打开 WebUI，运行 `pawbot agent` 打开原生
+> 终端界面（TUI）。
+
 把任务交给 pawbot，它可以读写文件、执行命令、搜索网页、调用 MCP 工具、
 记住对话，并按计划执行工作。想要可视化操作就用 WebUI，想要速度就用终端，
 想让 Agent 随时可用就接入聊天应用。
@@ -189,10 +192,10 @@ uv run pawbot webui
 电脑无法直接打开。需要远程访问时显式绑定所有网卡：
 
 ```bash
-pawbot webui --host 0.0.0.0 --yes --no-open
+pawbot webui --remote --yes --no-open
 ```
 
-然后在本地浏览器打开 `http://<服务器IP>:8765`，并填写服务器配置文件中的
+然后在你自己的电脑浏览器打开 `http://<服务器IP>:8765`，并填写服务器配置文件中的
 `channels.websocket.tokenIssueSecret`。只放行 WebUI 端口，默认 `18790` 的
 Gateway health 端口必须保持内网；公网使用前应加 HTTPS/reverse proxy。更
 安全的方式是使用 SSH 隧道：
@@ -205,8 +208,10 @@ ssh -N -L 8765:127.0.0.1:8765 <用户>@<服务器>
 
 ### CLI
 
-直接运行 `pawbot` 会打开 WebUI；如果明确需要终端/TUI，请运行
-`pawbot agent`。
+直接运行 `pawbot` 会打开 WebUI；运行 `pawbot agent` 会打开原生终端界面（TUI）。
+在没有图形界面的 Linux 服务器上，`pawbot` 会保持 WebUI 只监听本机，并直接
+打印可复制的 SSH 隧道命令；需要从另一台电脑访问时，运行
+`pawbot webui --remote --yes --no-open`。
 
 执行一次请求并退出：
 
@@ -276,8 +281,13 @@ uv run pawbot agent \
 [docs/record-replay.md](docs/record-replay.md)。
 
 在 **设置 → 模型** 中选择模型时，pawbot 会优先读取提供商 `/models` 返回的能力信息，
-并对已知模型 ID 使用内置能力目录兜底。上下文长度和支持的思考档位会在保存前显示；
-如果接口没有提供这些信息，界面会明确标记未知，并保留手动设置入口。
+但对于已知模型 ID，内置能力目录会覆盖提供商返回的过时或通用值；未知模型才使用
+接口提供的信息，并保留手动设置入口。上下文长度和支持的思考档位会在保存前显示。
+详见[模型能力目录](docs/model-capabilities.md)。
+
+在 TUI 中，`/model` 会列出当前提供商探查到的模型，并显示已知的上下文长度和思考档位。
+`/model <model-id>` 会把已探查或手动输入的模型固定到当前会话，`/model default` 恢复
+配置中的默认模型；这个会话选择不会改写全局配置。
 
 ## 通道与集成
 

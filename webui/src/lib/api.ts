@@ -1144,6 +1144,7 @@ export interface BlackboxRecording {
   turns: number;
   status: "ready" | "invalid";
   message: string;
+  reason?: "missing_turn_file" | "unreadable" | "malformed" | "no_valid_turns" | string;
 }
 
 export interface BlackboxReplayResult {
@@ -1151,12 +1152,23 @@ export interface BlackboxReplayResult {
   total_turns: number;
   deterministic_turns: number;
   all_deterministic: boolean;
+  original_issue_turns: number;
+  original_failed_tool_calls: number;
+  original_provider_errors: number;
+  original_unknown_side_effects: number;
   summary: string;
   results: Array<{
     turn_id: string;
     ok: boolean;
     diffs: unknown[];
     summary: string;
+    original_execution: {
+      status: string;
+      ok: boolean;
+      failed_tool_count: number;
+      provider_error_count: number;
+      unknown_side_effect_count: number;
+    };
   }>;
 }
 

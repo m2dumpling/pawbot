@@ -3,7 +3,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from pawbot.providers.base import LLMUsage
-from pawbot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
+from pawbot.session.model_selection import (
+    SESSION_MODEL_OVERRIDE_METADATA_KEY,
+    SESSION_MODEL_PRESET_METADATA_KEY,
+)
 from pawbot.session.recovery import RECOVERY_METADATA_KEY
 from pawbot.webui.session_projection import WebUISessionProjection
 
@@ -48,6 +51,25 @@ def test_attach_fields_tolerate_missing_or_invalid_session_metadata() -> None:
     assert projection.attach_fields("websocket:invalid") == {"model_preset": None}
     log.warning.assert_called_once()
     assert WebUISessionProjection(None).attach_fields("websocket:missing") == {}
+
+
+def test_attach_fields_exposes_a_live_session_model_pin() -> None:
+    sessions = MagicMock()
+    sessions.read_session_metadata.return_value = {
+        "metadata": {
+            SESSION_MODEL_OVERRIDE_METADATA_KEY: {
+                "model": "deepseek-v4-flash",
+                "provider": "deepseek",
+                "context_window_tokens": 1_048_576,
+            }
+        }
+    }
+
+    assert WebUISessionProjection(sessions).attach_fields("websocket:chat-1") == {
+        "model_preset": None,
+        "model_name": "deepseek-v4-flash",
+        "context_window_tokens": 1_048_576,
+    }
 
 
 def test_hydration_events_restore_goal_and_running_turn(

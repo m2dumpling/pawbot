@@ -403,7 +403,7 @@ show_install_success() {
     resolved_pawbot="$(command -v pawbot 2>/dev/null || true)"
     if [ "$resolved_pawbot" = "$pawbot_launcher" ]; then
       info "CLI verified on PATH: $resolved_pawbot"
-      info "Run: pawbot webui"
+      info "Run: pawbot (opens the WebUI)"
     else
       bin_dir="$(dirname "$pawbot_launcher")"
       info "CLI verified at: $pawbot_launcher"
@@ -412,15 +412,15 @@ show_install_success() {
       else
         info "This shell does not include $bin_dir in PATH."
       fi
-      info "Run now: \"$pawbot_launcher\" webui"
+      info "Run now: \"$pawbot_launcher\" (opens the WebUI)"
       info "For future shells: export PATH=\"$bin_dir:\$PATH\""
     fi
   elif command -v pawbot >/dev/null 2>&1; then
     info "CLI verified on PATH: $(command -v pawbot)"
-    info "Run: pawbot webui"
+    info "Run: pawbot (opens the WebUI)"
   else
     info "CLI verified through: $(pawbot_try_command)"
-    info "Run: $(pawbot_try_command) webui"
+    info "Run: $(pawbot_try_command) (opens the WebUI)"
   fi
 }
 
@@ -428,7 +428,7 @@ show_install_success
 
 if [ "${PAWBOT_SKIP_WIZARD:-}" = "1" ]; then
   info "Skipping automatic setup because PAWBOT_SKIP_WIZARD=1."
-  info "Run this later: $(pawbot_try_command) webui"
+  info "Run this later: $(pawbot_try_command)"
   exit 0
 fi
 
@@ -436,7 +436,7 @@ if is_fresh_pawbot_install && has_browser_session; then
   if run_pawbot webui --help >/dev/null 2>&1; then
     info "Starting pawbot WebUI..."
     info "Configure your first provider and model in Settings > Models."
-    info "Run this later: $(pawbot_try_command) webui"
+    info "Run this later: $(pawbot_try_command)"
     run_pawbot webui --yes
     exit 0
   fi

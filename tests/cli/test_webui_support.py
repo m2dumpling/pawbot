@@ -3,8 +3,10 @@ from types import SimpleNamespace
 
 from pawbot.cli.webui_support import (
     _ensure_local_webui_channel,
+    _is_headless_environment,
     _prepare_webui_bundle_for_gateway,
     _print_webui_access_instructions,
+    _webui_access_url,
 )
 from pawbot.config.schema import Config
 
@@ -105,3 +107,30 @@ def test_webui_remote_access_instructions_do_not_print_the_secret(
     assert "ssh -N -L 8765:127.0.0.1:8765" in output
     assert "tokenIssueSecret" in output
     assert secret not in output
+
+
+def test_webui_access_url_uses_a_routable_placeholder_for_wildcard_bind() -> None:
+    config = Config(
+        channels={
+            "websocket": {
+                "enabled": True,
+                "host": "0.0.0.0",
+                "port": 8765,
+                "tokenIssueSecret": "secret-value",
+            }
+        }
+    )
+
+    url = _webui_access_url(config)
+
+    assert url == "http://<server-ip>:8765/#/?bootstrapSecret=secret-value"
+
+
+def test_headless_detection_is_linux_display_aware(monkeypatch) -> None:
+    monkeypatch.setattr("pawbot.cli.webui_support.sys.platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    assert _is_headless_environment() is True
+
+    monkeypatch.setenv("DISPLAY", ":99")
+    assert _is_headless_environment() is False

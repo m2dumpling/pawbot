@@ -526,7 +526,7 @@ def model_catalog_kind(spec: Any) -> str:
         return catalog
     if spec.is_transcription_only or spec.is_oauth:
         return "unsupported"
-    if spec.backend != "openai_compat" and spec.name != "minimax_anthropic":
+    if spec.backend != "openai_compat" and spec.name not in {"anthropic", "minimax_anthropic"}:
         return "unsupported"
     if spec.is_local:
         return "local"
@@ -638,6 +638,24 @@ def _normalize_reasoning_effort_values(value: Any) -> list[str] | None:
 
 def _model_reasoning_effort_values(row: Any) -> list[str] | None:
     for mapping in _model_metadata_mappings(row):
+        effort = mapping.get("effort")
+        if isinstance(effort, dict):
+            effort_mapping = cast(dict[str, Any], effort)
+            supported_efforts = [
+                str(name)
+                for name, details in effort_mapping.items()
+                if name != "supported"
+                and (
+                    details is True
+                    or (
+                        isinstance(details, dict)
+                        and cast(dict[str, Any], details).get("supported") is True
+                    )
+                )
+            ]
+            values = _normalize_reasoning_effort_values(supported_efforts)
+            if values is not None:
+                return values
         for key in (
             "reasoning_effort_values",
             "reasoningEffortValues",
@@ -689,12 +707,20 @@ def _model_row_payload(row: Any, *, spec: Any | None = None) -> dict[str, Any] |
         label = capability.label
     if description is None and capability is not None and capability.description:
         description = capability.description
-    context_window = _model_context_window(row)
-    if context_window is None and capability is not None:
-        context_window = capability.context_window
-    reasoning_effort_values = _model_reasoning_effort_values(row)
-    if reasoning_effort_values is None and capability is not None:
-        reasoning_effort_values = list(capability.reasoning_effort_values) or None
+    # The local capability table is authoritative for known model IDs.  Some
+    # gateways return generic or stale limits from ``/models`` (notably a
+    # 128K fallback for long-context models), so provider metadata must not
+    # downgrade a curated 1M window or replace its reasoning vocabulary.
+    context_window = (
+        capability.context_window
+        if capability is not None and capability.context_window is not None
+        else _model_context_window(row)
+    )
+    reasoning_effort_values = (
+        list(capability.reasoning_effort_values)
+        if capability is not None and capability.reasoning_effort_values
+        else _model_reasoning_effort_values(row)
+    )
     payload = {
         "id": model_id,
         "label": label,
@@ -789,6 +815,8 @@ def provider_models_payload(
     api_base = _resolve_env_placeholders(provider_config.api_base) or spec.default_api_base
     if spec.name == "openai" and not api_base:
         api_base = "https://api.openai.com/v1"
+    if spec.name == "anthropic" and not api_base:
+        api_base = "https://api.anthropic.com"
     if not api_base:
         return {
             **base_payload,
@@ -804,16 +832,27 @@ def provider_models_payload(
             "message": "Configure this provider before loading models.",
         }
 
-    headers = {"Accept": "application/json"}
+    default_headers = getattr(spec, "default_extra_headers", ()) or ()
+    headers: dict[str, str] = {
+        str(key): str(value)
+        for key, value in cast(tuple[tuple[str, str], ...], default_headers)
+    }
+    headers["Accept"] = "application/json"
     if api_key:
-        if spec.name == "minimax_anthropic":
+        if spec.name in {"anthropic", "minimax_anthropic"}:
             headers["X-Api-Key"] = api_key
         else:
             headers["Authorization"] = f"Bearer {api_key}"
+    if spec.name == "anthropic":
+        headers["anthropic-version"] = "2023-06-01"
+    if provider_config.extra_headers:
+        headers.update(provider_config.extra_headers)
 
     models_url = f"{api_base.rstrip('/')}/models"
-    if spec.name == "minimax_anthropic" and not api_base.rstrip("/").endswith("/v1"):
+    if spec.name in {"anthropic", "minimax_anthropic"} and not api_base.rstrip("/").endswith("/v1"):
         models_url = f"{api_base.rstrip('/')}/v1/models"
+    if spec.name == "anthropic":
+        models_url = f"{models_url}?limit=1000"
 
     try:
         response = http_get(

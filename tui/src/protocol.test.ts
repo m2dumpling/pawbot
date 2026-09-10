@@ -615,6 +615,44 @@ describe("gateway protocol", () => {
     }
   })
 
+  test("loads live provider models with curated capability metadata", async () => {
+    const original = globalThis.fetch
+    const requested: string[] = []
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      requested.push(url)
+      if (url.endsWith("/api/settings")) return new Response(JSON.stringify({
+        agent: { resolved_provider: "opencode_go" },
+        model_presets: [{ name: "default", model: "deepseek-v4-flash" }],
+      }))
+      if (url.includes("/api/settings/provider-models?provider=opencode_go")) {
+        return new Response(JSON.stringify({
+          model_count: 1,
+          models: [{
+            id: "deepseek/deepseek-v4-flash",
+            context_window: 1_048_576,
+            reasoning_effort_values: ["", "low", "high", "max"],
+          }],
+        }))
+      }
+      return new Response(JSON.stringify({ controls: { can_use_full_access: false } }))
+    }) as typeof fetch
+
+    try {
+      const controls = await fetchRuntimeControls("http://pawbot.test", "secret")
+      expect(controls.modelProvider).toBe("opencode_go")
+      expect(controls.availableModels).toEqual([{
+        id: "deepseek/deepseek-v4-flash",
+        provider: "opencode_go",
+        contextWindow: 1_048_576,
+        reasoningEffortValues: ["", "low", "high", "max"],
+      }])
+      expect(requested.some((url) => url.includes("provider-models?provider=opencode_go"))).toBe(true)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
   test("rejects malformed gateway events", () => {
     const original = globalThis.WebSocket
     let socket: FakeSocket | undefined

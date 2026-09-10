@@ -3,6 +3,39 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## Unreleased
+
+### Fixed
+
+- Localized the complete Record & Replay settings surface, including invalid
+  recording reasons, so switching the WebUI to English no longer leaves the
+  feature in Chinese.
+- Added headless Linux WebUI guidance and the `pawbot webui --remote` shortcut;
+  server startup no longer presents `127.0.0.1` as if it were a remotely
+  reachable address.
+- Sent a stable `x-opencode-session` and a Pawbot user agent for OpenCode Go
+  requests, preserving the conversation routing contract required by that
+  gateway.
+- Separated replay consistency from original execution health in the WebUI;
+  a deterministic replay can now remain visibly paired with an original tool
+  or model failure instead of looking like an overall success.
+- Added a readable model-request failure card with the recorded HTTP status,
+  provider error type, and error code.
+
+### Added
+
+- Connected the TUI model picker and `/model`/`/models` commands to the current
+  provider's live `/models` catalogue.
+- Added session-scoped model pins for live or manually entered model IDs;
+  switching a session does not rewrite the global configuration.
+- Made the curated model capability table authoritative for known model IDs so
+  stale provider metadata cannot downgrade a known context window or reasoning
+  vocabulary.
+- Enabled native Anthropic model discovery with its required authentication and
+  model-capability fields; Azure, Bedrock, and OAuth-only providers remain on
+  their dedicated/manual paths instead of being sent an incompatible generic
+  `/models` request.
+
 ## 0.3.5 - 2026-09-10
 
 ### Changed

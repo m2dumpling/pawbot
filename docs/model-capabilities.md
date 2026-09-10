@@ -6,9 +6,11 @@ is used when a provider does not expose complete metadata, and it also upgrades
 legacy 128K/200K context fallbacks when a known model has a larger official
 window. A user-selected smaller window is preserved as a manual override.
 
-When an API returns model metadata, the WebUI prefers the provider response for
-that model and uses the curated registry to fill missing fields. Unknown models
-remain editable and use the safe 200K fallback until the user chooses a value.
+When an API returns model metadata, the WebUI uses the curated registry as the
+authority for known model IDs, preventing a provider's generic or stale value
+from downgrading a known long-context model. Unknown models use the provider
+response when available, remain editable, and otherwise use the safe 200K
+fallback until the user chooses a value.
 
 ## Curated context windows
 
@@ -36,7 +38,7 @@ remain editable and use the safe 200K fallback until the user chooses a value.
 - [Mistral context limits](https://docs.mistral.ai/resources/known-limitations)
 - [MiniMax text generation models](https://platform.minimaxi.com/docs/guides/text-generation)
 
-The table is deliberately conservative: a provider-specific endpoint can
-override these values through its `/models` response, while an unknown model is
-never assumed to support a larger window merely because its name resembles a
-known family.
+The table is deliberately conservative: a provider-specific endpoint supplies
+metadata for unknown models, while a known model is resolved against this table
+first and an unknown model is never assumed to support a larger window merely
+because its name resembles a known family.

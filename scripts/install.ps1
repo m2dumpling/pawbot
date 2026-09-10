@@ -429,7 +429,7 @@ if ($script:PawbotLauncher -and $ResolvedPawbotPath) {
 }
 if ($LauncherMatchesPath) {
     Write-Info "CLI verified on PATH: $ResolvedPawbotPath"
-    Write-Info "Run: pawbot webui"
+    Write-Info "Run: pawbot (opens the WebUI)"
 } elseif ($script:PawbotLauncher) {
     Write-Info "CLI verified at: $script:PawbotLauncher"
     if ($ResolvedPawbotPath) {
@@ -437,15 +437,15 @@ if ($LauncherMatchesPath) {
     } else {
         Write-Info "This shell does not include the launcher directory in PATH."
     }
-    Write-Info "Run now: $(Get-PawbotCommand) webui"
+    Write-Info "Run now: $(Get-PawbotCommand) (opens the WebUI)"
 } else {
     Write-Info "CLI verified through: $(Get-PawbotCommand)"
-    Write-Info "Run: $(Get-PawbotCommand) webui"
+    Write-Info "Run: $(Get-PawbotCommand) (opens the WebUI)"
 }
 
 if ($env:PAWBOT_SKIP_WIZARD -eq "1") {
     Write-Info "Skipping automatic setup because PAWBOT_SKIP_WIZARD=1."
-    Write-Info "Run this later: $(Get-PawbotCommand) webui"
+        Write-Info "Run this later: $(Get-PawbotCommand)"
     return
 }
 
@@ -454,7 +454,7 @@ if ((Test-FreshPawbotInstall) -and (Test-BrowserSession)) {
     if ($LASTEXITCODE -eq 0) {
         Write-Info "Starting pawbot WebUI..."
         Write-Info "Configure your first provider and model in Settings > Models."
-        Write-Info "Run this later: $(Get-PawbotCommand) webui"
+    Write-Info "Run this later: $(Get-PawbotCommand)"
         Invoke-Pawbot @("webui", "--yes")
         if ($LASTEXITCODE -ne 0) {
             Fail "WebUI did not start."

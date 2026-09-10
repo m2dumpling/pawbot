@@ -532,6 +532,14 @@ class OpenAICompatProvider(LLMProvider):
         effective_base = api_base or (spec.default_api_base if spec else None) or None
         self._effective_base = effective_base
         self._default_headers = {"x-session-affinity": uuid.uuid4().hex}
+        # OpenCode Go routes and caches coding-agent traffic by conversation.
+        # The AgentRunner supplies the durable session key per request; this
+        # instance-local fallback keeps direct SDK calls valid as well.
+        self._opencode_session_id = uuid.uuid4().hex
+        if spec and spec.name == "opencode_go":
+            # The Go gateway asks coding agents to identify themselves with a
+            # product user-agent instead of the generic OpenAI SDK header.
+            self._default_headers["User-Agent"] = "pawbot-agent/1.0"
         if _uses_openrouter_attribution(spec, effective_base):
             self._default_headers.update(_DEFAULT_OPENROUTER_HEADERS)
         if extra_headers:
@@ -909,6 +917,7 @@ class OpenAICompatProvider(LLMProvider):
         temperature: float,
         reasoning_effort: str | None,
         tool_choice: str | dict[str, Any] | None,
+        provider_context: ProviderCallContext | None = None,
     ) -> dict[str, Any]:
         model_name = model or self.default_model
         spec = self._spec
@@ -1043,6 +1052,18 @@ class OpenAICompatProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice or "auto"
+
+        if spec and spec.name == "opencode_go":
+            # OpenCode Go is OpenAI-wire-compatible, but it still requires the
+            # coding-agent session header for routing.  ``session_id`` is the
+            # Pawbot session key (stable across turns); direct provider calls
+            # use the provider instance fallback above.
+            session_id = (
+                provider_context.session_id
+                if provider_context is not None and provider_context.session_id
+                else self._opencode_session_id
+            )
+            kwargs["extra_headers"] = {"x-opencode-session": session_id}
 
         # Backfill reasoning_content="" on assistants missing it: DeepSeek
         # thinking mode rejects history otherwise (#3554, #3584); "" reads
@@ -1967,7 +1988,7 @@ class OpenAICompatProvider(LLMProvider):
 
             kwargs = self._build_kwargs(
                 messages, tools, model, max_tokens, temperature,
-                reasoning_effort, tool_choice,
+                reasoning_effort, tool_choice, provider_context,
             )
             chat_raw = cast(
                 Any,
@@ -2063,7 +2084,7 @@ class OpenAICompatProvider(LLMProvider):
 
             kwargs = self._build_kwargs(
                 messages, tools, model, max_tokens, temperature,
-                reasoning_effort, tool_choice,
+                reasoning_effort, tool_choice, provider_context,
             )
             if self._spec and self._spec.name == "zhipu" and tools and on_tool_call_delta:
                 # Z.AI/GLM keeps streaming tool-call arguments behind an

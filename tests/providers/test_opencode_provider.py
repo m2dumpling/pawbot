@@ -1,6 +1,7 @@
 """Tests for the OpenCode Zen and OpenCode Go provider registrations."""
 
 from pawbot.config.schema import Config, ProvidersConfig
+from pawbot.providers.base import ProviderCallContext
 from pawbot.providers.openai_compat_provider import OpenAICompatProvider
 from pawbot.providers.registry import PROVIDERS, find_by_name
 
@@ -120,3 +121,24 @@ def test_opencode_prefixes_are_stripped_before_request() -> None:
         tool_choice=None,
     )
     assert go_kwargs["model"] == "o3"
+
+
+def test_opencode_go_adds_stable_session_header() -> None:
+    provider = OpenAICompatProvider(
+        api_key="opencode-key",
+        default_model="deepseek-v4-flash",
+        spec=find_by_name("opencode_go"),
+    )
+
+    kwargs = provider._build_kwargs(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        model="deepseek-v4-flash",
+        max_tokens=1024,
+        temperature=0.7,
+        reasoning_effort=None,
+        tool_choice=None,
+        provider_context=ProviderCallContext(session_id="websocket:chat-123"),
+    )
+
+    assert kwargs["extra_headers"] == {"x-opencode-session": "websocket:chat-123"}

@@ -270,6 +270,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         detect_by_base_keyword="opencode.ai/zen/go",
         default_api_base="https://opencode.ai/zen/go/v1",
         strip_model_prefixes=("opencode-go", "opencode_go"),
+        default_extra_headers=(("User-Agent", "pawbot-agent/1.0"),),
     ),
     # Hugging Face Inference Providers: OpenAI-compatible router for chat models.
     ProviderSpec(

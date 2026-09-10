@@ -36,7 +36,14 @@ def _provider(default_model: str, max_tokens: int = 123) -> MagicMock:
     return provider
 
 
-def _make_loop(tmp_path, *, preset_snapshot_loader=None, model_presets=None, model="base-model") -> AgentLoop:
+def _make_loop(
+    tmp_path,
+    *,
+    preset_snapshot_loader=None,
+    model_catalog_loader=None,
+    model_presets=None,
+    model="base-model",
+) -> AgentLoop:
     return AgentLoop(
         bus=MessageBus(),
         provider=_provider(model, max_tokens=123),
@@ -56,6 +63,7 @@ def _make_loop(tmp_path, *, preset_snapshot_loader=None, model_presets=None, mod
             ),
         },
         preset_snapshot_loader=preset_snapshot_loader,
+        model_catalog_loader=model_catalog_loader,
     )
 
 
@@ -88,6 +96,47 @@ async def test_model_command_lists_current_and_available_presets(tmp_path) -> No
     assert "Available presets: `default`, `fast`" in out.content
     assert "`fast`" in out.content
     assert out.metadata == {"render_as": "text"}
+
+
+@pytest.mark.asyncio
+async def test_model_command_lists_and_pins_live_provider_models(tmp_path) -> None:
+    async def discover(provider: str) -> dict[str, object]:
+        assert provider == "deepseek"
+        return {
+            "provider": provider,
+            "status": "available",
+            "model_count": 2,
+            "models": [
+                {
+                    "id": "deepseek-v4-flash",
+                    "context_window": 1_048_576,
+                    "reasoning_effort_values": ["", "low", "high", "max"],
+                },
+                {"id": "deepseek-chat", "context_window": 128_000},
+            ],
+        }
+
+    loop = _make_loop(tmp_path, model_catalog_loader=discover)
+
+    listed = await cmd_model(_ctx(loop, "/model"))
+    assert "deepseek-v4-flash" in listed.content
+    assert "1,048,576 ctx" in listed.content
+    assert "thinking: default/low/high/max" in listed.content
+
+    switched = await cmd_model(
+        _ctx(loop, "/model deepseek-v4-flash", args="deepseek-v4-flash"),
+    )
+    assert "Switched this session to model `deepseek-v4-flash`." in switched.content
+    assert "Context window: 1,048,576" in switched.content
+    session = loop.sessions.get_or_create("cli:direct")
+    assert session.metadata["_pawbot_model_override"] == {
+        "model": "deepseek-v4-flash",
+        "provider": "deepseek",
+        "context_window_tokens": 1_048_576,
+    }
+    runtime = loop.runtime_for_session(session)
+    assert runtime.model == "deepseek-v4-flash"
+    assert runtime.context_window_tokens == 1_048_576
 
 
 @pytest.mark.asyncio
@@ -241,10 +290,10 @@ def test_model_command_in_help_and_palette() -> None:
     palette = builtin_command_palette()
 
     model = next(item for item in palette if item["command"] == "/model")
-    assert model["arg_hint"] == "[preset]"
+    assert model["arg_hint"] == "[model or preset]"
     assert model["lifecycle"] == "side_channel"
     assert model["accepts_args"] is True
-    assert "/model [preset]" in build_help_text()
+    assert "/model [model or preset]" in build_help_text()
 
 
 @pytest.mark.asyncio

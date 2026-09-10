@@ -83,7 +83,7 @@ model catalogue still support manual model IDs.
 
 For a Linux server, keep the default localhost binding unless a remote browser
 is required. To expose the WebUI deliberately, use
-`pawbot webui --host 0.0.0.0 --yes --no-open`, open the server IP on the WebUI
+`pawbot webui --remote --yes --no-open`, open the server IP on the WebUI
 port, and enter the configured `channels.websocket.tokenIssueSecret`. Keep the
 gateway health port private; an SSH tunnel is the safer alternative.
 

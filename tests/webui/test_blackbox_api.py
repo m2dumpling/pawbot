@@ -11,6 +11,8 @@ from pawbot.webui.blackbox_api import (
     _delete,
     _detail,
     _list,
+    _replay,
+    _turn_diagnostics,
 )
 
 
@@ -119,3 +121,79 @@ async def test_detail_returns_raw_turn_and_execution_rail(tmp_path: Path) -> Non
     assert result["counts"] == {"llm_responses": 1, "tool_calls": 1}
     assert result["diagnostics"]["stop_reason"] == "unknown"
     assert result["diagnostics"]["failed_tools"] == []
+    assert result["diagnostics"]["original_execution"]["status"] == "unknown"
+
+
+def test_turn_diagnostics_separates_replay_health_from_original_errors() -> None:
+    diagnostics = _turn_diagnostics(
+        {"complete": True, "stop_reason": "completed"},
+        [
+            {
+                "kind": "llm",
+                "iteration": 0,
+                "response": {
+                    "finish_reason": "error",
+                    "error_status_code": 429,
+                    "error_kind": "http",
+                    "error_type": "rate_limit_exceeded",
+                    "error_code": "rate_limit_exceeded",
+                    "content": "provider rejected the request",
+                },
+            },
+            {
+                "kind": "tool",
+                "name": "write_file",
+                "status": "error",
+                "detail": "permission denied",
+            },
+        ],
+    )
+
+    assert diagnostics["original_execution"] == {
+        "status": "multiple_errors",
+        "ok": False,
+        "failed_tool_count": 1,
+        "provider_error_count": 1,
+        "unknown_side_effect_count": 0,
+    }
+    assert diagnostics["provider_errors"][0]["status_code"] == 429
+    assert diagnostics["failed_tools"][0]["name"] == "write_file"
+
+
+@pytest.mark.asyncio
+async def test_replay_reports_original_execution_separately(tmp_path: Path) -> None:
+    root = tmp_path / "blackbox" / "sample"
+    root.mkdir(parents=True)
+    (root / "turns.jsonl").write_text(
+        json.dumps({
+            "kind": "turn",
+            "complete": True,
+            "turn_id": "turn-1",
+            "stop_reason": "completed",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (root / "tools.jsonl").write_text(
+        json.dumps({
+            "kind": "tool",
+            "turn_id": "turn-1",
+            "name": "exec",
+            "status": "error",
+            "result": "exit code 1",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    async def replay_all(_controller: object) -> list[tuple[str, bool, list[str]]]:
+        return [("turn-1", True, [])]
+
+    agent = SimpleNamespace(workspace=tmp_path, blackbox=None, replay_all=replay_all)
+    result = await _replay(agent, {"directory": str(root)})
+
+    assert result["all_deterministic"] is True
+    assert result["deterministic_turns"] == 1
+    assert result["original_issue_turns"] == 1
+    assert result["original_failed_tool_calls"] == 1
+    assert result["original_unknown_side_effects"] == 0
+    assert result["results"][0]["ok"] is True
+    assert result["results"][0]["original_execution"]["status"] == "tool_error"

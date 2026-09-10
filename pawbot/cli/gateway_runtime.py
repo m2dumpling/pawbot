@@ -27,6 +27,7 @@ from pawbot.cli.webui_support import (
     _prepare_webui_bundle_for_gateway,
     _print_foreground_port_conflict,
     _tcp_endpoint_reachable,
+    _webui_access_url,
     _webui_browser_url,
     _webui_channel_enabled,
     _webui_display_url,
@@ -389,14 +390,14 @@ def _run_gateway(
     gateway_host_for_browser = _host_for_local_browser(config.gateway.host)
     if health_server_enabled and _tcp_endpoint_reachable(gateway_host_for_browser, port):
         _print_foreground_port_conflict(
-            webui_url=webui_url,
+            webui_url=_webui_access_url(config),
             gateway_host=config.gateway.host,
             gateway_port=port,
         )
         raise typer.Exit(1)
     if _webui_channel_enabled(config) and _webui_endpoint_reachable(webui_url):
         _print_foreground_port_conflict(
-            webui_url=webui_url,
+            webui_url=_webui_access_url(config),
             gateway_host=config.gateway.host,
             gateway_port=port,
         )
@@ -429,6 +430,37 @@ def _run_gateway(
             if unconfigured_provider_error is None:
                 raise
             return _observe_provider(build_unconfigured_provider_snapshot(config, str(exc)))
+
+    async def _discover_provider_models(provider_name: str) -> dict[str, Any]:
+        """Discover models for TUI ``/model`` using the same settings boundary as WebUI."""
+        import httpx
+
+        from pawbot.config.loader import get_config_path, load_config, resolve_config_env_vars
+        from pawbot.webui.settings_models import provider_models_payload
+
+        def _fetch() -> dict[str, Any]:
+            config_path = get_config_path()
+            current = resolve_config_env_vars(
+                load_config(config_path),
+                config_path=config_path,
+            )
+            return provider_models_payload(
+                current,
+                {"provider": [provider_name]},
+                http_get=httpx.get,
+            )
+
+        try:
+            return await asyncio.to_thread(_fetch)
+        except Exception as exc:  # noqa: BLE001 - catalogue failure is non-fatal to chat
+            logger.warning("Model discovery failed for provider {}: {}", provider_name, exc)
+            return {
+                "provider": provider_name,
+                "status": "error",
+                "models": [],
+                "model_count": 0,
+                "message": f"Could not load models: {exc}",
+            }
 
     if unconfigured_provider_error is not None:
         provider_snapshot = _observe_provider(
@@ -491,6 +523,7 @@ def _run_gateway(
         session_manager=session_manager,
         image_generation_provider_configs=image_gen_provider_configs(config),
         provider_snapshot_loader=_load_gateway_provider_snapshot,
+        model_catalog_loader=_discover_provider_models,
         preset_catalog_loader=load_model_preset_catalog,
         runtime_events=runtime_events,
         turn_delivery_factory=turn_delivery_factory,

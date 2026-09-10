@@ -92,11 +92,18 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
     ),
     BuiltinCommandSpec(
         "/model",
-        "Switch model preset",
-        "Show or switch the active model preset.",
+        "Show or switch model",
+        "Show available models or switch the model for this session.",
         "brain",
-        "[preset]",
+        "[model or preset]",
         accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/models",
+        "List available models",
+        "Refresh the current provider's model catalogue.",
+        "list",
+        lifecycle="side_channel",
     ),
     BuiltinCommandSpec(
         "/effort",
@@ -450,22 +457,193 @@ def _model_command_status(loop: AgentLoop, session: Session) -> str:
     ])
 
 
+def _catalog_model_info(catalog: dict[str, Any], model: str) -> dict[str, Any] | None:
+    """Find a live catalogue row without assuming a provider-specific schema."""
+    rows_value = catalog.get("models")
+    if not isinstance(rows_value, list):
+        return None
+    rows = cast(list[object], rows_value)
+    wanted = model.strip().casefold()
+    for row_value in rows:
+        if not isinstance(row_value, dict):
+            continue
+        row = cast(dict[str, Any], row_value)
+        model_id = row.get("id")
+        if isinstance(model_id, str) and model_id.strip().casefold() == wanted:
+            return row
+    return None
+
+
+def _catalog_model_label(row: dict[str, Any]) -> str:
+    model_id = str(row.get("id") or "").strip()
+    label = row.get("label")
+    return str(label).strip() if isinstance(label, str) and label.strip() else model_id
+
+
+def _format_live_models(catalog: dict[str, Any]) -> list[str]:
+    rows_value = catalog.get("models")
+    if not isinstance(rows_value, list):
+        return []
+    rows = cast(list[object], rows_value)
+    lines: list[str] = []
+    for row_value in rows[:30]:
+        if not isinstance(row_value, dict):
+            continue
+        row = cast(dict[str, Any], row_value)
+        model_id = row.get("id")
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        label = _catalog_model_label(row)
+        details: list[str] = []
+        context = row.get("context_window")
+        if isinstance(context, int) and context > 0:
+            details.append(f"{context:,} ctx")
+        reasoning = row.get("reasoning_effort_values")
+        if isinstance(reasoning, list):
+            levels = [
+                str(value) or "default"
+                for value in cast(list[object], reasoning)
+                if isinstance(value, str)
+            ]
+            if levels:
+                details.append("thinking: " + "/".join(levels))
+        suffix = f" — {' · '.join(details)}" if details else ""
+        lines.append(f"- `{model_id}`{f' ({label})' if label != model_id else ''}{suffix}")
+    total = catalog.get("model_count")
+    if isinstance(total, int) and total > len(lines):
+        lines.append(f"- … and {total - len(lines)} more")
+    return lines
+
+
 async def cmd_model(ctx: CommandContext) -> OutboundMessage:
-    """Show or switch model presets."""
+    """Show or switch configured presets and live provider models."""
     loop = ctx.loop
     args = ctx.args.strip()
     metadata = {**dict(ctx.msg.metadata or {}), "render_as": "text"}
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
 
-    if not args:
-        session = ctx.session or loop.sessions.get_or_create(ctx.key)
+    if args.casefold() == "default":
+        try:
+            runtime = loop.set_session_model_preset(ctx.key, "default")
+        except (KeyError, ValueError) as exc:
+            return OutboundMessage(
+                channel=ctx.msg.channel,
+                chat_id=ctx.msg.chat_id,
+                content=f"Could not switch model preset: {_command_error_message(exc)}",
+                metadata=metadata,
+            )
         return OutboundMessage(
             channel=ctx.msg.channel,
             chat_id=ctx.msg.chat_id,
-            content=_model_command_status(loop, session),
+            content="\n".join([
+                "Switched model preset to `default`.",
+                "- Scope: current session",
+                f"- Model: `{runtime.model}`",
+                f"- Context window: {runtime.context_window_tokens}",
+                f"- Max output tokens: {runtime.generation.max_tokens}",
+            ]),
+            metadata=metadata,
+        )
+
+    try:
+        current_runtime = loop.runtime_for_session(session, recover_removed=False)
+    except (KeyError, ValueError) as exc:
+        if not args:
+            return OutboundMessage(
+                channel=ctx.msg.channel,
+                chat_id=ctx.msg.chat_id,
+                content=_model_command_status(loop, session),
+                metadata=metadata,
+            )
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=f"Could not resolve the current model: {_command_error_message(exc)}",
+            metadata=metadata,
+        )
+
+    provider = getattr(current_runtime.provider, "provider_name", "") or None
+
+    if not args:
+        catalog = await loop.discover_models(provider)
+        lines = [_model_command_status(loop, session)]
+        if catalog.get("status") == "available":
+            live_models = _format_live_models(catalog)
+            if live_models:
+                lines.extend([
+                    "",
+                    f"## Models from {catalog.get('provider') or provider or 'current provider'}",
+                    *live_models,
+                    "",
+                    "Switch for this session with `/model <model id>`. Use `/model default` to return to the configured model.",
+                ])
+        elif catalog.get("message"):
+            lines.extend(["", f"Live catalogue: {catalog['message']}"])
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content="\n".join(lines),
             metadata=metadata,
         )
 
     name = args
+    preset_names = _model_preset_names(loop)
+    is_preset = any(name.casefold() == candidate.casefold() for candidate in preset_names)
+    if not is_preset:
+        catalog = await loop.discover_models(provider)
+        if catalog.get("status") == "unavailable":
+            return OutboundMessage(
+                channel=ctx.msg.channel,
+                chat_id=ctx.msg.chat_id,
+                content=(
+                    f'Could not switch model preset: model_preset {name!r} not found.\n\n'
+                    f"Available presets: {_format_preset_names(preset_names)}"
+                ),
+                metadata=metadata,
+            )
+        catalog_row = _catalog_model_info(catalog, name)
+        selected_model = (
+            str(catalog_row.get("id")).strip()
+            if catalog_row is not None and isinstance(catalog_row.get("id"), str)
+            else name
+        )
+        context_window = (
+            catalog_row.get("context_window")
+            if catalog_row is not None
+            else None
+        )
+        if not isinstance(context_window, int) or context_window <= 0:
+            context_window = None
+        try:
+            runtime = loop.set_session_model(
+                ctx.key,
+                selected_model,
+                provider=provider,
+                context_window_tokens=context_window,
+            )
+        except (KeyError, ValueError) as exc:
+            return OutboundMessage(
+                channel=ctx.msg.channel,
+                chat_id=ctx.msg.chat_id,
+                content=(
+                    f"Could not switch model: {_command_error_message(exc)}\n\n"
+                    f"Available presets: {_format_preset_names(preset_names)}"
+                ),
+                metadata=metadata,
+            )
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=(
+                f"Switched this session to model `{runtime.model}`.\n"
+                "- Scope: current session\n"
+                f"- Provider: `{provider or 'current runtime'}`\n"
+                f"- Context window: {runtime.context_window_tokens:,}\n"
+                "- This is a session pin; the global configuration was not changed."
+            ),
+            metadata=metadata,
+        )
+
     try:
         runtime = loop.set_session_model_preset(ctx.key, name)
     except (KeyError, ValueError) as exc:
@@ -1126,6 +1304,7 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/status", cmd_status)
     router.exact("/model", cmd_model)
     router.prefix("/model ", cmd_model)
+    router.exact("/models", cmd_model)
     router.exact("/effort", cmd_effort)
     router.prefix("/effort ", cmd_effort)
     router.exact("/history", cmd_history)

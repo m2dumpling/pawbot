@@ -1042,7 +1042,13 @@ export class PawbotTui {
       this.currentChatId = event.chat_id
       if (event.usage) this.lastUsage = event.usage
       if (event.model_preset !== undefined) {
-        this.applyModelPreset(event.model_preset)
+        this.applyModelPreset(event.model_preset, event.model_name)
+        this.updateTitle()
+      } else if (event.model_name) {
+        this.modelName = event.model_name
+        if (typeof event.context_window_tokens === "number") {
+          this.contextWindowTokens = event.context_window_tokens
+        }
         this.updateTitle()
       }
       this.commandTurns.clear()
@@ -1938,21 +1944,22 @@ export class PawbotTui {
   }
 
   private applySessionModel(session: SessionSummary): void {
-    this.applyModelPreset(session.modelPreset)
+    this.applyModelPreset(session.modelPreset, session.modelName)
   }
 
   private applySessionScope(session: SessionSummary): void {
     if (session.workspaceScope) this.applyWorkspaceScope(session.workspaceScope)
   }
 
-  private applyModelPreset(preset: string | null): void {
+  private applyModelPreset(preset: string | null, modelName?: string | null): void {
     const currentModel = this.modelName
     const currentPreset = this.modelPreset
     this.sessionModelPreset = preset
     this.modelPreset = preset || this.defaultModelPreset
-    this.modelName = this.modelPreset === this.defaultModelPreset
+    this.modelName = modelName?.trim()
+      || (this.modelPreset === this.defaultModelPreset
       ? this.defaultModelName
-      : this.modelPreset === currentPreset ? currentModel : ""
+      : this.modelPreset === currentPreset ? currentModel : "")
   }
 
   private updateTitle(): void {

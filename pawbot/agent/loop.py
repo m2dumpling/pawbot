@@ -80,8 +80,10 @@ from pawbot.session.history_visibility import HIDDEN_HISTORY_META
 from pawbot.session.keys import UNIFIED_SESSION_KEY, remember_last_channel
 from pawbot.session.manager import SESSION_CACHE_MAX_SIZE, Session, SessionManager
 from pawbot.session.model_selection import (
+    SESSION_MODEL_OVERRIDE_METADATA_KEY,
     SESSION_MODEL_PRESET_METADATA_KEY,
     SESSION_REASONING_EFFORT_METADATA_KEY,
+    model_override_from_metadata,
     model_preset_from_metadata,
     reasoning_effort_from_metadata,
 )
@@ -218,6 +220,7 @@ class AgentLoop(TurnStagesMixin):
         image_generation_provider_config: ProviderConfig | None = None,
         image_generation_provider_configs: dict[str, ProviderConfig] | None = None,
         provider_snapshot_loader: Callable[..., ProviderSnapshot] | None = None,
+        model_catalog_loader: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
         provider_signature: tuple[object, ...] | None = None,
         model_presets: dict[str, ModelPresetConfig] | None = None,
         preset_catalog_loader: preset_helpers.PresetCatalogLoader | None = None,
@@ -256,6 +259,12 @@ class AgentLoop(TurnStagesMixin):
         self.channels_config = channels_config
         self.restart_mode = restart_mode
         self._runtime_model_publisher = runtime_model_publisher
+        # Gateway runtimes provide this loader so a session can pin a live
+        # provider-catalogue model without mutating the global config.  Direct
+        # SDK/embedder construction keeps the current provider as a safe
+        # fallback when no loader is available.
+        self._provider_snapshot_loader = provider_snapshot_loader
+        self._model_catalog_loader = model_catalog_loader
         self.workspace = workspace
         initial_model = model or provider.get_default_model()
         self.max_iterations = (
@@ -449,6 +458,7 @@ class AgentLoop(TurnStagesMixin):
                 "context-governance defenses disabled"
             )
         provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
+        model_catalog_loader = extra.pop("model_catalog_loader", None)
         preset_snapshot_loader = extra.pop("preset_snapshot_loader", None) or preset_helpers.make_preset_snapshot_loader(
             config,
             provider_snapshot_loader,
@@ -485,6 +495,7 @@ class AgentLoop(TurnStagesMixin):
             dream_model_preset=defaults.dream.model_override,
             restart_mode=config.gateway.restart_mode,
             provider_snapshot_loader=provider_snapshot_loader,
+            model_catalog_loader=model_catalog_loader,
             preset_snapshot_loader=preset_snapshot_loader,
             tool_registry=tool_registry,
             **extra,
@@ -512,26 +523,93 @@ class AgentLoop(TurnStagesMixin):
         recover_removed: bool = True,
     ) -> LLMRuntime:
         """Resolve the immutable runtime selected by one session."""
-        name = model_preset_from_metadata(session.metadata)
-        if name is None:
-            runtime = self.llm_runtime()
+        override = model_override_from_metadata(session.metadata)
+        if override is not None:
+            runtime = self._runtime_for_session_model_override(override)
         else:
-            try:
-                runtime = self.runtime_resolver.resolve_preset(name)
-            except KeyError:
-                if not recover_removed or name in self.runtime_resolver.model_presets:
-                    raise
-                logger.warning(
-                    "Session '{}' references removed model preset '{}'; falling back to default",
-                    session.key,
-                    name,
-                )
-                session.metadata.pop(SESSION_MODEL_PRESET_METADATA_KEY, None)
-                self.sessions.save(session)
+            name = model_preset_from_metadata(session.metadata)
+            if name is None:
                 runtime = self.llm_runtime()
+            else:
+                try:
+                    runtime = self.runtime_resolver.resolve_preset(name)
+                except KeyError:
+                    if not recover_removed or name in self.runtime_resolver.model_presets:
+                        raise
+                    logger.warning(
+                        "Session '{}' references removed model preset '{}'; falling back to default",
+                        session.key,
+                        name,
+                    )
+                    session.metadata.pop(SESSION_MODEL_PRESET_METADATA_KEY, None)
+                    self.sessions.save(session)
+                    runtime = self.llm_runtime()
         effort = reasoning_effort_from_metadata(session.metadata)
         if effort is not None:
             runtime = runtime.with_generation_overrides(reasoning_effort=effort)
+        return runtime
+
+    def _runtime_for_session_model_override(
+        self,
+        override: dict[str, object],
+    ) -> LLMRuntime:
+        """Resolve a persisted live-catalogue model pin to an immutable runtime."""
+        model = override["model"]
+        if not isinstance(model, str):  # guarded by model_override_from_metadata
+            raise ValueError("session model override must contain a model")
+        provider_value = override.get("provider")
+        provider = provider_value if isinstance(provider_value, str) else ""
+        current = self.runtime_resolver.runtime
+        if not provider:
+            provider = getattr(current.provider, "provider_name", "") or "auto"
+        context_value = override.get("context_window_tokens")
+        context_window_tokens = (
+            context_value
+            if isinstance(context_value, int) and not isinstance(context_value, bool)
+            else current.context_window_tokens
+        )
+        from pawbot.providers.registry import context_window_tokens_for
+
+        context_window_tokens = context_window_tokens_for(
+            provider,
+            model,
+            context_window_tokens,
+        )
+
+        if self._provider_snapshot_loader is None:
+            # This path keeps AgentLoop useful for embedders that construct it
+            # directly.  Gateway-backed sessions use the loader below so an
+            # explicit provider pin can rebuild the correct provider object.
+            if provider not in {"", "auto", getattr(current.provider, "provider_name", "") or ""}:
+                raise ValueError(
+                    f"provider '{provider}' is not available in this runtime"
+                )
+            runtime = self.runtime_resolver.resolve_override(
+                model=model,
+                model_preset=None,
+            )
+            if runtime is None:
+                raise ValueError("could not resolve session model override")
+            return dataclasses.replace(
+                runtime,
+                context_window_tokens=context_window_tokens,
+            )
+
+        preset = ModelPresetConfig(
+            model=model,
+            provider=provider,
+            max_tokens=current.generation.max_tokens,
+            context_window_tokens=context_window_tokens,
+            temperature=current.generation.temperature,
+            reasoning_effort=current.generation.reasoning_effort,
+        )
+        snapshot = self._provider_snapshot_loader(preset=preset)
+        runtime = self.runtime_resolver.resolve_snapshot(snapshot)
+        if runtime.context_window_tokens != context_window_tokens:
+            runtime = dataclasses.replace(
+                runtime,
+                context_window_tokens=context_window_tokens,
+            )
         return runtime
 
     def set_session_model_preset(
@@ -542,9 +620,72 @@ class AgentLoop(TurnStagesMixin):
         """Validate and persist one session's preset selection."""
         runtime = self.runtime_resolver.resolve_preset(name)
         session = self.sessions.get_or_create(session_key)
-        session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = runtime.model_preset
+        session.metadata.pop(SESSION_MODEL_OVERRIDE_METADATA_KEY, None)
+        session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = runtime.model_preset or "default"
         self.sessions.save(session)
         return runtime
+
+    async def discover_models(self, provider: str | None = None) -> dict[str, Any]:
+        """Return the live model catalogue for a provider when the gateway supplies one."""
+        provider_name = (provider or getattr(self.provider, "provider_name", "") or "").strip()
+        if self._model_catalog_loader is None or not provider_name:
+            return {
+                "provider": provider_name,
+                "status": "unavailable",
+                "models": [],
+                "model_count": 0,
+                "message": "Live model discovery is unavailable in this runtime.",
+            }
+        return await self._model_catalog_loader(provider_name)
+
+    def set_session_model(
+        self,
+        session_key: str,
+        model: str,
+        *,
+        provider: str | None = None,
+        context_window_tokens: int | None = None,
+    ) -> LLMRuntime:
+        """Pin a model from a live provider catalogue to one session.
+
+        This is intentionally session-scoped: choosing a newly discovered
+        model in ``/model`` must not silently rewrite the user's global
+        provider configuration or create a permanent preset.
+        """
+        model = model.strip()
+        if not model:
+            raise ValueError("model must be a non-empty string")
+        provider_name = provider.strip() if isinstance(provider, str) and provider.strip() else None
+        if context_window_tokens is not None and (
+            isinstance(context_window_tokens, bool)
+            or context_window_tokens <= 0
+        ):
+            raise ValueError("context_window_tokens must be positive")
+
+        override: dict[str, object] = {
+            "model": model,
+            **({"provider": provider_name} if provider_name else {}),
+            **(
+                {"context_window_tokens": context_window_tokens}
+                if context_window_tokens is not None
+                else {}
+            ),
+        }
+        runtime = self._runtime_for_session_model_override(override)
+        override["context_window_tokens"] = runtime.context_window_tokens
+        session = self.sessions.get_or_create(session_key)
+        session.metadata.pop(SESSION_MODEL_PRESET_METADATA_KEY, None)
+        session.metadata[SESSION_MODEL_OVERRIDE_METADATA_KEY] = override
+        self.sessions.save(session)
+        return runtime
+
+    def clear_session_model_selection(self, session_key: str) -> LLMRuntime:
+        """Return a session to the configured default model."""
+        session = self.sessions.get_or_create(session_key)
+        session.metadata.pop(SESSION_MODEL_OVERRIDE_METADATA_KEY, None)
+        session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = "default"
+        self.sessions.save(session)
+        return self.runtime_for_session(session)
 
     def set_session_reasoning_effort(
         self,

@@ -45,6 +45,7 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
     if not turns_path.exists():
         return {
             "status": "invalid",
+            "reason": "missing_turn_file",
             "message": "找不到录制文件，无法检查",
             "turns": 0,
         }
@@ -89,6 +90,7 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
     except (OSError, UnicodeError):
         return {
             "status": "invalid",
+            "reason": "unreadable",
             "message": "录制文件无法读取",
             "turns": 0,
         }
@@ -96,13 +98,15 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
     if malformed_lines:
         return {
             "status": "invalid",
+            "reason": "malformed",
             "message": "录制文件格式有问题，无法检查",
             "turns": valid_turns,
         }
     if valid_turns == 0:
         return {
             "status": "invalid",
-        "message": "没有找到有效的任务记录，无法检查",
+            "reason": "no_valid_turns",
+            "message": "没有找到有效的任务记录，无法检查",
             "turns": 0,
         }
     return {
@@ -132,6 +136,65 @@ def _cassette_name(turn_id: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in turn_id) + ".yaml"
 
 
+def _llm_error_details(event: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract provider error metadata from one recorded LLM response."""
+    response = event.get("response")
+    if not isinstance(response, dict):
+        return None
+    response_mapping = cast(dict[str, Any], response)
+    error_fields = (
+        "error_status_code",
+        "error_kind",
+        "error_type",
+        "error_code",
+    )
+    finish_reason = str(response_mapping.get("finish_reason") or "").lower()
+    if finish_reason != "error" and not any(
+        response_mapping.get(field) not in (None, "") for field in error_fields
+    ):
+        return None
+    content = response_mapping.get("content")
+    if isinstance(content, str):
+        message = content.strip()
+    else:
+        message = ""
+    return {
+        "iteration": event.get("iteration"),
+        "response_index": event.get("response_index"),
+        "status_code": response_mapping.get("error_status_code"),
+        "kind": response_mapping.get("error_kind"),
+        "type": response_mapping.get("error_type"),
+        "code": response_mapping.get("error_code"),
+        "message": message[:1000],
+    }
+
+
+def _original_execution_status(
+    *,
+    turn: dict[str, Any],
+    failed_tools: list[dict[str, Any]],
+    provider_errors: list[dict[str, Any]],
+    unknown_side_effects: list[dict[str, Any]],
+) -> str:
+    """Classify the original run independently from replay determinism."""
+    stop_reason = str(turn.get("stop_reason") or "").lower()
+    if provider_errors and failed_tools:
+        return "multiple_errors"
+    if provider_errors:
+        return "model_error"
+    if failed_tools:
+        return "tool_error"
+    if stop_reason in {"cancelled", "canceled"}:
+        return "cancelled"
+    if stop_reason == "error" or turn.get("complete") is False or turn.get("error"):
+        return "execution_error"
+    if unknown_side_effects:
+        return "unknown_side_effect"
+    if str(turn.get("stop_reason") or "").lower() in {"completed", "stop"}:
+        return "success"
+    return "unknown"
+
+
 def _turn_diagnostics(turn: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a compact explanation layer above the raw replay rails."""
     tool_events = [event for event in events if event.get("kind") == "tool"]
@@ -158,15 +221,37 @@ def _turn_diagnostics(turn: dict[str, Any], events: list[dict[str, Any]]) -> dic
         if isinstance(event.get("execution"), dict)
         and event["execution"].get("state") == "unknown"
     ]
+    provider_errors = [
+        error
+        for event in events
+        if event.get("kind") == "llm"
+        for error in [_llm_error_details(event)]
+        if error is not None
+    ]
+    original_status = _original_execution_status(
+        turn=turn,
+        failed_tools=failed_tools,
+        provider_errors=provider_errors,
+        unknown_side_effects=unknown_side_effects,
+    )
+    original_execution = {
+        "status": original_status,
+        "ok": original_status == "success",
+        "failed_tool_count": len(failed_tools),
+        "provider_error_count": len(provider_errors),
+        "unknown_side_effect_count": len(unknown_side_effects),
+    }
     return {
         "stop_reason": turn.get("stop_reason") or "unknown",
         "failed_tools": failed_tools,
+        "provider_errors": provider_errors,
         "unknown_side_effects": unknown_side_effects,
+        "original_execution": original_execution,
         "budget": turn.get("budget"),
         "message": (
             "本轮正常结束"
-            if not failed_tools and not unknown_side_effects
-            else "本轮包含失败工具或未确认副作用，请先查看对应工具记录"
+            if original_status == "success"
+            else "原始执行包含异常，请分别查看回放结果和原始执行状态"
         ),
     }
 
@@ -341,8 +426,29 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
             "turn_id": info.get("turn_id"),
             "messages": _json_safe(info.get("messages") or []),
         }
-    rows = [
-        {
+    try:
+        raw_turns = _read_jsonl(Path(directory) / "turns.jsonl")
+        raw_events = _read_jsonl(Path(directory) / "tools.jsonl")
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise BlackboxActionError(422, f"无法读取原始执行状态：{exc}") from exc
+    turns_by_id = {
+        str(record.get("turn_id")): record
+        for record in raw_turns
+        if record.get("kind") == "turn" and record.get("turn_id")
+    }
+    events_by_id: dict[str, list[dict[str, Any]]] = {}
+    for event in raw_events:
+        turn_id = str(event.get("turn_id") or "")
+        if turn_id:
+            events_by_id.setdefault(turn_id, []).append(event)
+
+    rows: list[dict[str, Any]] = []
+    for turn_id, ok, diffs in results:
+        diagnostics = _turn_diagnostics(
+            turns_by_id.get(turn_id, {"turn_id": turn_id}),
+            events_by_id.get(turn_id, []),
+        )
+        rows.append({
             "turn_id": turn_id,
             "ok": ok,
             "diffs": _json_safe(diffs),
@@ -351,18 +457,39 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
                 if ok
                 else f"当前执行与原样本有 {len(diffs)} 处差异"
             ),
-        }
-        for turn_id, ok, diffs in results
-    ]
+            "original_execution": _json_safe(diagnostics["original_execution"]),
+        })
     total = len(rows)
     deterministic = sum(1 for row in rows if row["ok"])
+    original_issue_turns = sum(
+        1
+        for row in rows
+        if not bool(row["original_execution"].get("ok"))
+    )
+    original_failed_tool_calls = sum(
+        int(row["original_execution"].get("failed_tool_count") or 0)
+        for row in rows
+    )
+    original_provider_errors = sum(
+        int(row["original_execution"].get("provider_error_count") or 0)
+        for row in rows
+    )
+    original_unknown_side_effects = sum(
+        int(row["original_execution"].get("unknown_side_effect_count") or 0)
+        for row in rows
+    )
     return {
         "directory": directory,
         "total_turns": total,
         "deterministic_turns": deterministic,
         "all_deterministic": total > 0 and deterministic == total,
+        "original_issue_turns": original_issue_turns,
+        "original_failed_tool_calls": original_failed_tool_calls,
+        "original_provider_errors": original_provider_errors,
+        "original_unknown_side_effects": original_unknown_side_effects,
         "summary": (
-            f"{deterministic}/{total} 个回合未发现可观察差异"
+            f"{deterministic}/{total} 个回合回放一致；"
+            f"{original_issue_turns} 个回合原始执行包含问题"
             if total
             else "没有可以检查的回合"
         ),

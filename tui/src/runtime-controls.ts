@@ -8,6 +8,7 @@ import {
 import {
   fetchRuntimeControls,
   type ApiReauthenticator,
+  type RuntimeModelOption,
   type WorkspaceScopePayload,
 } from "./protocol"
 import { PickerMenu, type PickerMenuTheme } from "./picker-menu"
@@ -18,7 +19,7 @@ interface RuntimeControlsTheme extends PickerMenuTheme {
 }
 
 type Choice =
-  | { kind: "model"; name: string; label: string; detail: string }
+  | { kind: "model"; value: string; label: string; detail: string }
   | { kind: "access"; mode: "restricted" | "full"; label: string; detail: string }
 
 const CONTROLS_CACHE_MS = 10_000
@@ -50,7 +51,13 @@ export class RuntimeControls {
   private kind: Choice["kind"] | null = null
   private model: string
   private modelPreset: string
-  private modelPresets: Array<{ name: string; model: string }>
+  private modelPresets: Array<{
+    name: string
+    model: string
+    contextWindow?: number
+    reasoningEffortValues?: string[]
+  }>
+  private availableModels: RuntimeModelOption[] = []
   private canUseFullAccess: boolean
   private controlsLoaded = false
   private controlsLoadedAt = 0
@@ -220,6 +227,7 @@ export class RuntimeControls {
         })
       }
       this.modelPresets = [...presets.values()]
+      this.availableModels = controls.availableModels ?? []
       this.canUseFullAccess = controls.canUseFullAccess
       this.controlsLoaded = true
       this.controlsLoadedAt = Date.now()
@@ -237,15 +245,25 @@ export class RuntimeControls {
     }
     this.options.beforeOpen()
     this.kind = "model"
-    const choices: Choice[] = this.modelPresets
+    const presetModelIds = new Set(this.modelPresets.map((preset) => preset.model.toLocaleLowerCase()))
+    const presetChoices: Choice[] = this.modelPresets
       .map((preset) => ({
         kind: "model" as const,
-        name: preset.name,
-        label: `${preset.name === this.modelPreset ? "●" : " "} ${preset.name}`,
-        detail: preset.model,
+        value: preset.name,
+        label: `${preset.name === this.modelPreset || preset.model === this.model ? "●" : " "} ${preset.name}`,
+        detail: `${preset.model}${modelCapabilityDetail(preset.contextWindow, preset.reasoningEffortValues)}`,
       }))
-      .sort((left, right) => Number(right.name === this.modelPreset)
-        - Number(left.name === this.modelPreset))
+    const liveChoices: Choice[] = this.availableModels
+      .filter((model) => !presetModelIds.has(model.id.toLocaleLowerCase()))
+      .map((model) => ({
+        kind: "model" as const,
+        value: model.id,
+        label: `${model.id === this.model ? "●" : " "} ${model.label || model.id}`,
+        detail: `${model.label && model.label !== model.id ? model.id : ""}${modelCapabilityDetail(model.contextWindow, model.reasoningEffortValues)}`.trim(),
+      }))
+    const choices = [...presetChoices, ...liveChoices]
+      .sort((left, right) => Number(right.kind === "model" && right.value === this.modelPreset)
+        - Number(left.kind === "model" && left.value === this.modelPreset))
     this.menu.show(choices, "", rendererLimit(this.renderer.height))
     this.opened()
   }
@@ -293,7 +311,9 @@ export class RuntimeControls {
   private apply(choice: Choice): void {
     this.hide()
     if (choice.kind === "model") {
-      if (choice.name !== this.modelPreset) this.options.onModel(choice.name)
+      if (choice.value !== this.modelPreset && choice.value !== this.model) {
+        this.options.onModel(choice.value)
+      }
       return
     }
     if (choice.mode === this.scope.access_mode) return
@@ -326,6 +346,24 @@ export class RuntimeControls {
       (this.kind === "access" && this.visible) || this.scope.access_mode === "full"
     ) ? this.theme.accent : this.theme.muted
   }
+}
+
+function modelCapabilityDetail(
+  contextWindow?: number,
+  reasoningEffortValues?: string[],
+): string {
+  const details: string[] = []
+  if (contextWindow && contextWindow > 0) details.push(`${formatContextWindow(contextWindow)} ctx`)
+  if (reasoningEffortValues?.length) {
+    details.push(`thinking: ${reasoningEffortValues.map((value) => value || "default").join("/")}`)
+  }
+  return details.length ? `  ·  ${details.join("  ·  ")}` : ""
+}
+
+function formatContextWindow(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 ? 1 : 0)}M`
+  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`
+  return String(tokens)
 }
 
 function rendererLimit(height: number): number {

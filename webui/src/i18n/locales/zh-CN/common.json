@@ -192,6 +192,167 @@
       "detectedReasoning": "探查到的思考档位",
       "reasoningLevels": "思考"
     },
+    "enhancements": {
+      "title": "录制与回放",
+      "explainer": "把一次真实 Agent 执行保存成测试样本。回放时使用录下来的模型响应和工具结果离线重走，检查当前编排是否仍然走同一条路径。",
+      "steps": {
+        "recordTitle": "1. 录制一次真实任务",
+        "recordDetail": "用户请求、模型决策、工具调用和工具返回都会保存。",
+        "changeTitle": "2. 修改代码或排查问题",
+        "changeDetail": "适合检查 Agent 循环、上下文处理和工具链路。",
+        "replayTitle": "3. 离线回放并比较",
+        "replayDetail": "不消耗 Token、不联网，也不会执行真实工具副作用。"
+      },
+      "status": {
+        "ready": "可以回放",
+        "incomplete": "录制不完整",
+        "notRecorded": "未记录",
+        "notReported": "未说明",
+        "unnamedTool": "未命名工具",
+        "noTools": "未调用工具",
+        "moreTools": "另有 {{count}} 种工具",
+        "missingTurnFile": "缺少回合记录文件",
+        "unreadable": "无法读取录制文件",
+        "malformed": "录制文件格式有问题",
+        "noValidTurns": "没有找到有效的回合记录"
+      },
+      "stopReason": {
+        "completed": "正常完成",
+        "toolCalls": "等待工具结果",
+        "maxIterations": "达到执行上限",
+        "cancelled": "已取消",
+        "error": "执行出错",
+        "unknown": "未说明"
+      },
+      "toolStatus": {
+        "ok": "成功",
+        "error": "失败",
+        "blocked": "已拦截",
+        "cancelled": "已取消",
+        "unknown": "状态不确定",
+        "notReported": "未说明"
+      },
+      "expand": {
+        "fullContent": "展开完整内容",
+        "fullThinking": "展开完整思考记录",
+        "fullModelOutput": "展开完整模型输出",
+        "fullAnswer": "展开完整回答"
+      },
+      "timeline": {
+        "toolExecution": "工具执行",
+        "modelDecision": "模型决策",
+        "providerError": "模型请求失败",
+        "step": "步骤 {{number}}",
+        "decision": "第 {{number}} 次决策",
+        "unrecordedDecision": "未记录决策轮次",
+        "arguments": "传入参数",
+        "result": "工具返回",
+        "detail": "执行详情",
+        "thinking": "模型思考记录",
+        "modelCalls": "模型决定调用：",
+        "modelOutput": "模型输出",
+        "noVisibleText": "模型没有返回可展示文本，执行器继续处理下一步。"
+      },
+      "turn": {
+        "processTitle": "本回合执行过程",
+        "userMessage": "用户请求",
+        "userMessageDetail": "任务开始时发送给 Agent 的内容",
+        "finalAnswer": "最终回答",
+        "finalAnswerDetail": "Agent 最后展示给用户的内容",
+        "model": "模型",
+        "modelDecisions": "模型决策",
+        "toolExecutions": "工具执行",
+        "failedToolCount": "{{count}} 个工具调用失败",
+        "providerErrorCount": "{{count}} 个模型请求失败",
+        "unknownSideEffectCount": "{{count}} 个工具结果的副作用未确认",
+        "inspectRaw": "请查看可读执行过程或原始记录定位细节。",
+        "attention": "需要关注",
+        "attentionDescription": "{{failed}} 个工具调用失败{{separator}}{{uncertain}} 个工具结果不确定，请查看原始记录。",
+        "toolSummary": "这次执行包含：{{tools}}。",
+        "noToolSummary": "这次任务没有调用工具，模型直接生成了最终回复。",
+        "traceTitle": "这回合发生了什么",
+        "traceDescription": "下面按录制时的顺序展示模型思考、模型决策、工具调用和工具返回。需要时可展开长参数和返回值；想看未改写的 JSON，请打开原始记录。",
+        "noEvents": "这个回合没有单独的模型或工具事件，可能来自较早的录制格式。",
+        "resultTitle": "本回合结果",
+        "replaySafety": "回放只使用录制中的模型响应和工具结果，不会再次请求模型，也不会执行真实工具。",
+        "rawRecord": "查看原始记录",
+        "turnId": "回合 ID"
+      },
+      "raw": {
+        "title": "完整原始记录",
+        "badge": "不做摘要 · 不改写",
+        "description": "这里展示这个回合保存下来的全部 JSON：回合总记录，以及按执行顺序排列的模型和工具事件。内容可能包含 Prompt、文件路径和其他敏感信息。",
+        "turnRecord": "回合总记录",
+        "events": "执行过程原始记录",
+        "eventCount": "tools.jsonl · {{count}} 条事件",
+        "noEvents": "这个回合没有单独的模型或工具事件记录。",
+        "associatedFiles": "关联文件：turns.jsonl{{tools}}{{cassette}}",
+        "dialogTitle": "回合原始记录",
+        "dialogDescription": "这是保存下来的完整数据，不做改写；关闭窗口后返回可读执行过程。"
+      },
+      "recording": {
+        "activeTitle": "正在收集执行样本",
+        "inactiveTitle": "录制一次任务",
+        "activeHint": "停止前，所有会话中的任务都会继续写入这份样本。",
+        "inactiveHint": "点击开始，执行想保留下来、以后重复检查的任务；完成后再停止。",
+        "stop": "停止录制",
+        "start": "开始录制",
+        "refresh": "刷新",
+        "currentSample": "当前样本：",
+        "allSessions": "从开始到停止期间，所有会话都会被收录。",
+        "offlineInfo": "离线回放只使用样本里的模型响应和工具结果；不会产生新的模型请求，也不会真的执行工具。",
+        "breakpointPrefix": "可选断点：在第",
+        "breakpointSuffix": "次模型决策处暂停",
+        "savedTurns": "已保存 {{count}} 个任务",
+        "replay": "离线回放",
+        "breakpointReplay": "回放到断点",
+        "empty": "还没有执行样本。点击开始录制，执行一次任务，再回来停止录制。",
+        "deleteConfirm": "删除录制“{{name}}”？其中的 Prompt、模型响应和工具结果都会被永久删除。",
+        "loadingDetail": "正在读取这个回合的执行过程…"
+      },
+      "result": {
+        "title": "离线回放结果",
+        "replayLabel": "回放结果",
+        "originalLabel": "原执行结果",
+        "replaySummary": "{{matched}}/{{total}} 个回合回放一致",
+        "replayConsistent": "回放一致",
+        "replayDifferencesShort": "发现 {{count}} 处差异",
+        "replayConsistentHint": "当前编排重走出了与录制时相同的可观察消息和工具流程。",
+        "replayDifferenceHint": "点开回合，可以查看录制结果和当前回放结果的具体差异。",
+        "originalHealthy": "原执行未记录错误",
+        "originalIssues": "{{count}} 个回合原本包含错误",
+        "originalBreakdown": "{{tools}} 个工具调用失败 · {{models}} 个模型请求失败 · {{unknown}} 个工具副作用未确认",
+        "description": "回放是否一致与原执行是否出错分开显示。回放不是模型回答质量评分。",
+        "detailHint": "点开回合查看可读执行过程；需要完整 JSON 时，点击“查看原始记录”。",
+        "turn": "第 {{number}} 回合",
+        "matched": "未发现编排差异",
+        "differences": "发现 {{count}} 处差异",
+        "differenceTitle": "当前结果与录制样本的不同之处",
+        "loading": "正在读取这个回合的执行过程…"
+      },
+      "original": {
+        "success": "原执行正常完成",
+        "toolError": "原执行有工具失败",
+        "modelError": "原执行有模型请求失败",
+        "multipleErrors": "原执行同时有模型和工具错误",
+        "unknownSideEffect": "原执行有未确认的工具副作用",
+        "cancelled": "原执行被取消",
+        "executionError": "原执行以错误结束",
+        "unknown": "原执行结果未说明"
+      },
+      "breakpoint": {
+        "paused": "已在第 {{number}} 次模型决策处暂停",
+        "messages": "断点处的消息"
+      },
+      "budget": {
+        "title": "上下文预算",
+        "estimatedTokens": "估算 Token",
+        "contextWindow": "上下文窗口",
+        "messages": "消息数",
+        "usage": "窗口使用率",
+        "hint": "{{tools}} 个工具 · {{model}}"
+      }
+    },
     "rows": {
       "theme": "主题",
       "language": "语言",
@@ -1298,7 +1459,11 @@
           },
           "model": {
             "title": "模型",
-            "description": "查看或切换当前模型预设。"
+            "description": "查看可用模型，或为当前会话切换模型。"
+          },
+          "models": {
+            "title": "列出可用模型",
+            "description": "刷新当前提供商的模型目录。"
           },
           "history": {
             "title": "查看对话历史",

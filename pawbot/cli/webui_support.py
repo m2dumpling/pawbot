@@ -41,11 +41,13 @@ __all__ = [
     "_gateway_health_url",
     "_gateway_instance_command",
     "_host_for_local_browser",
+    "_is_headless_environment",
     "_load_webui_setup_config",
     "_launch_browser",
     "_open_webui_browser",
     "_prepare_webui_bundle_for_gateway",
     "_print_foreground_port_conflict",
+    "_print_headless_webui_instructions",
     "_print_webui_access_instructions",
     "_print_webui_foreground_lifecycle",
     "_resolve_webui_config_path",
@@ -54,6 +56,7 @@ __all__ = [
     "_validate_gateway_startup",
     "_warn_webui_bind_scope",
     "_webui_browser_url",
+    "_webui_access_url",
     "webui_bootstrap_secret",
     "_webui_build_mode_for_interactive",
     "_webui_channel_enabled",
@@ -238,6 +241,15 @@ def _host_for_local_browser(host: str) -> str:
     return host
 
 
+def _is_headless_environment() -> bool:
+    """Return whether a local browser window is unlikely to be available."""
+    import os
+
+    if sys.platform != "linux":
+        return False
+    return not bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
 def _gateway_health_url(host: str, port: int) -> str:
     """Return a health URL that can be opened from this device."""
     return f"http://{_host_for_local_browser(host)}:{port}/health"
@@ -261,6 +273,26 @@ def _webui_browser_url(config: Config) -> str:
     host = _host_for_local_browser(str(ws_cfg.get("host") or "127.0.0.1"))
     port = int(ws_cfg.get("port") or 8765)
     base_url = f"http://{host}:{port}"
+    secret = webui_bootstrap_secret(config)
+    if not secret:
+        return base_url
+    return f"{base_url}/#/?bootstrapSecret={quote(secret, safe='')}"
+
+
+def _webui_access_url(config: Config) -> str:
+    """Return the URL a user on another machine should open.
+
+    Wildcard bind addresses are listener settings, not routable browser
+    addresses.  Keep the bootstrap fragment while replacing them with a clear
+    server-address placeholder instead of printing a misleading 127.0.0.1.
+    """
+    from urllib.parse import quote
+
+    ws_cfg = _webui_config_dict(config)
+    host = str(ws_cfg.get("host") or "127.0.0.1")
+    visible_host = _webui_url_host(host)
+    port = int(ws_cfg.get("port") or 8765)
+    base_url = f"http://{visible_host}:{port}"
     secret = webui_bootstrap_secret(config)
     if not secret:
         return base_url
@@ -312,6 +344,35 @@ def _print_webui_access_instructions(config: Config, config_path: Path) -> None:
         "  Private alternative: [cyan]ssh -N -L "
         f"{port}:127.0.0.1:{port} <user>@<server>[/cyan], then open "
         f"[cyan]http://127.0.0.1:{port}[/cyan] locally."
+    )
+
+
+def _print_headless_webui_instructions(config: Config, config_path: Path) -> None:
+    """Explain the two safe ways to use WebUI when the server has no GUI."""
+    ws_cfg = _webui_config_dict(config)
+    host = str(ws_cfg.get("host") or "127.0.0.1").strip()
+    port = int(ws_cfg.get("port") or 8765)
+    console.print()
+    console.print("[bold]No graphical browser detected[/bold]")
+    if is_loopback_host(host):
+        console.print(
+            "  WebUI is private to this server. From your own computer, create an SSH tunnel:"
+        )
+        console.print(
+            f"  [cyan]ssh -N -L {port}:127.0.0.1:{port} <user>@<server>[/cyan]"
+        )
+        console.print(f"  Then open [cyan]http://127.0.0.1:{port}[/cyan] locally.")
+        console.print(
+            "  Or expose it deliberately with: "
+            "[cyan]pawbot webui --remote --yes --no-open[/cyan]"
+        )
+    else:
+        console.print(
+            f"  Open from your own computer: [cyan]http://{_webui_url_host(host)}:{port}[/cyan]"
+        )
+    console.print(
+        "  Authentication: enter [cyan]channels.websocket.tokenIssueSecret[/cyan] "
+        f"from [cyan]{escape(str(config_path))}[/cyan]."
     )
 
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
@@ -52,6 +53,17 @@ import {
 } from "@/lib/api";
 import { useClient } from "@/providers/ClientProvider";
 
+type Translate = TFunction;
+
+function tx(
+  t: Translate,
+  key: string,
+  fallback: string,
+  values?: Record<string, unknown>,
+): string {
+  return t(key, { defaultValue: fallback, ...(values ?? {}) });
+}
+
 function StatCard({
   label,
   value,
@@ -70,8 +82,25 @@ function StatCard({
   );
 }
 
-function recordingStatusLabel(recording: BlackboxRecording): string {
-  return recording.status === "ready" ? "记录完整" : "记录不完整";
+function recordingStatusLabel(recording: BlackboxRecording, t: Translate): string {
+  return recording.status === "ready"
+    ? tx(t, "settings.enhancements.status.ready", "Ready to replay")
+    : tx(t, "settings.enhancements.status.incomplete", "Incomplete recording");
+}
+
+function recordingStatusMessage(recording: BlackboxRecording, t: Translate): string {
+  switch (recording.reason) {
+    case "missing_turn_file":
+      return tx(t, "settings.enhancements.status.missingTurnFile", "Turn record is missing");
+    case "unreadable":
+      return tx(t, "settings.enhancements.status.unreadable", "Recording cannot be read");
+    case "malformed":
+      return tx(t, "settings.enhancements.status.malformed", "Recording format is invalid");
+    case "no_valid_turns":
+      return tx(t, "settings.enhancements.status.noValidTurns", "No valid turns were found");
+    default:
+      return recording.message || tx(t, "settings.enhancements.status.notRecorded", "Not recorded");
+  }
 }
 
 function recordingStatusClass(recording: BlackboxRecording): string {
@@ -113,45 +142,53 @@ function lastMessageText(messages: unknown, role: string): string {
   return "";
 }
 
-function compactText(value: string, maxLength = 320): string {
+function compactText(value: string, maxLength = 320, emptyValue = "Not recorded"): string {
   const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) return "未记录";
+  if (!normalized) return emptyValue;
   return normalized.length > maxLength
     ? `${normalized.slice(0, maxLength).trimEnd()}…`
     : normalized;
 }
 
-function humanizeStopReason(value: unknown): string {
+function humanizeStopReason(value: unknown, t: Translate): string {
   const reason = String(value ?? "").toLowerCase();
   switch (reason) {
     case "completed":
     case "stop":
-      return "正常完成";
+      return tx(t, "settings.enhancements.stopReason.completed", "Completed");
     case "tool_calls":
-      return "等待工具结果";
+      return tx(t, "settings.enhancements.stopReason.toolCalls", "Waiting for tool results");
     case "max_iterations":
-      return "达到执行上限";
+      return tx(t, "settings.enhancements.stopReason.maxIterations", "Execution limit reached");
     case "cancelled":
     case "canceled":
-      return "已取消";
+      return tx(t, "settings.enhancements.stopReason.cancelled", "Cancelled");
     case "error":
-      return "执行出错";
+      return tx(t, "settings.enhancements.stopReason.error", "Execution error");
     default:
-      return reason && reason !== "unknown" ? reason : "未说明";
+      return reason && reason !== "unknown"
+        ? reason
+        : tx(t, "settings.enhancements.stopReason.unknown", "Not reported");
   }
 }
 
-function summarizeTools(events: Array<Record<string, unknown>>): string {
+function summarizeTools(events: Array<Record<string, unknown>>, t: Translate): string {
   const counts = new Map<string, number>();
   for (const event of events) {
     if (event.kind !== "tool") continue;
-    const name = String(event.name ?? "未命名工具");
+    const name = String(
+      event.name ?? tx(t, "settings.enhancements.status.unnamedTool", "Unnamed tool"),
+    );
     counts.set(name, (counts.get(name) ?? 0) + 1);
   }
-  if (counts.size === 0) return "未调用工具";
+  if (counts.size === 0) return tx(t, "settings.enhancements.status.noTools", "No tools called");
   const entries = [...counts.entries()];
   const visible = entries.slice(0, 4).map(([name, count]) => `${name} × ${count}`);
-  if (entries.length > visible.length) visible.push(`另有 ${entries.length - visible.length} 种`);
+  if (entries.length > visible.length) {
+    visible.push(tx(t, "settings.enhancements.status.moreTools", "{{count}} more tool types", {
+      count: entries.length - visible.length,
+    }));
+  }
   return visible.join(" · ");
 }
 
@@ -174,22 +211,103 @@ function responseToolNames(response: Record<string, unknown>): string[] {
     .filter(Boolean);
 }
 
-function humanizeToolStatus(value: unknown): string {
+function humanizeToolStatus(value: unknown, t: Translate): string {
   switch (String(value ?? "").toLowerCase()) {
     case "ok":
-      return "成功";
+      return tx(t, "settings.enhancements.toolStatus.ok", "Succeeded");
     case "error":
-      return "失败";
+      return tx(t, "settings.enhancements.toolStatus.error", "Failed");
     case "blocked":
-      return "已拦截";
+      return tx(t, "settings.enhancements.toolStatus.blocked", "Blocked");
     case "cancelled":
     case "canceled":
-      return "已取消";
+      return tx(t, "settings.enhancements.toolStatus.cancelled", "Cancelled");
     case "unknown":
-      return "状态不确定";
+      return tx(t, "settings.enhancements.toolStatus.unknown", "Uncertain");
     default:
-      return String(value ?? "未说明");
+      return String(value ?? tx(t, "settings.enhancements.toolStatus.notReported", "Not reported"));
   }
+}
+
+function numericCount(value: unknown): number {
+  const count = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(count) && count > 0 ? count : 0;
+}
+
+function originalExecutionCounts(execution: unknown): {
+  failedTools: number;
+  providerErrors: number;
+  unknownSideEffects: number;
+} {
+  const value = isRecord(execution) ? execution : {};
+  return {
+    failedTools: numericCount(value.failed_tool_count),
+    providerErrors: numericCount(value.provider_error_count),
+    unknownSideEffects: numericCount(value.unknown_side_effect_count),
+  };
+}
+
+function originalExecutionHasIssue(execution: unknown): boolean {
+  const counts = originalExecutionCounts(execution);
+  const status = isRecord(execution) ? String(execution.status ?? "") : "";
+  return counts.failedTools > 0
+    || counts.providerErrors > 0
+    || counts.unknownSideEffects > 0
+    || (status !== "" && status !== "success");
+}
+
+function originalExecutionLabel(execution: unknown, t: Translate): string {
+  const counts = originalExecutionCounts(execution);
+  const status = isRecord(execution) ? String(execution.status ?? "") : "";
+  if (counts.failedTools > 0 && counts.providerErrors > 0) {
+    return tx(t, "settings.enhancements.original.multipleErrors", "Model and tool errors");
+  }
+  if (counts.failedTools > 0 || status === "tool_error") {
+    return tx(t, "settings.enhancements.original.toolError", "Tool execution failed");
+  }
+  if (counts.providerErrors > 0 || status === "model_error") {
+    return tx(t, "settings.enhancements.original.modelError", "Model request failed");
+  }
+  if (counts.unknownSideEffects > 0 || status === "unknown_side_effect") {
+    return tx(t, "settings.enhancements.original.unknownSideEffect", "Tool side effect is uncertain");
+  }
+  switch (status) {
+    case "cancelled":
+      return tx(t, "settings.enhancements.original.cancelled", "Original run was cancelled");
+    case "execution_error":
+      return tx(t, "settings.enhancements.original.executionError", "Original run ended with an error");
+    case "success":
+      return tx(t, "settings.enhancements.original.success", "Completed without recorded errors");
+    default:
+      return tx(t, "settings.enhancements.original.unknown", "Original result not reported");
+  }
+}
+
+function originalExecutionTone(execution: unknown): string {
+  return originalExecutionHasIssue(execution)
+    ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200"
+    : "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-200";
+}
+
+function responseErrorDetails(response: Record<string, unknown>): {
+  metadata: string;
+  message: string;
+} | null {
+  const finishReason = String(response.finish_reason ?? "").toLowerCase();
+  const statusCode = response.error_status_code;
+  const kind = response.error_kind;
+  const type = response.error_type;
+  const code = response.error_code;
+  const hasMetadata = [statusCode, kind, type, code].some((value) => value !== undefined && value !== null && value !== "");
+  if (finishReason !== "error" && !hasMetadata) return null;
+  const metadata = [
+    statusCode !== undefined && statusCode !== null ? `HTTP ${String(statusCode)}` : "",
+    kind ? `kind=${String(kind)}` : "",
+    type ? `type=${String(type)}` : "",
+    code ? `code=${String(code)}` : "",
+  ].filter(Boolean).join(" · ");
+  const content = typeof response.content === "string" ? response.content.trim() : "";
+  return { metadata, message: content };
 }
 
 function displayValue(value: unknown): string {
@@ -205,8 +323,13 @@ function InlineRecordPreview({
   value: unknown;
   maxLength?: number;
 }) {
+  const { t } = useTranslation();
   const fullText = displayValue(value);
-  const preview = compactText(fullText, maxLength);
+  const preview = compactText(
+    fullText,
+    maxLength,
+    tx(t, "settings.enhancements.status.notRecorded", "Not recorded"),
+  );
   const canExpand = fullText.trim().length > maxLength;
   return (
     <div className="min-w-0 rounded-lg border border-settings-border bg-background/70 px-3 py-2">
@@ -216,7 +339,9 @@ function InlineRecordPreview({
       </div>
       {canExpand ? (
         <details className="mt-2">
-          <summary className="cursor-pointer text-[11px] text-settings-muted">展开完整内容</summary>
+          <summary className="cursor-pointer text-[11px] text-settings-muted">
+            {tx(t, "settings.enhancements.expand.fullContent", "Show full content")}
+          </summary>
           <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-settings-hover/50 p-2 font-mono text-[11px] leading-5 text-settings-foreground">
             {fullText}
           </pre>
@@ -233,6 +358,7 @@ function ReplayTimelineEvent({
   event: Record<string, unknown>;
   index: number;
 }) {
+  const { t } = useTranslation();
   const isTool = event.kind === "tool";
   const response = isRecord(event.response) ? event.response : null;
   const iterationNumber = Number(event.iteration);
@@ -240,7 +366,8 @@ function ReplayTimelineEvent({
   const thinking = response ? responseThinking(response) : "";
   const toolNames = response ? responseToolNames(response) : [];
   const content = response && typeof response.content === "string" ? response.content : "";
-  const toolStatus = humanizeToolStatus(event.status);
+  const providerError = response && !isTool ? responseErrorDetails(response) : null;
+  const toolStatus = humanizeToolStatus(event.status, t);
   return (
     <div className={`relative rounded-xl border p-3 ${isTool
       ? "border-orange-200 bg-orange-50/45 dark:border-orange-900 dark:bg-orange-950/15"
@@ -252,14 +379,22 @@ function ReplayTimelineEvent({
           <Bot className="h-4 w-4 text-blue-600" />
         )}
         <span className="font-semibold text-settings-foreground">
-          {isTool ? "工具执行" : "模型决策"}
+          {isTool
+            ? tx(t, "settings.enhancements.timeline.toolExecution", "Tool execution")
+            : tx(t, "settings.enhancements.timeline.modelDecision", "Model decision")}
         </span>
-        <span className="text-settings-muted">步骤 {index + 1}</span>
+        <span className="text-settings-muted">
+          {tx(t, "settings.enhancements.timeline.step", "Step {{number}}", { number: index + 1 })}
+        </span>
         {isTool ? (
-          <span className="font-mono text-settings-foreground">{String(event.name ?? "未命名工具")}</span>
+          <span className="font-mono text-settings-foreground">
+            {String(event.name ?? tx(t, "settings.enhancements.status.unnamedTool", "Unnamed tool"))}
+          </span>
         ) : (
           <span className="text-settings-muted">
-            {iteration == null ? "未记录决策轮次" : `第 ${iteration} 次决策`}
+            {iteration == null
+              ? tx(t, "settings.enhancements.timeline.unrecordedDecision", "Decision number not recorded")
+              : tx(t, "settings.enhancements.timeline.decision", "Decision {{number}}", { number: iteration })}
           </span>
         )}
         <span className={`ml-auto rounded-full px-2 py-0.5 text-[11px] ${isTool
@@ -267,32 +402,62 @@ function ReplayTimelineEvent({
             ? "bg-emerald-100 text-emerald-800"
             : "bg-orange-100 text-orange-800"
           : "bg-blue-100 text-blue-800"}`}>
-          {isTool ? toolStatus : humanizeStopReason(response?.finish_reason)}
+          {isTool ? toolStatus : humanizeStopReason(response?.finish_reason, t)}
         </span>
       </div>
 
       {isTool ? (
         <div className="mt-3 grid gap-2 lg:grid-cols-2">
-          <InlineRecordPreview label="传入参数" value={event.args} />
-          <InlineRecordPreview label="工具返回" value={event.result} maxLength={480} />
+          <InlineRecordPreview
+            label={tx(t, "settings.enhancements.timeline.arguments", "Arguments")}
+            value={event.args}
+          />
+          <InlineRecordPreview
+            label={tx(t, "settings.enhancements.timeline.result", "Tool result")}
+            value={event.result}
+            maxLength={480}
+          />
           {event.detail ? (
-            <div className="lg:col-span-2 text-xs leading-5 text-settings-muted">{String(event.detail)}</div>
+            <div className="lg:col-span-2 text-xs leading-5 text-settings-muted">
+              <span className="font-medium">
+                {tx(t, "settings.enhancements.timeline.detail", "Execution detail")}: {" "}
+              </span>
+              {String(event.detail)}
+            </div>
           ) : null}
         </div>
       ) : (
         <div className="mt-3 space-y-2">
+          {providerError ? (
+            <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-3 text-red-900 dark:border-red-900 dark:bg-red-950/25 dark:text-red-100">
+              <div className="flex items-center gap-2 text-xs font-semibold">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-300" />
+                {tx(t, "settings.enhancements.timeline.providerError", "Model request failed")}
+              </div>
+              {providerError.metadata ? (
+                <div className="mt-1 font-mono text-[11px] leading-5">{providerError.metadata}</div>
+              ) : null}
+              {providerError.message ? (
+                <div className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-words text-xs leading-5">
+                  {compactText(providerError.message, 720)}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {thinking ? (
             <div className="rounded-lg border border-violet-200 bg-violet-50/80 px-3 py-2 dark:border-violet-900 dark:bg-violet-950/20">
               <div className="flex items-center gap-1.5 text-[11px] font-medium text-violet-800 dark:text-violet-200">
                 <MessageSquare className="h-3.5 w-3.5" />
-                模型思考记录
+                {tx(t, "settings.enhancements.timeline.thinking", "Model thinking trace")}
               </div>
               <div className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-settings-foreground">
                 {compactText(thinking, 720)}
               </div>
               {thinking.trim().length > 720 ? (
                 <details className="mt-2">
-                  <summary className="cursor-pointer text-[11px] text-violet-800 dark:text-violet-200">展开完整思考记录</summary>
+                  <summary className="cursor-pointer text-[11px] text-violet-800 dark:text-violet-200">
+                    {tx(t, "settings.enhancements.expand.fullThinking", "Show full thinking trace")}
+                  </summary>
                   <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-white/70 p-2 font-mono text-[11px] leading-5 text-settings-foreground dark:bg-black/20">
                     {thinking}
                   </pre>
@@ -302,19 +467,25 @@ function ReplayTimelineEvent({
           ) : null}
           {toolNames.length > 0 ? (
             <div className="rounded-lg border border-settings-border bg-background/70 px-3 py-2 text-xs text-settings-foreground">
-              <span className="font-medium">模型决定调用：</span>
+              <span className="font-medium">
+                {tx(t, "settings.enhancements.timeline.modelCalls", "Model decided to call:")}
+              </span>
               <span className="ml-1 font-mono">{toolNames.join(" · ")}</span>
             </div>
           ) : null}
           {content ? (
             <div className="rounded-lg border border-settings-border bg-background/70 px-3 py-2">
-              <div className="text-[11px] font-medium text-settings-muted">模型输出</div>
+              <div className="text-[11px] font-medium text-settings-muted">
+                {tx(t, "settings.enhancements.timeline.modelOutput", "Model output")}
+              </div>
               <div className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-settings-foreground">
                 {compactText(content, 720)}
               </div>
               {content.trim().length > 720 ? (
                 <details className="mt-2">
-                  <summary className="cursor-pointer text-[11px] text-settings-muted">展开完整模型输出</summary>
+                  <summary className="cursor-pointer text-[11px] text-settings-muted">
+                    {tx(t, "settings.enhancements.expand.fullModelOutput", "Show full model output")}
+                  </summary>
                   <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-settings-hover/50 p-2 text-xs leading-5 text-settings-foreground">
                     {content}
                   </pre>
@@ -323,7 +494,9 @@ function ReplayTimelineEvent({
             </div>
           ) : null}
           {!thinking && toolNames.length === 0 && !content ? (
-            <div className="text-xs text-settings-muted">模型没有返回可展示文本，执行器继续处理下一步。</div>
+            <div className="text-xs text-settings-muted">
+              {tx(t, "settings.enhancements.timeline.noVisibleText", "The model returned no displayable text; the runner continued to the next step.")}
+            </div>
           ) : null}
         </div>
       )}
@@ -359,60 +532,105 @@ function ConversationCard({
 
 function ReplayTurnSummary({
   detail,
+  replayOk,
+  replayDiffCount,
   onFullscreen,
 }: {
   detail: BlackboxDetail;
+  replayOk: boolean;
+  replayDiffCount: number;
   onFullscreen?: () => void;
 }) {
+  const { t } = useTranslation();
   const turn = detail.turn;
   const diagnostics = isRecord(detail.diagnostics) ? detail.diagnostics : {};
   const failedTools = Array.isArray(diagnostics.failed_tools) ? diagnostics.failed_tools : [];
   const unknownSideEffects = Array.isArray(diagnostics.unknown_side_effects)
     ? diagnostics.unknown_side_effects
     : [];
+  const providerErrors = Array.isArray(diagnostics.provider_errors)
+    ? diagnostics.provider_errors
+    : [];
+  const originalExecution = isRecord(diagnostics.original_execution)
+    ? diagnostics.original_execution
+    : {
+      status: failedTools.length > 0
+        ? "tool_error"
+        : providerErrors.length > 0
+          ? "model_error"
+          : unknownSideEffects.length > 0
+            ? "unknown_side_effect"
+            : "success",
+      ok: failedTools.length === 0 && providerErrors.length === 0 && unknownSideEffects.length === 0,
+      failed_tool_count: failedTools.length,
+      provider_error_count: providerErrors.length,
+      unknown_side_effect_count: unknownSideEffects.length,
+    };
   const userRequest = lastMessageText(turn.initial_messages, "user");
   const finalAnswer = typeof turn.final_content === "string" && turn.final_content.trim()
     ? turn.final_content
     : lastMessageText(turn.final_messages, "assistant");
-  const hasProblems = failedTools.length > 0 || unknownSideEffects.length > 0;
-  const statusLabel = hasProblems
-    ? "需要关注"
-    : humanizeStopReason(diagnostics.stop_reason ?? turn.stop_reason);
+  const originalCounts = originalExecutionCounts(originalExecution);
+  const hasProblems = originalExecutionHasIssue(originalExecution)
+    || failedTools.length > 0
+    || providerErrors.length > 0
+    || unknownSideEffects.length > 0;
+  const issueParts = [
+    originalCounts.failedTools > 0
+      ? tx(t, "settings.enhancements.turn.failedToolCount", "{{count}} tool call(s) failed", { count: originalCounts.failedTools })
+      : "",
+    originalCounts.providerErrors > 0
+      ? tx(t, "settings.enhancements.turn.providerErrorCount", "{{count}} model request(s) failed", { count: originalCounts.providerErrors })
+      : "",
+    originalCounts.unknownSideEffects > 0
+      ? tx(t, "settings.enhancements.turn.unknownSideEffectCount", "{{count}} tool result(s) are uncertain", { count: originalCounts.unknownSideEffects })
+      : "",
+  ].filter(Boolean).join(" · ");
   const statusDescription = hasProblems
-    ? `${failedTools.length ? `${failedTools.length} 个工具调用失败` : ""}${failedTools.length && unknownSideEffects.length ? "；" : ""}${unknownSideEffects.length ? `${unknownSideEffects.length} 个工具的执行结果不确定` : ""}。请查看原始记录。`
+    ? `${issueParts || originalExecutionLabel(originalExecution, t)} ${tx(t, "settings.enhancements.turn.inspectRaw", "Inspect the readable trace or raw record for details.")}`
     : detail.counts.tool_calls > 0
-      ? `这次执行包含 ${summarizeTools(detail.events)}。`
-      : "这次任务没有调用工具，模型直接生成了最终回复。";
+      ? tx(t, "settings.enhancements.turn.toolSummary", "This run included {{tools}}.", {
+        tools: summarizeTools(detail.events, t),
+      })
+      : tx(
+        t,
+        "settings.enhancements.turn.noToolSummary",
+        "This task did not call a tool; the model produced the final answer directly.",
+      );
   return (
     <div className="space-y-4 border-t border-settings-border bg-settings-hover/25 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-sm font-semibold text-settings-foreground">本回合执行过程</div>
+          <div className="text-sm font-semibold text-settings-foreground">
+            {tx(t, "settings.enhancements.turn.processTitle", "Turn execution")}
+          </div>
           <div className="mt-0.5 font-mono text-[11px] text-settings-muted">{detail.turn_id}</div>
         </div>
         {onFullscreen ? (
           <Button type="button" variant="outline" size="sm" onClick={onFullscreen}>
             <Maximize2 className="mr-1.5 h-3.5 w-3.5" />
-            查看原始记录
+            {tx(t, "settings.enhancements.turn.rawRecord", "View raw record")}
           </Button>
         ) : null}
       </div>
       <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
         <ConversationCard
           icon="user"
-          label="用户消息"
-          value={compactText(userRequest, 360)}
-          detail="这次任务开始时发送给 Agent 的内容"
+          label={tx(t, "settings.enhancements.turn.userMessage", "User request")}
+          value={compactText(userRequest, 360, tx(t, "settings.enhancements.status.notRecorded", "Not recorded"))}
+          detail={tx(t, "settings.enhancements.turn.userMessageDetail", "The content sent to the agent when this task started")}
         />
         <ConversationCard
           icon="assistant"
-          label="最终回答"
-          value={compactText(finalAnswer, 720)}
-          detail="Agent 最后展示给用户的内容"
+          label={tx(t, "settings.enhancements.turn.finalAnswer", "Final answer")}
+          value={compactText(finalAnswer, 720, tx(t, "settings.enhancements.status.notRecorded", "Not recorded"))}
+          detail={tx(t, "settings.enhancements.turn.finalAnswerDetail", "The content the agent showed to the user")}
         >
           {finalAnswer.trim().length > 720 ? (
             <details className="mt-2">
-              <summary className="cursor-pointer text-[11px] text-settings-muted">展开完整回答</summary>
+              <summary className="cursor-pointer text-[11px] text-settings-muted">
+                {tx(t, "settings.enhancements.expand.fullAnswer", "Show full answer")}
+              </summary>
               <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-settings-hover/50 p-2 text-xs leading-5 text-settings-foreground">
                 {finalAnswer}
               </pre>
@@ -423,18 +641,23 @@ function ReplayTurnSummary({
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="rounded-full border border-settings-border bg-background/70 px-3 py-1 font-mono text-settings-foreground">
-          模型 · {String(turn.model ?? "未记录")}
+          {tx(t, "settings.enhancements.turn.model", "Model")} · {String(turn.model ?? tx(t, "settings.enhancements.status.notRecorded", "Not recorded"))}
         </span>
         <span className="rounded-full border border-settings-border bg-background/70 px-3 py-1 text-settings-foreground">
-          模型决策 · {detail.counts.llm_responses} 次
+          {tx(t, "settings.enhancements.turn.modelDecisions", "Model decisions")} · {detail.counts.llm_responses}
         </span>
         <span className="rounded-full border border-settings-border bg-background/70 px-3 py-1 text-settings-foreground">
-          工具执行 · {detail.counts.tool_calls} 次
+          {tx(t, "settings.enhancements.turn.toolExecutions", "Tool executions")} · {detail.counts.tool_calls}
         </span>
-        <span className={`rounded-full border px-3 py-1 ${hasProblems
-          ? "border-amber-200 bg-amber-50 text-amber-800"
-          : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
-          {statusLabel}
+        <span className={`rounded-full border px-3 py-1 ${replayOk
+          ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+          : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+          {tx(t, "settings.enhancements.result.replayLabel", "Replay result")} · {replayOk
+            ? tx(t, "settings.enhancements.result.replayConsistent", "Consistent")
+            : tx(t, "settings.enhancements.result.replayDifferencesShort", "{{count}} difference(s)", { count: replayDiffCount })}
+        </span>
+        <span className={`rounded-full border px-3 py-1 ${originalExecutionTone(originalExecution)}`}>
+          {tx(t, "settings.enhancements.result.originalLabel", "Original execution")} · {originalExecutionLabel(originalExecution, t)}
         </span>
       </div>
 
@@ -442,9 +665,11 @@ function ReplayTurnSummary({
         <div className="flex items-start gap-2">
           <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-settings-muted" />
           <div>
-            <div className="text-sm font-semibold text-settings-foreground">Agent 实际经历的过程</div>
+            <div className="text-sm font-semibold text-settings-foreground">
+              {tx(t, "settings.enhancements.turn.traceTitle", "What happened in this turn")}
+            </div>
             <div className="mt-1 text-xs leading-5 text-settings-muted">
-              下面按发生顺序展示模型思考记录、模型决策、工具调用和工具返回。长参数和返回值可以在事件内展开；完整原始 JSON 请点击上方按钮。
+              {tx(t, "settings.enhancements.turn.traceDescription", "The timeline follows the recorded order: model thinking, model decisions, tool calls, and tool results. Expand long values when needed. For the untouched JSON, open the raw record.")}
             </div>
           </div>
         </div>
@@ -453,7 +678,7 @@ function ReplayTurnSummary({
             <ReplayTimelineEvent key={`${String(event.kind ?? "event")}-${index}`} event={event} index={index} />
           )) : (
             <div className="rounded-lg border border-dashed border-settings-border px-3 py-4 text-xs text-settings-muted">
-              这个回合没有单独的模型或工具事件记录，可能是旧格式样本。
+              {tx(t, "settings.enhancements.turn.noEvents", "This turn has no separate model or tool events. It may come from an older recording format.")}
             </div>
           )}
         </div>
@@ -462,36 +687,43 @@ function ReplayTurnSummary({
       <div className={`rounded-xl border px-3 py-3 text-xs leading-5 ${hasProblems
         ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200"
         : "border-settings-border bg-background/70 text-settings-muted"}`}>
-        <div className="font-medium text-settings-foreground">本回合结果</div>
-        <div className="mt-1">{statusDescription} 回放只使用录制中的模型响应和工具结果，不会重新请求模型或执行真实工具。</div>
+        <div className="font-medium text-settings-foreground">
+          {tx(t, "settings.enhancements.turn.resultTitle", "Turn result")}
+        </div>
+        <div className="mt-1">{statusDescription} {tx(t, "settings.enhancements.turn.replaySafety", "Replay uses only the recorded model responses and tool results. It does not call the provider again or execute real tools.")}</div>
       </div>
     </div>
   );
 }
 
 function RawExecutionViewer({ detail }: { detail: BlackboxDetail }) {
+  const { t } = useTranslation();
   const rawEvents = detail.events.map((event) => JSON.stringify(event)).join("\n");
   return (
     <div className="flex h-full min-h-0 flex-col bg-settings-surface">
       <div className="shrink-0 border-b border-settings-border px-6 py-4">
         <div className="flex flex-wrap items-start justify-between gap-3 pr-12">
           <div>
-            <div className="text-base font-semibold text-settings-foreground">完整原始记录</div>
+            <div className="text-base font-semibold text-settings-foreground">
+              {tx(t, "settings.enhancements.raw.title", "Complete raw record")}
+            </div>
             <div className="mt-1 break-all font-mono text-xs text-settings-muted">{detail.turn_id}</div>
           </div>
           <div className="rounded-full bg-settings-hover px-3 py-1 text-xs text-settings-muted">
-            不做摘要 · 不改写内容
+            {tx(t, "settings.enhancements.raw.badge", "No summary · No rewriting")}
           </div>
         </div>
         <p className="mt-3 max-w-4xl text-xs leading-5 text-settings-muted">
-          这里展示这个回合保存下来的全部 JSON 数据：回合总记录，以及按执行顺序排列的模型响应和工具调用。内容可能包含 Prompt、文件路径和其他敏感信息。
+          {tx(t, "settings.enhancements.raw.description", "This is every JSON value saved for the turn: the turn envelope plus model and tool events in execution order. It may contain prompts, file paths, and other sensitive information.")}
         </p>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="mx-auto max-w-[1600px] space-y-5">
           <section>
             <div className="mb-2 flex items-center justify-between gap-2">
-              <h4 className="text-sm font-semibold text-settings-foreground">回合总记录</h4>
+              <h4 className="text-sm font-semibold text-settings-foreground">
+                {tx(t, "settings.enhancements.raw.turnRecord", "Turn envelope")}
+              </h4>
               <span className="font-mono text-[11px] text-settings-muted">turns.jsonl · kind=turn</span>
             </div>
             <pre className="overflow-auto rounded-xl border border-settings-border bg-slate-950 p-4 font-mono text-[11px] leading-5 text-slate-100">
@@ -501,16 +733,23 @@ function RawExecutionViewer({ detail }: { detail: BlackboxDetail }) {
 
           <section>
             <div className="mb-2 flex items-center justify-between gap-2">
-              <h4 className="text-sm font-semibold text-settings-foreground">执行过程原始记录</h4>
-              <span className="font-mono text-[11px] text-settings-muted">tools.jsonl · {detail.events.length} 条记录</span>
+              <h4 className="text-sm font-semibold text-settings-foreground">
+                {tx(t, "settings.enhancements.raw.events", "Raw execution events")}
+              </h4>
+              <span className="font-mono text-[11px] text-settings-muted">
+                {tx(t, "settings.enhancements.raw.eventCount", "tools.jsonl · {{count}} events", { count: detail.events.length })}
+              </span>
             </div>
             <pre className="min-h-32 overflow-auto whitespace-pre-wrap break-all rounded-xl border border-settings-border bg-slate-950 p-4 font-mono text-[11px] leading-5 text-slate-100">
-              {rawEvents || "这个回合没有单独的模型或工具事件记录。"}
+              {rawEvents || tx(t, "settings.enhancements.raw.noEvents", "This turn has no separate model or tool events.")}
             </pre>
           </section>
 
           <div className="text-xs text-settings-muted">
-            关联文件：turns.jsonl{detail.files.tools ? " · tools.jsonl" : ""}{detail.files.cassette ? ` · ${detail.files.cassette}` : ""}
+            {tx(t, "settings.enhancements.raw.associatedFiles", "Files: turns.jsonl{{tools}}{{cassette}}", {
+              tools: detail.files.tools ? " · tools.jsonl" : "",
+              cassette: detail.files.cassette ? ` · ${detail.files.cassette}` : "",
+            })}
           </div>
         </div>
       </div>
@@ -625,7 +864,12 @@ export function EnhancementsSettings() {
 
   async function deleteRecording(recording: BlackboxRecording) {
     const confirmed = window.confirm(
-      `删除录制“${recording.name}”？这会删除其中的 Prompt、模型响应和工具结果，无法恢复。`,
+      tx(
+        t,
+        "settings.enhancements.recording.deleteConfirm",
+        "Delete recording “{{name}}”? This removes its prompts, model responses, and tool results permanently.",
+        { name: recording.name },
+      ),
     );
     if (!confirmed) return;
 
@@ -646,6 +890,7 @@ export function EnhancementsSettings() {
     tokens && tokens.context_window_tokens > 0 && tokens.usage_ratio != null
       ? Math.round(tokens.usage_ratio * 1000) / 10
       : null;
+  const originalIssueTurns = replay?.original_issue_turns ?? 0;
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -654,26 +899,23 @@ export function EnhancementsSettings() {
           <Bug className="mt-0.5 h-5 w-5 shrink-0 text-violet-600" />
           <div>
             <h2 className="text-lg font-semibold text-settings-foreground">
-              {t("settings.enhancements.title", { defaultValue: "录制与回放" })}
+              {tx(t, "settings.enhancements.title", "Record & Replay")}
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-settings-foreground">
-              {t("settings.enhancements.explainer", {
-                defaultValue:
-                  "先把一次真实任务保存成可重走的执行样本。之后可以不请求模型、不执行真实工具，离线检查当前 Agent 的执行流程有没有变化。",
-              })}
+              {tx(t, "settings.enhancements.explainer", "Save a real agent run as a test sample. Replay it offline with the recorded model responses and tool results to see whether the current orchestration still follows the same path.")}
             </p>
             <div className="mt-4 grid gap-3 text-xs text-settings-foreground sm:grid-cols-3">
               <div className="rounded-xl bg-white/70 p-3 dark:bg-black/20">
-                <div className="font-semibold">1. 保存一次真实任务</div>
-                <div className="mt-1 text-settings-muted">输入、模型回答、工具调用和结果都会保留。</div>
+                <div className="font-semibold">{tx(t, "settings.enhancements.steps.recordTitle", "1. Record a real task")}</div>
+                <div className="mt-1 text-settings-muted">{tx(t, "settings.enhancements.steps.recordDetail", "The request, model decisions, tool calls, and observations are saved.")}</div>
               </div>
               <div className="rounded-xl bg-white/70 p-3 dark:bg-black/20">
-                <div className="font-semibold">2. 修改代码或排查问题</div>
-                <div className="mt-1 text-settings-muted">适合检查模型循环、上下文和工具处理。</div>
+                <div className="font-semibold">{tx(t, "settings.enhancements.steps.changeTitle", "2. Change code or investigate")}</div>
+                <div className="mt-1 text-settings-muted">{tx(t, "settings.enhancements.steps.changeDetail", "Useful when checking the agent loop, context handling, or tool flow.")}</div>
               </div>
               <div className="rounded-xl bg-white/70 p-3 dark:bg-black/20">
-                <div className="font-semibold">3. 离线重走并比较</div>
-                <div className="mt-1 text-settings-muted">不花 Token、不联网，也不会产生工具副作用。</div>
+                <div className="font-semibold">{tx(t, "settings.enhancements.steps.replayTitle", "3. Replay and compare")}</div>
+                <div className="mt-1 text-settings-muted">{tx(t, "settings.enhancements.steps.replayDetail", "No token cost, no network calls, and no real tool side effects.")}</div>
               </div>
             </div>
           </div>
@@ -699,12 +941,14 @@ export function EnhancementsSettings() {
             />
             <div>
               <h3 className="text-base font-semibold text-settings-foreground">
-                {status?.recording ? "正在收集执行样本" : "录制一次任务"}
+                {status?.recording
+                  ? tx(t, "settings.enhancements.recording.activeTitle", "Collecting an execution sample")
+                  : tx(t, "settings.enhancements.recording.inactiveTitle", "Record a task")}
               </h3>
               <p className="text-xs text-settings-muted">
                 {status?.recording
-                  ? "停止前，所有会话中的任务都会继续写入这份样本。"
-                  : "点击开始，执行你想保存下来、以后重复检查的任务。"}
+                  ? tx(t, "settings.enhancements.recording.activeHint", "Every task from every session will be added until you stop recording.")
+                  : tx(t, "settings.enhancements.recording.inactiveHint", "Start recording, run the task you want to keep, then stop when it is complete.")}
               </p>
             </div>
           </div>
@@ -712,41 +956,44 @@ export function EnhancementsSettings() {
             {status?.recording ? (
               <Button variant="secondary" size="sm" onClick={() => void stop()} disabled={busy !== null}>
                 {busy === "stop" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
-                停止录制
+                {tx(t, "settings.enhancements.recording.stop", "Stop recording")}
               </Button>
             ) : (
               <Button variant="secondary" size="sm" onClick={() => void start()} disabled={busy !== null}>
                 {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CircleDashed className="h-4 w-4" />}
-                开始录制
+                {tx(t, "settings.enhancements.recording.start", "Start recording")}
               </Button>
             )}
             <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={busy !== null}>
               <RefreshCw className="h-4 w-4" />
-              刷新
+              {tx(t, "settings.enhancements.recording.refresh", "Refresh")}
             </Button>
           </div>
         </div>
 
         {status?.recording && status.directory ? (
           <div className="mb-4 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-300">
-            当前样本：<span className="font-mono">{status.directory.split(/[\\/]/).pop()}</span>
+            {tx(t, "settings.enhancements.recording.currentSample", "Current sample:")} {" "}
+            <span className="font-mono">{status.directory.split(/[\\/]/).pop()}</span>
           </div>
         ) : null}
 
         {status?.recording ? (
           <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-300">
-            从“开始”到“停止”期间，不论你在哪个会话中执行任务，所有回合都会追加到同一个样本。
+            {tx(t, "settings.enhancements.recording.allSessions", "Every session is included between Start and Stop.")}
           </div>
         ) : null}
 
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-settings-border bg-settings-hover/40 px-3 py-2 text-xs text-settings-muted">
           <Info className="h-4 w-4 shrink-0" />
-          离线检查只使用样本里的模型响应和工具结果；不会产生新的模型请求，也不会真的执行工具。
+          {tx(t, "settings.enhancements.recording.offlineInfo", "Offline replay uses the sample's model responses and tool results. It will not make a new model request or execute a real tool.")}
         </div>
 
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <PauseCircle className="h-4 w-4 text-settings-muted" />
-          <span className="text-xs text-settings-muted">暂停检查（可选）：在第</span>
+          <span className="text-xs text-settings-muted">
+            {tx(t, "settings.enhancements.recording.breakpointPrefix", "Optional breakpoint: pause at model decision")}
+          </span>
           <Input
             type="number"
             min={1}
@@ -755,7 +1002,9 @@ export function EnhancementsSettings() {
             placeholder="N"
             className="h-7 w-16"
           />
-          <span className="text-xs text-settings-muted">个模型决策处暂停</span>
+          <span className="text-xs text-settings-muted">
+            {tx(t, "settings.enhancements.recording.breakpointSuffix", "")}
+          </span>
         </div>
 
         {recordings.length > 0 ? (
@@ -779,11 +1028,13 @@ export function EnhancementsSettings() {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-mono text-sm text-settings-foreground">{recording.name}</span>
                         <span className={`rounded-full border px-2 py-0.5 text-[11px] ${recordingStatusClass(recording)}`}>
-                          {recordingStatusLabel(recording)}
+                          {recordingStatusLabel(recording, t)}
                         </span>
                       </div>
                       <div className="mt-1 text-xs text-settings-muted">
-                        {isReady ? `${recording.turns} 个任务已保存` : recording.message}
+                          {isReady
+                            ? tx(t, "settings.enhancements.recording.savedTurns", "{{count}} task(s) saved", { count: recording.turns })
+                            : recordingStatusMessage(recording, t)}
                       </div>
                     </div>
                   </div>
@@ -795,15 +1046,17 @@ export function EnhancementsSettings() {
                       disabled={busy !== null || !isReady}
                     >
                       {replayBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                      {breakAt ? "暂停检查" : "离线检查"}
+                      {breakAt
+                        ? tx(t, "settings.enhancements.recording.breakpointReplay", "Replay to breakpoint")
+                        : tx(t, "settings.enhancements.recording.replay", "Replay offline")}
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => void deleteRecording(recording)}
                       disabled={busy !== null}
-                      title="删除录制"
-                      aria-label={`删除录制 ${recording.name}`}
+                      title={tx(t, "settings.enhancements.recording.deleteConfirm", "Delete recording “{{name}}”?", { name: recording.name })}
+                      aria-label={tx(t, "settings.enhancements.recording.deleteConfirm", "Delete recording “{{name}}”?", { name: recording.name })}
                     >
                       {deleteBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                     </Button>
@@ -814,7 +1067,7 @@ export function EnhancementsSettings() {
           </div>
         ) : (
           <div className="rounded-xl border border-dashed border-settings-border px-4 py-6 text-center text-sm text-settings-muted">
-            还没有执行样本。点击“开始”，执行一次任务，再回来点击“停止”。
+            {tx(t, "settings.enhancements.recording.empty", "No execution samples yet. Start recording, run a task, then come back and stop recording.")}
           </div>
         )}
       </section>
@@ -822,42 +1075,100 @@ export function EnhancementsSettings() {
       {replay ? (
         <section className="rounded-xl border border-settings-border bg-settings-surface p-5">
           <div className="flex items-start gap-3">
-            {replay.all_deterministic ? (
-              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
-            ) : (
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
-            )}
-            <div>
-              <h3 className="text-base font-semibold text-settings-foreground">离线检查结果</h3>
-              <p className="mt-1 text-sm text-settings-foreground">
-                {replay.deterministic_turns}/{replay.total_turns} 个回合未发现可观察差异
-              </p>
+            <Bug className="mt-0.5 h-5 w-5 shrink-0 text-violet-600" />
+            <div className="min-w-0">
+              <h3 className="text-base font-semibold text-settings-foreground">
+                {tx(t, "settings.enhancements.result.title", "Offline replay result")}
+              </h3>
               <p className="mt-1 text-xs text-settings-muted">
-                这里检查的是当前代码能否重走原来的执行流程，不是模型回答质量评分。
-              </p>
-              <p className="mt-1 text-xs text-settings-muted">
-                点开一个回合查看完整的可读执行过程；需要完整 JSON 时，再点击“查看原始记录”。
+                {tx(t, "settings.enhancements.result.description", "Replay consistency and the original run's health are shown separately. Replay does not grade the model's answer quality.")}
               </p>
             </div>
           </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className={`rounded-xl border p-4 ${replay.all_deterministic
+              ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-900 dark:bg-emerald-950/20"
+              : "border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20"}`}>
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-settings-muted">
+                {replay.all_deterministic ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-amber-600" />}
+                {tx(t, "settings.enhancements.result.replayLabel", "Replay result")}
+              </div>
+              <div className="mt-2 text-lg font-semibold text-settings-foreground">
+                {tx(t, "settings.enhancements.result.replaySummary", "{{matched}}/{{total}} turns replayed consistently", {
+                  matched: replay.deterministic_turns,
+                  total: replay.total_turns,
+                })}
+              </div>
+              <div className="mt-1 text-xs text-settings-muted">
+                {replay.all_deterministic
+                  ? tx(t, "settings.enhancements.result.replayConsistentHint", "The current orchestration produced the same observable messages and tool flow.")
+                  : tx(t, "settings.enhancements.result.replayDifferenceHint", "Open a turn to inspect the recorded and replayed message differences.")}
+              </div>
+            </div>
+            <div className={`rounded-xl border p-4 ${originalIssueTurns === 0
+              ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-900 dark:bg-emerald-950/20"
+              : "border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20"}`}>
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-settings-muted">
+                {originalIssueTurns === 0 ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-amber-600" />}
+                {tx(t, "settings.enhancements.result.originalLabel", "Original execution")}
+              </div>
+              <div className="mt-2 text-lg font-semibold text-settings-foreground">
+                {originalIssueTurns === 0
+                  ? tx(t, "settings.enhancements.result.originalHealthy", "No recorded errors")
+                  : tx(t, "settings.enhancements.result.originalIssues", "{{count}} turn(s) originally contained errors", { count: originalIssueTurns })}
+              </div>
+              <div className="mt-1 text-xs text-settings-muted">
+                {tx(t, "settings.enhancements.result.originalBreakdown", "{{tools}} failed tool call(s) · {{models}} failed model request(s) · {{unknown}} uncertain side effect(s)", {
+                  tools: replay.original_failed_tool_calls,
+                  models: replay.original_provider_errors,
+                  unknown: replay.original_unknown_side_effects,
+                })}
+              </div>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-settings-muted">
+            {tx(t, "settings.enhancements.result.detailHint", "Open a turn for the readable trace. Use View raw record for the complete JSON.")}
+          </p>
           <div className="mt-4 flex flex-col gap-1">
             {replay.results.map((row, index) => (
               <div key={row.turn_id} className="rounded-lg border border-settings-border">
                 <button
                   type="button"
                   onClick={() => void toggleTurnDetail(row.turn_id)}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-settings-hover"
+                  className="flex w-full items-start gap-3 px-3 py-3 text-left hover:bg-settings-hover"
                 >
-                  {row.ok ? (
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
-                  ) : (
-                    <XCircle className="h-4 w-4 shrink-0 text-amber-500" />
-                  )}
-                  <span className="whitespace-nowrap text-sm font-medium text-settings-foreground">第 {index + 1} 回合</span>
-                  <span className="min-w-0 truncate font-mono text-xs text-settings-muted">{row.turn_id}</span>
-                  <span className={`ml-auto whitespace-nowrap text-xs ${row.ok ? "text-emerald-700" : "text-amber-700"}`}>
-                    {row.ok ? "未发现可观察差异" : `发现 ${row.diffs.length} 处差异`}
-                  </span>
+                  <div className="flex shrink-0 flex-col items-center gap-1 pt-0.5" aria-hidden="true">
+                    {row.ok ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-amber-500" />
+                    )}
+                    {originalExecutionHasIssue(row.original_execution) ? (
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                    ) : (
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="whitespace-nowrap text-sm font-medium text-settings-foreground">
+                        {tx(t, "settings.enhancements.result.turn", "Turn {{number}}", { number: index + 1 })}
+                      </span>
+                      <span className="min-w-0 truncate font-mono text-xs text-settings-muted">{row.turn_id}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <span className={`rounded-full border px-2 py-0.5 text-[11px] ${row.ok
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                        {tx(t, "settings.enhancements.result.replayLabel", "Replay result")} · {row.ok
+                          ? tx(t, "settings.enhancements.result.replayConsistent", "Consistent")
+                          : tx(t, "settings.enhancements.result.replayDifferencesShort", "{{count}} difference(s)", { count: row.diffs.length })}
+                      </span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[11px] ${originalExecutionTone(row.original_execution)}`}>
+                        {tx(t, "settings.enhancements.result.originalLabel", "Original execution")} · {originalExecutionLabel(row.original_execution, t)}
+                      </span>
+                    </div>
+                  </div>
                   {detailLoading === row.turn_id ? (
                     <Loader2 className="h-4 w-4 animate-spin text-settings-muted" />
                   ) : expandedTurn === row.turn_id ? (
@@ -870,7 +1181,9 @@ export function EnhancementsSettings() {
                   <div>
                     {row.diffs.length > 0 ? (
                       <div className="border-t border-settings-border bg-settings-hover/50 p-3">
-                        <div className="mb-2 text-xs font-medium text-settings-muted">当前结果与原样本的不同之处</div>
+                        <div className="mb-2 text-xs font-medium text-settings-muted">
+                          {tx(t, "settings.enhancements.result.differenceTitle", "Differences from the recording")}
+                        </div>
                         <div className="flex flex-col gap-2">
                           {row.diffs.map((diff, diffIndex) => (
                             <pre key={diffIndex} className="whitespace-pre-wrap break-all font-mono text-xs text-settings-foreground">
@@ -883,11 +1196,13 @@ export function EnhancementsSettings() {
                     {detailByTurn[row.turn_id] ? (
                       <ReplayTurnSummary
                         detail={detailByTurn[row.turn_id]}
+                        replayOk={row.ok}
+                        replayDiffCount={row.diffs.length}
                         onFullscreen={() => setFullscreenDetail(detailByTurn[row.turn_id])}
                       />
                     ) : detailLoading === row.turn_id ? (
                       <div className="border-t border-settings-border px-3 py-5 text-center text-xs text-settings-muted">
-                        正在读取这个回合的执行过程…
+                        {tx(t, "settings.enhancements.result.loading", "Loading this turn's execution trace…")}
                       </div>
                     ) : null}
                   </div>
@@ -902,7 +1217,7 @@ export function EnhancementsSettings() {
         <section className="rounded-xl border border-amber-300 bg-amber-50 p-4">
           <div className="flex items-center gap-2 text-sm font-medium text-amber-800">
             <PauseCircle className="h-4 w-4" />
-            已在第 {breakpoint.iteration + 1} 个模型决策处暂停
+            {tx(t, "settings.enhancements.breakpoint.paused", "Paused at model decision {{number}}", { number: breakpoint.iteration + 1 })}
             {breakpoint.turn_id ? ` · ${breakpoint.turn_id}` : ""}
           </div>
           <div className="mt-2 max-h-72 overflow-auto rounded bg-white/60 p-2">
@@ -923,9 +1238,9 @@ export function EnhancementsSettings() {
       >
         <DialogContent className="flex h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden p-0">
           <DialogHeader className="shrink-0 border-b border-settings-border px-6 py-4 pr-14 text-left">
-            <DialogTitle>回合原始记录</DialogTitle>
-            <DialogDescription>
-              这是保存下来的完整数据，不做改写；关闭窗口后返回可读执行过程。
+              <DialogTitle>{tx(t, "settings.enhancements.raw.dialogTitle", "Turn raw record")}</DialogTitle>
+              <DialogDescription>
+                {tx(t, "settings.enhancements.raw.dialogDescription", "This is the saved data without rewriting. Close the window to return to the readable execution view.")}
             </DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 overflow-hidden">
@@ -938,17 +1253,22 @@ export function EnhancementsSettings() {
         <div className="mb-4 flex items-start gap-2">
           <Gauge className="mt-0.5 h-5 w-5 text-settings-foreground" />
           <div>
-            <h3 className="text-base font-semibold text-settings-foreground">上下文预算</h3>
+            <h3 className="text-base font-semibold text-settings-foreground">
+              {tx(t, "settings.enhancements.budget.title", "Context budget")}
+            </h3>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatCard label="估算 Token" value={tokens ? tokens.estimated_tokens.toLocaleString() : "—"} />
-          <StatCard label="上下文窗口" value={tokens ? tokens.context_window_tokens.toLocaleString() : "—"} />
-          <StatCard label="消息数" value={tokens ? String(tokens.message_count) : "—"} />
+          <StatCard label={tx(t, "settings.enhancements.budget.estimatedTokens", "Estimated tokens")} value={tokens ? tokens.estimated_tokens.toLocaleString() : "—"} />
+          <StatCard label={tx(t, "settings.enhancements.budget.contextWindow", "Context window")} value={tokens ? tokens.context_window_tokens.toLocaleString() : "—"} />
+          <StatCard label={tx(t, "settings.enhancements.budget.messages", "Messages")} value={tokens ? String(tokens.message_count) : "—"} />
           <StatCard
-            label="窗口使用率"
+            label={tx(t, "settings.enhancements.budget.usage", "Window usage")}
             value={usagePct != null ? `${usagePct}%` : "—"}
-            hint={tokens ? `${tokens.tool_count} 个工具 · ${tokens.model ?? ""}` : undefined}
+            hint={tokens ? tx(t, "settings.enhancements.budget.hint", "{{tools}} tools · {{model}}", {
+              tools: tokens.tool_count,
+              model: tokens.model ?? "",
+            }) : undefined}
           />
         </div>
       </section>

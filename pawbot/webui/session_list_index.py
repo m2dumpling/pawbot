@@ -30,7 +30,10 @@ from pawbot.session.manager import (
     _message_preview_text,  # pyright: ignore[reportPrivateUsage]
     _metadata_title,  # pyright: ignore[reportPrivateUsage]
 )
-from pawbot.session.model_selection import model_preset_from_metadata
+from pawbot.session.model_selection import (
+    model_override_from_metadata,
+    model_preset_from_metadata,
+)
 from pawbot.session.recovery import recovery_state_from_metadata
 from pawbot.webui.session_identity import (
     WEBUI_SESSION_STORAGE_PREFIX,
@@ -39,9 +42,10 @@ from pawbot.webui.session_identity import (
     webui_session_key,
 )
 
-_INDEX_VERSION = 8
+_INDEX_VERSION = 9
 _INDEX_FILENAME = ".webui_session_index.json"
 _MODEL_PRESET_FIELD = "model_preset"
+_MODEL_NAME_FIELD = "model_name"
 _ROW_SOURCE_FIELD = "_source"
 _SESSION_SOURCE = "session"
 _TRANSCRIPT_SOURCE = "webui_transcript"
@@ -252,6 +256,7 @@ def _public_row(sessions_dir: Path, webui_dir: Path, row: dict[str, Any]) -> dic
         "title": row.get("title", ""),
         "preview": row.get("preview", ""),
         _MODEL_PRESET_FIELD: row.get(_MODEL_PRESET_FIELD),
+        _MODEL_NAME_FIELD: row.get(_MODEL_NAME_FIELD),
         "recovery_state": row.get("recovery_state"),
         _WORKSPACE_SCOPE_PRESENT_FIELD: row.get(_WORKSPACE_SCOPE_PRESENT_FIELD, False),
         _WORKSPACE_SCOPE_VALUE_FIELD: row.get(_WORKSPACE_SCOPE_VALUE_FIELD),
@@ -493,6 +498,9 @@ def _indexed_row_for_session(session: Session, path: Path, webui_dir: Path) -> d
         "title": _metadata_title(session.metadata),
         "preview": _preview_from_messages(session.messages),
         _MODEL_PRESET_FIELD: model_preset_from_metadata(session.metadata),
+        _MODEL_NAME_FIELD: (
+            model_override_from_metadata(session.metadata) or {}
+        ).get("model"),
         "recovery_state": recovery_state_from_metadata(session.metadata),
         **_indexed_workspace_scope_fields(session.metadata),
         _ROW_SOURCE_FIELD: _SESSION_SOURCE,
@@ -699,6 +707,9 @@ def _scan_session_row(
                 "title": _metadata_title(metadata),
                 "preview": preview or fallback_preview,
                 _MODEL_PRESET_FIELD: model_preset_from_metadata(metadata),
+                _MODEL_NAME_FIELD: (
+                    model_override_from_metadata(metadata) or {}
+                ).get("model"),
                 "recovery_state": recovery_state_from_metadata(metadata),
                 **_indexed_workspace_scope_fields(metadata),
                 _ROW_SOURCE_FIELD: _SESSION_SOURCE,

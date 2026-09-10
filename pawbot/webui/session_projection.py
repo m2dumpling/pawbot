@@ -8,7 +8,10 @@ from loguru import logger as default_logger
 
 from pawbot.providers.base import LLMUsage
 from pawbot.session.goal_state import goal_state_ws_blob
-from pawbot.session.model_selection import model_preset_from_metadata
+from pawbot.session.model_selection import (
+    model_override_from_metadata,
+    model_preset_from_metadata,
+)
 from pawbot.session.recovery import recovery_state_from_metadata
 from pawbot.session.webui_turns import websocket_turn_id, websocket_turn_wall_started_at
 
@@ -45,6 +48,16 @@ class WebUISessionProjection:
         except ValueError:
             self._log.warning("ignoring invalid model preset metadata for session_key={}", session_key)
             fields["model_preset"] = None
+        try:
+            model_override = model_override_from_metadata(metadata)
+        except ValueError:
+            self._log.warning("ignoring invalid model override metadata for session_key={}", session_key)
+            model_override = None
+        if model_override is not None:
+            fields["model_name"] = model_override["model"]
+            context_window = model_override.get("context_window_tokens")
+            if isinstance(context_window, int) and context_window > 0:
+                fields["context_window_tokens"] = context_window
         if metadata is None:
             return fields
 

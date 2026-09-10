@@ -2034,7 +2034,7 @@ def test_provider_models_payload_enriches_deepseek_v4_capabilities(
     ]
 
 
-def test_provider_models_payload_prefers_api_capabilities_and_matches_gateway_model_ids(
+def test_provider_models_payload_prefers_curated_capabilities_and_matches_gateway_model_ids(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2064,8 +2064,8 @@ def test_provider_models_payload_prefers_api_capabilities_and_matches_gateway_mo
 
     payload = provider_models_payload({"provider": [DYNAMIC_PROVIDER_NAME]})
 
-    assert payload["models"][0]["context_window"] == 999999
-    assert payload["models"][0]["reasoning_effort_values"] == ["", "low", "high"]
+    assert payload["models"][0]["context_window"] == 1_048_576
+    assert payload["models"][0]["reasoning_effort_values"] == ["", "low", "high", "max"]
 
 
 def test_provider_models_payload_returns_curated_openai_codex_models() -> None:
@@ -2178,6 +2178,55 @@ def test_provider_models_payload_fetches_minimax_anthropic_models(
     ]
 
 
+def test_provider_models_payload_fetches_anthropic_models_with_native_headers(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.anthropic.api_key = "sk-ant-test"
+    save_config(config, config_path)
+    monkeypatch.setattr("pawbot.config.loader._current_config_path", config_path)
+
+    def fake_get(url: str, **kwargs):
+        assert url == "https://api.anthropic.com/v1/models?limit=1000"
+        assert kwargs["headers"]["X-Api-Key"] == "sk-ant-test"
+        assert kwargs["headers"]["anthropic-version"] == "2023-06-01"
+        assert "Authorization" not in kwargs["headers"]
+        return httpx.Response(
+            200,
+            json={
+                "data": [{
+                    "id": "claude-new",
+                    "display_name": "Claude New",
+                    "max_input_tokens": 123456,
+                    "capabilities": {
+                        "effort": {
+                            "supported": True,
+                            "low": {"supported": True},
+                            "high": {"supported": True},
+                        },
+                    },
+                }],
+            },
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr("pawbot.webui.settings_api.httpx.get", fake_get)
+
+    payload = provider_models_payload({"provider": ["anthropic"]})
+
+    assert payload["status"] == "available"
+    assert payload["catalog_kind"] == "official"
+    assert payload["models"] == [{
+        "id": "claude-new",
+        "label": "Claude New",
+        "owned_by": None,
+        "context_window": 123456,
+        "reasoning_effort_values": ["", "low", "high"],
+    }]
+
+
 def test_provider_models_payload_requires_gateway_key(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2231,7 +2280,7 @@ def test_provider_models_payload_fetches_orcarouter_catalog(
 
 def test_model_catalog_kind_uses_provider_spec_metadata() -> None:
     assert _model_catalog_kind(find_by_name("skywork")) == "official"
-    assert _model_catalog_kind(find_by_name("anthropic")) == "unsupported"
+    assert _model_catalog_kind(find_by_name("anthropic")) == "official"
     assert _model_catalog_kind(find_by_name("openrouter")) == "catalog"
     assert _model_catalog_kind(find_by_name("orcarouter")) == "catalog"
     assert _model_catalog_kind(find_by_name("openai_codex")) == "builtin"
