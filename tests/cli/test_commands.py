@@ -2327,6 +2327,9 @@ def test_webui_dev_starts_vite_sidecar_and_gateway(monkeypatch, tmp_path: Path) 
     config_file = tmp_path / "config.json"
     config_file.write_text("{}", encoding="utf-8")
     seen: dict[str, object] = {}
+    # This test asserts the desktop browser-opening path. Keep it independent
+    # of whether the CI runner itself is headless.
+    monkeypatch.setattr("pawbot.cli.webui._is_headless_environment", lambda: False)
     _patch_webui_provider_ready(monkeypatch)
     _patch_gateway_ports_free(monkeypatch)
     monkeypatch.setattr("pawbot.cli.webui.sync_workspace_templates", lambda _path: None)
@@ -2626,6 +2629,9 @@ def test_webui_foreground_attaches_to_existing_managed_gateway(monkeypatch, tmp_
     config_file = tmp_path / "config.json"
     config_file.write_text("{}")
     seen: dict[str, object] = {}
+    # The browser-opening behavior is the subject of this test; CI's display
+    # availability must not decide whether the assertion is exercised.
+    monkeypatch.setattr("pawbot.cli.webui._is_headless_environment", lambda: False)
     _record_gateway_lease_release(monkeypatch, seen)
     _patch_webui_provider_ready(monkeypatch)
     monkeypatch.setattr("pawbot.cli.webui.sync_workspace_templates", lambda _path: None)
