@@ -140,19 +140,19 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.6/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.7/scripts/install.sh | sh
 ```
 
 If `curl` is not available, use `wget` instead:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.6/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.7/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.6/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.7/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a
@@ -349,7 +349,7 @@ The core source is organized around:
 
 - [Documentation index](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
-- [Release notes](docs/release-notes/0.3.6.md)
+- [Release notes](docs/release-notes/0.3.7.md)
 - [Publishing guide](docs/publishing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)

@@ -209,11 +209,10 @@ export class Transcript {
       paddingRight: 1,
     })
     const title = this.createText(`>_  pawbot  v${options.version}`, "text", true)
-    const context = this.createText([
-      "",
-      `${options.model}  ·  ${options.access}`,
-      options.workspace,
-    ].join("\n"), "muted")
+    // The live title row owns model and access controls. Keeping those values
+    // in this static welcome card makes a preset ID appear twice and becomes
+    // stale after a session-scoped model or access change.
+    const context = this.createText(["", options.workspace].join("\n"), "muted")
     row.add(title)
     row.add(context)
     this.root.add(row)

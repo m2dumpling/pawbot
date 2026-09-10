@@ -7,7 +7,7 @@ source releases and PyPI package releases are separate steps.
 
 1. Wait for the `CI` workflow on `main` to finish successfully.
 2. Open **Releases → Draft a new release** in the repository.
-3. Create or select the new version tag (for example, `v0.3.6`) targeting the latest green `main` commit.
+3. Create or select the new version tag (for example, `v0.3.7`) targeting the latest green `main` commit.
 4. Use the matching file under `docs/release-notes/` as the release description.
 
 Publishing the GitHub Release triggers both `.github/workflows/publish.yml` for

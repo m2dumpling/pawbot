@@ -329,9 +329,17 @@ export class RuntimeControls {
   }
 
   private render(): void {
-    const runtime = this.modelPreset !== "default"
-      ? [this.modelPreset, this.model].filter(Boolean).join("  ·  ")
-      : this.model
+    const model = this.model.trim()
+    const preset = this.modelPreset.trim()
+    const runtimeModel = model || preset || "default"
+    const hasDistinctPreset = Boolean(
+      preset
+      && preset.toLocaleLowerCase() !== "default"
+      && preset.toLocaleLowerCase() !== runtimeModel.toLocaleLowerCase(),
+    )
+    const runtime = hasDistinctPreset
+      ? [preset, runtimeModel].filter(Boolean).join("  ·  ")
+      : runtimeModel
     this.modelText.content = `  ·  ${runtime} ▾`
     const access = this.scope.access_mode === "full" ? "full access" : "workspace access"
     this.accessText.content = `  ·  ${access} ▾`

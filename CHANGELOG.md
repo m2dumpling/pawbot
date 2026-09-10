@@ -5,6 +5,15 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
+## 0.3.7 - 2026-09-10
+
+### Fixed
+
+- Removed duplicate model labels from the TUI when the selected model preset
+  has the same ID as the active model.
+- Kept the TUI welcome card focused on version and workspace information;
+  live model and access state now has one clear home in the title controls.
+
 ## 0.3.6 - 2026-09-10
 
 ### Fixed

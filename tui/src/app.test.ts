@@ -1963,6 +1963,21 @@ describe("PawbotTui layout", () => {
     }
   })
 
+  test("does not repeat a model when its preset has the same id", async () => {
+    setup = await createRenderer({ width: 96, height: 24, screenMode: "alternate-screen" })
+    PawbotTui.mount(
+      setup.renderer,
+      { ...options, model: "deepseek-v4-flash", modelPreset: "deepseek-v4-flash" },
+      client(),
+      new MockTreeSitterClient({ autoResolveTimeout: 0 }),
+    )
+    await setup.renderOnce()
+
+    const frame = setup.captureCharFrame()
+    expect(occurrences(frame, "deepseek-v4-flash")).toBe(1)
+    expect(frame).not.toContain("deepseek-v4-flash  ·  deepseek-v4-flash")
+  })
+
   test("inherits the host background after long output fills the viewport", async () => {
     setup = await createRenderer({ width: 96, height: 24, screenMode: "alternate-screen" })
     const app = mount(setup)
