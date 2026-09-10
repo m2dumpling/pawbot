@@ -5,6 +5,8 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
+## 0.3.6 - 2026-09-10
+
 ### Fixed
 
 - Localized the complete Record & Replay settings surface, including invalid
