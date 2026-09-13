@@ -5,6 +5,21 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
+## 0.3.8 - 2026-09-13
+
+### Fixed
+
+- Made Record & Replay fail closed when a tool observation is missing, while
+  preserving the current turn budget and denied-capability policy.
+- Enforced wildcard WebSocket authentication, including trusted-proxy
+  assertion checks and protected token issuance.
+- Returned an OpenAI-compatible SSE error event and `[DONE]` when streaming
+  execution fails.
+- Fixed the Docker Compose API image's optional dependency and API-key entry
+  point; bounded API session-lock lifetime and corrected relative exec paths.
+- Kept configured model aliases visible in the WebUI model picker and recorded
+  provider-hosted tool events for later inspection.
+
 ## 0.3.7 - 2026-09-10
 
 ### Fixed
