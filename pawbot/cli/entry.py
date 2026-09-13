@@ -56,6 +56,15 @@ def _native_tui_candidate(args: list[str]) -> bool:
     return True
 
 
+def _is_headless_linux() -> bool:
+    """Return whether a bare command should prefer the terminal UI."""
+    if sys.platform != "linux":
+        return False
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return True
+    return not bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
 def _configure_windows_console() -> None:
     if sys.platform != "win32" or sys.stdout.encoding == "utf-8":
         return
@@ -92,7 +101,7 @@ def _run_webui(args: list[str], *, prog_name: str) -> None:
 
 
 def main() -> None:
-    """Dispatch the default WebUI without importing the complete CLI graph."""
+    """Dispatch the safe headless default or the desktop WebUI."""
     raw_args = sys.argv[1:]
     # Installed completion scripts call ``pawbot`` without positional arguments
     # and pass the request through this environment variable. Keep those requests
@@ -105,9 +114,13 @@ def main() -> None:
         _run_agent(replay_args, prog_name="pawbot replay")
         return
     if not raw_args and not shell_completion:
-        set_cli_process_identity(["webui"])
         _configure_windows_console()
-        _run_webui([], prog_name="pawbot")
+        if _is_headless_linux():
+            set_cli_process_identity(["agent"])
+            _run_agent([], prog_name="pawbot")
+        else:
+            set_cli_process_identity(["webui"])
+            _run_webui([], prog_name="pawbot")
         return
     agent_args = None if shell_completion else _agent_invocation_args(raw_args)
     dispatch_args = ["agent", *agent_args] if agent_args is not None else raw_args

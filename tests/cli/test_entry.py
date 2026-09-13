@@ -97,9 +97,14 @@ def test_root_alias_dispatches_the_shared_agent_command(monkeypatch) -> None:
     }
 
 
-def test_bare_root_command_dispatches_to_webui(monkeypatch) -> None:
+def test_bare_root_command_dispatches_to_webui_on_a_desktop(monkeypatch) -> None:
     calls: dict[str, object] = {}
     monkeypatch.setattr(entry.sys, "argv", ["pawbot"])
+    monkeypatch.setattr(entry.sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.delenv("SSH_TTY", raising=False)
     monkeypatch.setattr(
         entry,
         "set_cli_process_identity",
@@ -119,6 +124,42 @@ def test_bare_root_command_dispatches_to_webui(monkeypatch) -> None:
         "args": [],
         "prog_name": "pawbot",
     }
+
+
+def test_bare_root_command_dispatches_to_tui_on_headless_linux(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+    monkeypatch.setattr(entry.sys, "argv", ["pawbot"])
+    monkeypatch.setattr(entry.sys, "platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(
+        entry,
+        "set_cli_process_identity",
+        lambda args: calls.__setitem__("identity", args),
+    )
+    monkeypatch.setattr(entry, "_configure_windows_console", lambda: None)
+    monkeypatch.setattr(
+        entry,
+        "_run_agent",
+        lambda args, *, prog_name: calls.update(args=args, prog_name=prog_name),
+    )
+
+    entry.main()
+
+    assert calls == {
+        "identity": ["agent"],
+        "args": [],
+        "prog_name": "pawbot",
+    }
+
+
+def test_ssh_session_prefers_tui_even_when_display_is_forwarded(monkeypatch) -> None:
+    monkeypatch.setattr(entry.sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", ":10")
+    monkeypatch.setenv("SSH_CONNECTION", "client server 22 22")
+    monkeypatch.setenv("SSH_TTY", "/dev/pts/0")
+
+    assert entry._is_headless_linux() is True
 
 
 def test_native_agent_invocations_use_the_lightweight_entrypoint() -> None:

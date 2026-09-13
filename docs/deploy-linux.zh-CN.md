@@ -20,7 +20,7 @@ sudo apt-get update
 sudo apt-get install -y curl python3 python3-venv
 ```
 
-发布版本安装脚本：
+发布版本安装脚本（无桌面 SSH 环境默认不会启动或暴露 WebUI）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.8/scripts/install.sh | sh
@@ -34,10 +34,19 @@ pawbot onboard --wizard
 ```
 
 wizard 会配置 Provider、API Key、模型和本机 WebUI 密码。所有密码输入都不会回显。
+安装完成后优先运行：
+
+```bash
+pawbot agent
+```
+
+Linux 无桌面环境直接运行裸 `pawbot` 也会进入 TUI；使用 WebUI 必须显式执行
+`pawbot webui`。配置保存时会自动将 `~/.pawbot`、默认 workspace 和配置文件收紧为
+用户私有权限（目录 `0700`、配置 `0600`）。
 
 ## 没有域名：IP + 随机路径 + 密码
 
-这是最方便的无域名路径：
+这是无域名时的临时路径；如果不是可信内网或 VPN，不要把它当作公网安全方案：
 
 ```bash
 pawbot webui --remote --yes --no-open --show-access --detach
@@ -63,9 +72,9 @@ sudo ufw allow 8765/tcp
 sudo ufw status
 ```
 
-IP 直连默认是 HTTP，只适合临时或受信任网络。公网长期运行请改用域名 HTTPS、VPN
-或 SSH 隧道。`--detach` 适合快速启动，但 VPS 重启后不会自动恢复；长期运行应安装
-systemd 服务。
+IP 直连默认是 HTTP，只适合临时或受信任网络。随机路径只能降低扫描噪声，不能替代
+TLS 或认证；公网长期运行请改用域名 HTTPS、VPN 或 SSH 隧道。`--detach` 适合快速启动，
+但 VPS 重启后不会自动恢复；长期运行应安装 systemd 服务。
 
 ## 有域名：Caddy + HTTPS
 
@@ -153,3 +162,28 @@ pawbot gateway logs
 不要把 `config.json`、Provider Key、Telegram token、WebUI bootstrap secret 或 SSH
 终端输出提交到 Git。单个 WebUI 密码适合个人/小规模使用；如果需要多用户账号、撤销
 和审计，应在 pawbot 前面部署具备这些能力的身份代理。
+
+## 打开公网 Web 前的安全检查
+
+正式使用域名 Web 前，建议在服务器上安装 Linux shell 沙箱，并确认 Agent 只访问
+workspace：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y bubblewrap
+```
+
+在停止 gateway 后编辑 `~/.pawbot/config.json`，确认至少包含：
+
+```json
+{
+  "tools": {
+    "restrictToWorkspace": true,
+    "exec": {"sandbox": "bwrap"}
+  }
+}
+```
+
+然后重新启动 gateway。若使用 Caddy/Nginx，pawbot 仍监听 `127.0.0.1`，只由反代
+提供 HTTPS；如果只需要个人访问，优先使用 SSH 隧道，不开放 `8765/tcp`。不要以 root
+运行 pawbot，也不要把 `18790` health 端口暴露到公网。

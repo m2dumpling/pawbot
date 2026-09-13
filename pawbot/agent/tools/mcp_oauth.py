@@ -139,7 +139,11 @@ def _write_store_unlocked(path: Path, payload: _CredentialStore) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with suppress(OSError):
         os.chmod(path.parent, 0o700)
-    _write_text_atomic(path, json.dumps(payload, indent=2, ensure_ascii=False))
+    _write_text_atomic(
+        path,
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        mode=0o600,
+    )
     with suppress(OSError):
         os.chmod(path, 0o600)
 

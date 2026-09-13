@@ -157,6 +157,15 @@ pawbot_try_command() {
   esac
 }
 
+show_default_entrypoint() {
+  entrypoint="$1"
+  if has_browser_session; then
+    info "Run: $entrypoint (opens the WebUI)"
+  else
+    info "Run: $entrypoint agent (opens the native TUI; use 'pawbot webui' explicitly for WebUI)"
+  fi
+}
+
 default_bin_dir() {
   if [ "$(id -u 2>/dev/null || printf '1')" = "0" ] &&
     [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
@@ -403,7 +412,7 @@ show_install_success() {
     resolved_pawbot="$(command -v pawbot 2>/dev/null || true)"
     if [ "$resolved_pawbot" = "$pawbot_launcher" ]; then
       info "CLI verified on PATH: $resolved_pawbot"
-      info "Run: pawbot (opens the WebUI)"
+      show_default_entrypoint "pawbot"
     else
       bin_dir="$(dirname "$pawbot_launcher")"
       info "CLI verified at: $pawbot_launcher"
@@ -412,15 +421,19 @@ show_install_success() {
       else
         info "This shell does not include $bin_dir in PATH."
       fi
-      info "Run now: \"$pawbot_launcher\" (opens the WebUI)"
+      if has_browser_session; then
+        info "Run now: \"$pawbot_launcher\" (opens the WebUI)"
+      else
+        info "Run now: \"$pawbot_launcher\" agent (opens the native TUI)"
+      fi
       info "For future shells: export PATH=\"$bin_dir:\$PATH\""
     fi
   elif command -v pawbot >/dev/null 2>&1; then
     info "CLI verified on PATH: $(command -v pawbot)"
-    info "Run: pawbot (opens the WebUI)"
+    show_default_entrypoint "pawbot"
   else
     info "CLI verified through: $(pawbot_try_command)"
-    info "Run: $(pawbot_try_command) (opens the WebUI)"
+    show_default_entrypoint "$(pawbot_try_command)"
   fi
 }
 
@@ -428,16 +441,16 @@ show_headless_next_steps() {
   if has_browser_session; then
     return 0
   fi
-  info "For a remote VPS WebUI: $(pawbot_try_command) webui --remote --yes --no-open --show-access --detach"
-  info "For private access: $(pawbot_try_command) webui --yes --no-open --detach, then use an SSH tunnel."
-  info "For the terminal UI: $(pawbot_try_command) agent"
+  info "Headless Linux default: $(pawbot_try_command) agent"
+  info "Recommended private WebUI: $(pawbot_try_command) webui --yes --no-open --detach, then use an SSH tunnel."
+  info "Remote WebUI (only after firewall and HTTPS/reverse-proxy setup): $(pawbot_try_command) webui --remote --yes --no-open --show-access --detach"
 }
 
 show_install_success
 
 if [ "${PAWBOT_SKIP_WIZARD:-}" = "1" ]; then
   info "Skipping automatic setup because PAWBOT_SKIP_WIZARD=1."
-  info "Run this later: $(pawbot_try_command)"
+  info "Complete setup later: $(pawbot_try_command) onboard --wizard"
   show_headless_next_steps
   exit 0
 fi
@@ -465,6 +478,10 @@ else
   info "Run this later: $(pawbot_try_command) onboard --wizard"
 fi
 
-info "Done. Open the WebUI with: $(pawbot_try_command)"
-info "For the terminal/TUI client, run: $(pawbot_try_command) agent"
+if has_browser_session; then
+  info "Done. Open the WebUI with: $(pawbot_try_command)"
+  info "For the terminal/TUI client, run: $(pawbot_try_command) agent"
+else
+  info "Done. Secure default: $(pawbot_try_command) agent"
+fi
 show_headless_next_steps

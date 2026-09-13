@@ -738,7 +738,11 @@ def _write_token(token: XAIToken) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with suppress(OSError):
         os.chmod(path.parent, 0o700)
-    _write_text_atomic(path, json.dumps(asdict(token), indent=2, ensure_ascii=False))
+    _write_text_atomic(
+        path,
+        json.dumps(asdict(token), indent=2, ensure_ascii=False),
+        mode=0o600,
+    )
     with suppress(OSError):
         os.chmod(path, 0o600)
 

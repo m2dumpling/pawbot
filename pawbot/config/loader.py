@@ -10,11 +10,15 @@ from pydantic import BaseModel, ValidationError
 from pydantic_settings import SettingsError
 
 from pawbot.config.errors import ConfigIssue, ConfigLoadError, validation_issues
+from pawbot.config.paths import is_default_data_dir
 from pawbot.config.schema import (
     Config,
     _resolve_tool_config_refs,  # pyright: ignore[reportPrivateUsage]
 )
-from pawbot.utils.helpers import _write_text_atomic  # pyright: ignore[reportPrivateUsage]
+from pawbot.utils.helpers import (
+    _write_text_atomic,  # pyright: ignore[reportPrivateUsage]
+    ensure_private_dir,
+)
 
 # Global variable to store current config path (for multi-instance support)
 _current_config_path: Path | None = None
@@ -184,6 +188,8 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     """
     path = config_path or get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    if is_default_data_dir(path.parent):
+        ensure_private_dir(path.parent)
 
     data = config.model_dump(mode="json", by_alias=True)
     # OAuth credentials live in dedicated token stores. Persist only the
@@ -202,7 +208,11 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
             data.setdefault("providers", {})[alias] = settings
 
     # Temp + replace so a crash mid-write cannot leave a truncated config.json.
-    _write_text_atomic(path, json.dumps(data, indent=2, ensure_ascii=False))
+    _write_text_atomic(
+        path,
+        json.dumps(data, indent=2, ensure_ascii=False),
+        mode=0o600,
+    )
 
 
 def merge_missing_defaults(existing: object, defaults: object) -> object:

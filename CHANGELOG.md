@@ -21,6 +21,10 @@ supported surface and known boundaries of each published version.
   provider-hosted tool events for later inspection.
 - Added a headless VPS path that generates a random remote WebUI endpoint,
   supports a copyable authenticated URL, and can detach the gateway after setup.
+- Made headless Linux's bare `pawbot` command and installer guidance prefer the
+  native TUI; WebUI access is now an explicit operator action.
+- Protected newly written config, pairing, OAuth, runtime, and default workspace
+  data with user-only permissions on POSIX systems.
 
 ## 0.3.7 - 2026-09-10
 

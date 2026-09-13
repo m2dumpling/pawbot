@@ -115,12 +115,21 @@ and MCP servers are explicit capabilities with documented security boundaries.
 
 ### Published package
 
-After the package is published, install and open the WebUI with one command:
+After the package is published, desktop users can install and open the WebUI with
+one command. On a Debian/Ubuntu VPS, use the TUI as the safe first entrypoint so a
+new installation never needs to expose an HTTP listener before HTTPS and firewall
+configuration are ready.
 
-macOS / Linux:
+macOS / Linux desktop:
 
 ```bash
 uv tool install --force --upgrade pawbot-ai && pawbot
+```
+
+Linux VPS / SSH:
+
+```bash
+uv tool install --force --upgrade pawbot-ai && pawbot agent
 ```
 
 Windows PowerShell:
@@ -130,8 +139,8 @@ uv tool install --force --upgrade pawbot-ai; pawbot
 ```
 
 The repository also includes isolated fallback installers. On a fresh desktop
-install they start the WebUI automatically; use `pawbot agent` when you want the
-terminal/TUI client explicitly:
+install they start the WebUI automatically; on headless Linux they use the TUI as
+the safe default and require an explicit `pawbot webui` for browser access:
 
 - [`scripts/install.sh`](scripts/install.sh)
 - [`scripts/install.ps1`](scripts/install.ps1)
@@ -156,7 +165,9 @@ iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.8/scripts/inst
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a
-dedicated `~/.pawbot/venv` fallback, then opens the WebUI on a fresh desktop.
+dedicated `~/.pawbot/venv` fallback, then opens the WebUI on a fresh desktop. On a
+headless Linux server it does not expose a listener automatically and points to
+`pawbot agent` instead.
 Before creating the fallback environment it verifies that Python's `venv` and
 `ensurepip` support is available. If a minimal Debian/Ubuntu image is missing
 `python3.x-venv`, installation stops with the exact package command to run and
@@ -201,8 +212,16 @@ Configure your first provider in **Settings → Models**; the model picker loads
 available models after credentials are saved. Start a new conversation and send
 `Hello!`. The first-run WebUI binds to localhost by default.
 
-On a Linux server, localhost is intentionally private to the server. Bind the
-WebUI explicitly when you need to open it from another machine:
+On a Linux server, localhost is intentionally private to the server. The
+recommended remote workflow is an SSH tunnel:
+
+```bash
+pawbot webui --yes --no-open --detach
+ssh -N -L 8765:127.0.0.1:8765 <user>@<server>
+```
+
+Then open `http://127.0.0.1:8765` locally. Only bind the WebUI explicitly after
+you have configured HTTPS/reverse proxy, firewall rules, and a trusted network:
 
 ```bash
 pawbot webui --remote --yes --no-open --show-access --detach
@@ -213,25 +232,18 @@ and leaves the gateway running in the background. `--show-access` prints a URL
 containing the WebUI password; keep the terminal output private. Keep the
 gateway health port (`18790` by default) private, allow only the WebUI port
 through the firewall, and use HTTPS/reverse proxy before exposing it to the
-public Internet. For a private setup, keep the default localhost binding and
-use an SSH tunnel instead:
-
-```bash
-pawbot webui --yes --no-open --detach
-ssh -N -L 8765:127.0.0.1:8765 <user>@<server>
-```
-
-Then open `http://127.0.0.1:8765` on your own computer. See the full
+public Internet. The random path only reduces scan noise; it does not replace
+TLS or authentication. See the full
 [`Debian/Ubuntu VPS deployment guide`](docs/deploy-linux.md) for domains,
 systemd, TUI, and Telegram.
 
 
 ### CLI
 
-`pawbot` opens the WebUI. `pawbot agent` opens the native terminal UI (TUI).
-On a headless Linux server, `pawbot` keeps the WebUI on localhost and prints a
-ready-to-copy SSH tunnel command; use `pawbot webui --remote --yes --no-open`
-when you deliberately want to access it from another machine.
+On a desktop, `pawbot` opens the WebUI and `pawbot agent` opens the native
+terminal UI (TUI). On a headless Linux server, bare `pawbot` defaults to the TUI;
+use `pawbot webui` explicitly when you are ready for browser access, preferably
+through an SSH tunnel.
 
 Run one request and exit:
 

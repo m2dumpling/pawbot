@@ -7,6 +7,7 @@ import select
 import sys
 from collections.abc import Callable
 from contextlib import nullcontext, suppress
+from pathlib import Path
 from typing import Any, Literal, cast
 
 from loguru import logger
@@ -93,6 +94,8 @@ class SafeFileHistory(FileHistory):
 
     def store_string(self, string: str) -> None:
         super().store_string(_sanitize_surrogates(string))
+        with suppress(OSError):
+            Path(cast(str, self.filename)).chmod(0o600)
 
 
 def _flush_pending_tty_input() -> None:
@@ -183,6 +186,8 @@ def _init_prompt_session() -> None:
 
     history_file = get_cli_history_path()
     history_file.parent.mkdir(parents=True, exist_ok=True)
+    with suppress(OSError):
+        history_file.parent.chmod(0o700)
 
     _prompt_session = PromptSession(
         history=SafeFileHistory(str(history_file)),

@@ -34,7 +34,10 @@ chmod 600 ~/.pawbot/config.json
 
 **Recommendations:**
 - **Prefer environment variable references** (`${VAR}`) in config — the config file stores the `${VAR}` placeholder, and the plaintext value only exists in memory at runtime. See the [README security boundary](README.md#security-and-data-boundary) for details.
-- When plaintext keys are stored in `~/.pawbot/config.json`, set file permissions to `0600` (`chmod 600`)
+- Pawbot writes `config.json` as `0600` and the default `~/.pawbot` data/workspace
+  directories as `0700` on platforms that support POSIX permissions. Verify these
+  permissions after upgrading an older installation; when plaintext keys are stored
+  in `~/.pawbot/config.json`, `0600` remains the required minimum (`chmod 600`)
 - Consider using an OS keyring/credential manager for production deployments
 - Rotate API keys regularly
 - Use separate API keys for development and production
@@ -253,6 +256,7 @@ Before deploying pawbot:
 
 - [ ] API keys stored securely (not in code)
 - [ ] Config file permissions set to 0600
+- [ ] `~/.pawbot` and the default workspace are set to 0700
 - [ ] `allowFrom` lists configured for all channels
 - [ ] Running as non-root user
 - [ ] Exec sandbox enabled (`"tools.exec.sandbox": "bwrap"`) on Linux deployments

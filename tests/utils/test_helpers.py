@@ -1,5 +1,8 @@
+import os
+import stat
 from pathlib import Path
 
+import pytest
 import tiktoken
 
 from pawbot.utils import helpers
@@ -114,3 +117,12 @@ def test_write_text_atomic_keeps_file_when_directory_fsync_is_unsupported(
 
     assert target.read_text(encoding="utf-8") == '{"pending": {}}'
     assert len(fsync_calls) == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not expose POSIX file modes")
+def test_write_text_atomic_accepts_an_explicit_mode(tmp_path: Path) -> None:
+    target = tmp_path / "secret.json"
+
+    _write_text_atomic(target, "secret", mode=0o600)
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600

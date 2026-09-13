@@ -21,10 +21,25 @@ def test_save_config_round_trips(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows does not expose POSIX file modes")
-def test_save_config_preserves_existing_file_mode(tmp_path: Path) -> None:
+def test_save_config_restricts_new_file_and_parent_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_root = tmp_path / ".pawbot"
+    path = private_root / "config.json"
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    save_config(Config(), path)
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not expose POSIX file modes")
+def test_save_config_repairs_existing_file_mode(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     path.write_text("{}", encoding="utf-8")
-    path.chmod(0o600)
+    path.chmod(0o644)
 
     save_config(Config(), path)
 

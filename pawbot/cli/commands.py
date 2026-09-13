@@ -88,7 +88,8 @@ app = typer.Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
     help=f"{__logo__} pawbot - Replayable AI Agent",
     epilog=(
-        "Run `pawbot` without a subcommand to open the WebUI. "
+        "Run `pawbot` without a subcommand to open the WebUI on a desktop, or the TUI "
+        "on a headless Linux server. Use `pawbot webui` explicitly for the WebUI there. "
         "Use `pawbot agent --help` for terminal agent options."
     ),
     invoke_without_command=True,
@@ -119,9 +120,13 @@ def main(
     if command is None:
         if os.environ.get("_PAWBOT_COMPLETE"):
             return
-        from pawbot.cli.entry import _run_webui
+        from pawbot.cli.entry import _is_headless_linux, _run_agent, _run_webui
 
-        _run_webui([], prog_name="pawbot")
+        if _is_headless_linux():
+            set_cli_process_identity(["agent"])
+            _run_agent([], prog_name="pawbot")
+        else:
+            _run_webui([], prog_name="pawbot")
 
 
 # ============================================================================

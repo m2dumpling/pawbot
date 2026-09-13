@@ -109,12 +109,19 @@ Shell、文件访问、网络工具和 MCP Server 都是明确的能力，并有
 
 ### 已发布 Python 包
 
-包发布后，可以一条命令完成安装并打开 WebUI。
+包发布后，桌面环境可以一条命令安装并打开 WebUI；Debian/Ubuntu VPS 建议一条命令
+安装后进入 TUI，避免在尚未配置 HTTPS 和防火墙时误把 WebUI 暴露到公网。
 
-macOS / Linux：
+macOS / Linux 桌面：
 
 ```bash
 uv tool install --force --upgrade pawbot-ai && pawbot
+```
+
+Linux VPS / SSH：
+
+```bash
+uv tool install --force --upgrade pawbot-ai && pawbot agent
 ```
 
 Windows PowerShell：
@@ -123,8 +130,8 @@ Windows PowerShell：
 uv tool install --force --upgrade pawbot-ai; pawbot
 ```
 
-仓库还提供隔离安装脚本。全新桌面环境会自动打开 WebUI；如果需要终端/TUI，
-请显式运行 `pawbot agent`：
+仓库还提供隔离安装脚本。全新桌面环境会自动打开 WebUI；无桌面 Linux 环境默认
+提示并使用 TUI，WebUI 需要显式运行 `pawbot webui`：
 
 - [`scripts/install.sh`](scripts/install.sh)
 - [`scripts/install.ps1`](scripts/install.ps1)
@@ -148,7 +155,8 @@ iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.8/scripts/inst
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
-`~/.pawbot/venv`，全新桌面环境会自动打开 WebUI。创建独立环境前，安装器
+`~/.pawbot/venv`；全新桌面环境会自动打开 WebUI，无桌面 Linux 环境则以 TUI
+作为安全默认入口，不会自动监听公网地址。创建独立环境前，安装器
 会先检查 Python 的 `venv` 和 `ensurepip` 是否可用。如果 Debian/Ubuntu
 最小镜像缺少 `python3.x-venv`，安装会立即停止并给出准确的依赖安装命令，
 不会继续打印误导性的启动命令。安装成功后会执行 `pawbot --version`；如果
@@ -189,7 +197,15 @@ uv run pawbot webui
 一个新对话并发送 `Hello!`。首次启动默认只绑定本机地址。
 
 如果 pawbot 运行在 Linux 服务器上，`127.0.0.1` 只代表服务器本机，外部
-电脑无法直接打开。需要远程访问时显式绑定所有网卡：
+电脑无法直接打开。推荐保持 localhost 监听并使用 SSH 隧道：
+
+```bash
+pawbot webui --yes --no-open --detach
+ssh -N -L 8765:127.0.0.1:8765 <用户>@<服务器>
+```
+
+然后在本地打开 `http://127.0.0.1:8765`。只有在已配置 HTTPS/reverse proxy、
+安全组和防火墙后，才显式绑定所有网卡：
 
 ```bash
 pawbot webui --remote --yes --no-open --show-access --detach
@@ -198,24 +214,16 @@ pawbot webui --remote --yes --no-open --show-access --detach
 命令会生成随机 WebSocket 路径、输出可复制的认证 URL，并让 gateway 在后台运行。
 `--show-access` 输出的 URL 包含 WebUI 密码，只应保留在自己的 SSH 会话中。只放行
 WebUI 端口，默认 `18790` 的 Gateway health 端口必须保持内网；公网使用前应加
-HTTPS/reverse proxy。更安全的方式是保持 localhost 监听并使用 SSH 隧道：
-
-```bash
-pawbot webui --yes --no-open --detach
-ssh -N -L 8765:127.0.0.1:8765 <用户>@<服务器>
-```
-
-然后在本地打开 `http://127.0.0.1:8765`。
+HTTPS/reverse proxy。随机路径只能降低扫描噪声，不能替代 TLS 或身份认证。
 
 Debian/Ubuntu VPS 的 IP 直连、域名 HTTPS、systemd、TUI 和 Telegram 完整部署清单，
 请看 [`docs/deploy-linux.zh-CN.md`](docs/deploy-linux.zh-CN.md)。
 
 ### CLI
 
-直接运行 `pawbot` 会打开 WebUI；运行 `pawbot agent` 会打开原生终端界面（TUI）。
-在没有图形界面的 Linux 服务器上，`pawbot` 会保持 WebUI 只监听本机，并直接
-打印可复制的 SSH 隧道命令；需要从另一台电脑访问时，运行
-`pawbot webui --remote --yes --no-open`。
+桌面环境直接运行 `pawbot` 会打开 WebUI；运行 `pawbot agent` 会打开原生终端界面
+（TUI）。在没有图形界面的 Linux 服务器上，裸 `pawbot` 默认进入 TUI；需要浏览器
+时请显式运行 `pawbot webui`，推荐保持 localhost 并使用 SSH 隧道。
 
 执行一次请求并退出：
 

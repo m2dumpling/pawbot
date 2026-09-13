@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pawbot.utils.helpers import ensure_dir
+from pawbot.utils.helpers import ensure_dir, ensure_private_dir
 
 
 def get_config_path() -> Path:
@@ -19,12 +19,22 @@ def get_config_path() -> Path:
 
 def get_data_dir() -> Path:
     """Return the instance-level runtime data directory."""
-    return ensure_dir(get_config_path().parent)
+    path = get_config_path().parent
+    if is_default_data_dir(path):
+        return ensure_private_dir(path)
+    return ensure_dir(path)
 
 
 def get_runtime_subdir(name: str) -> Path:
     """Return a named runtime subdirectory under the instance data dir."""
-    return ensure_dir(get_data_dir() / name)
+    return ensure_private_dir(get_data_dir() / name)
+
+
+def is_default_data_dir(path: str | Path) -> bool:
+    """Return whether *path* is inside pawbot's default private data root."""
+    candidate = Path(path).expanduser().resolve(strict=False)
+    root = (Path.home() / ".pawbot").resolve(strict=False)
+    return candidate == root or root in candidate.parents
 
 
 def get_media_dir(channel: str | None = None) -> Path:
@@ -51,6 +61,9 @@ def get_webui_dir() -> Path:
 def get_workspace_path(workspace: str | Path | None = None) -> Path:
     """Resolve and ensure the agent workspace path."""
     path = Path(workspace).expanduser() if workspace else Path.home() / ".pawbot" / "workspace"
+    default = Path.home() / ".pawbot" / "workspace"
+    if path.resolve(strict=False) == default.resolve(strict=False):
+        return ensure_private_dir(path)
     return ensure_dir(path)
 
 

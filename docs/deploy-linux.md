@@ -24,7 +24,8 @@ sudo apt-get update
 sudo apt-get install -y curl python3 python3-venv
 ```
 
-Install the release:
+Install the release. In a headless SSH session the installer does not start or
+expose the WebUI automatically:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.8/scripts/install.sh | sh
@@ -38,11 +39,20 @@ pawbot onboard --wizard
 ```
 
 The wizard configures the Provider, API key, model, and local WebUI password.
-Secret inputs are not echoed.
+Secret inputs are not echoed. After installation, start with:
+
+```bash
+pawbot agent
+```
+
+On headless Linux, bare `pawbot` also enters the TUI. Use `pawbot webui`
+explicitly when you are ready to configure browser access. Config writes now
+make `~/.pawbot`, the default workspace, and `config.json` private to the user
+(directories `0700`, config `0600`).
 
 ## No domain: IP + random path + password
 
-Run this on the VPS:
+Run this on the VPS only for temporary access on a trusted network or VPN:
 
 ```bash
 pawbot webui --remote --yes --no-open --show-access --detach
@@ -67,8 +77,9 @@ sudo ufw status
 ```
 
 IP-only access is HTTP and is suitable only for temporary or trusted networks.
-Use HTTPS, a VPN, or an SSH tunnel for long-term public access. `--detach` keeps
-the gateway running after the command returns, but it does not make the process
+The random path only reduces scan noise; it does not replace TLS or
+authentication. Use HTTPS, a VPN, or an SSH tunnel for long-term public access.
+`--detach` keeps the gateway running after the command returns, but it does not make the process
 boot-persistent; use systemd for that.
 
 ## Domain: Caddy + HTTPS
@@ -153,3 +164,29 @@ Never commit `config.json`, Provider keys, Telegram tokens, WebUI bootstrap
 secrets, or SSH terminal output. A single WebUI password is suitable for a
 personal or small deployment; use an identity-aware proxy for multi-user
 accounts, revocation, and audit requirements.
+
+## Before enabling public Web access
+
+For a domain-backed deployment, install the Linux shell sandbox and keep the
+agent confined to its workspace:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y bubblewrap
+```
+
+Stop the gateway and confirm `~/.pawbot/config.json` contains at least:
+
+```json
+{
+  "tools": {
+    "restrictToWorkspace": true,
+    "exec": {"sandbox": "bwrap"}
+  }
+}
+```
+
+Restart the gateway afterwards. With Caddy/Nginx, keep pawbot on `127.0.0.1`
+and let the reverse proxy provide HTTPS. For personal access, prefer the SSH
+tunnel and leave `8765/tcp` closed. Never run pawbot as root or expose the
+`18790` health port publicly.

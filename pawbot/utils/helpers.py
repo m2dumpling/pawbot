@@ -351,6 +351,14 @@ def ensure_dir(path: Path) -> Path:
     return path
 
 
+def ensure_private_dir(path: Path) -> Path:
+    """Ensure a single-user runtime directory is not accessible to other users."""
+    path.mkdir(parents=True, exist_ok=True)
+    with suppress(OSError):
+        path.chmod(0o700)
+    return path
+
+
 def timestamp() -> str:
     """Current ISO timestamp."""
     return datetime.now().isoformat()
@@ -542,15 +550,16 @@ def _cleanup_tool_result_buckets(root: Path, current_bucket: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _write_text_atomic(path: Path, content: str) -> None:
+def _write_text_atomic(path: Path, content: str, *, mode: int | None = None) -> None:
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     existing_mode: int | None = None
     with suppress(OSError):
         existing_mode = stat.S_IMODE(path.stat().st_mode)
+    target_mode = mode if mode is not None else existing_mode
     try:
         with open(tmp, "w", encoding="utf-8") as f:
-            if existing_mode is not None:
-                os.chmod(tmp, existing_mode)
+            if target_mode is not None:
+                os.chmod(tmp, target_mode)
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
