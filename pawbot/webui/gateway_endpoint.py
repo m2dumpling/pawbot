@@ -81,6 +81,12 @@ class WebUIGatewayEndpoint:
 
         supplied = query_first(query, "token")
         static_token = self._config.token.strip()
+        if (
+            self._config.trusted_proxy_auth is not None
+            and not static_token
+            and not self._config.websocket_requires_token
+        ):
+            return connection.respond(401, "Unauthorized")
         if static_token:
             if supplied and hmac.compare_digest(supplied, static_token):
                 return None

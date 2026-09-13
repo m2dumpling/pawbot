@@ -424,6 +424,15 @@ class ExecTool(Tool):
         # on cwd.
         if access.restrict_to_workspace and workspace_root:
             try:
+                requested_path = Path(cwd).expanduser()
+                if not requested_path.is_absolute():
+                    workspace_path = Path(workspace_root).expanduser()
+                    requested_path = (
+                        workspace_path / requested_path
+                        if working_dir
+                        else workspace_path
+                    )
+                cwd = str(requested_path)
                 requested = Path(cwd).expanduser().resolve()
                 resolved_root = Path(workspace_root).expanduser().resolve()
             except Exception:

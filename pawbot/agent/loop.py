@@ -2165,6 +2165,16 @@ class AgentLoop(TurnStagesMixin):
                         tools=self.tools,
                         runtime=replay_runtime,
                         max_iterations=self.max_iterations,
+                        budget=TurnBudget(
+                            max_iterations=self.max_iterations,
+                            max_tool_calls=self.max_tool_calls,
+                            max_wall_seconds=self.max_turn_seconds,
+                            max_input_tokens=self.max_input_tokens,
+                            max_output_tokens=self.max_output_tokens,
+                            max_cost_usd=self.max_turn_cost_usd,
+                            input_cost_per_million_usd=self.input_cost_per_million_usd,
+                            output_cost_per_million_usd=self.output_cost_per_million_usd,
+                        ),
                         max_tool_result_chars=self.max_tool_result_chars,
                         hook=probe,
                         concurrent_tools=True,
@@ -2172,6 +2182,7 @@ class AgentLoop(TurnStagesMixin):
                         session_key=turn.session_key,
                         context_block_limit=self.context_block_limit,
                         provider_retry_mode=self.provider_retry_mode,
+                        denied_tool_capabilities=self.denied_tool_capabilities,
                         finalize_on_max_iterations=True,
                     ))
             except ReplayBreakpoint as bp:

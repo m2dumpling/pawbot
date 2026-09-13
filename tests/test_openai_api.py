@@ -11,6 +11,7 @@ import pytest_asyncio
 
 from pawbot.agent.hook import AgentHook, AgentRunHookContext
 from pawbot.api.server import (
+    _SESSION_LOCKS_KEY,
     API_CHAT_ID,
     API_SESSION_KEY,
     _chat_completion_response,
@@ -227,6 +228,27 @@ async def test_stream_true_returns_sse(aiohttp_client, app) -> None:
     assert resp.content_type == "text/event-stream"
 
 
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+@pytest.mark.asyncio
+async def test_stream_failure_returns_sse_error_and_done(aiohttp_client, mock_agent) -> None:
+    mock_agent.process_direct = AsyncMock(side_effect=RuntimeError("provider exploded"))
+    app = create_app(mock_agent, model_name="test-model", request_timeout=10.0, api_key=API_KEY)
+    client = await aiohttp_client(app)
+
+    resp = await client.post(
+        "/v1/chat/completions",
+        headers=AUTH_HEADERS,
+        json={"messages": [{"role": "user", "content": "hello"}], "stream": True},
+    )
+    body = await resp.text()
+
+    assert resp.status == 200
+    assert '"error"' in body
+    assert "Internal server error" in body
+    assert body.rstrip().endswith("data: [DONE]")
+    assert "provider exploded" not in body
+
+
 @pytest.mark.asyncio
 async def test_model_mismatch_returns_400() -> None:
     request = MagicMock()
@@ -363,6 +385,27 @@ async def test_followup_requests_share_same_session_key(aiohttp_client) -> None:
     assert r1.status == 200
     assert r2.status == 200
     assert call_log == [API_SESSION_KEY, API_SESSION_KEY]
+
+
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+@pytest.mark.asyncio
+async def test_unique_session_locks_are_released_after_requests(aiohttp_client) -> None:
+    agent = _make_mock_agent()
+    app = create_app(agent, model_name="m", api_key=API_KEY)
+    client = await aiohttp_client(app)
+
+    for index in range(25):
+        response = await client.post(
+            "/v1/chat/completions",
+            headers=AUTH_HEADERS,
+            json={
+                "session_id": f"unbounded-{index}",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        assert response.status == 200
+
+    assert len(app[_SESSION_LOCKS_KEY]) == 0
 
 
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")

@@ -48,7 +48,7 @@ jobs:
         run: uv run --no-sync basedpyright
 
       - name: Python tests
-        run: uv run --no-sync pytest -q
+        run: uv run --no-sync pytest -q --cov=pawbot --cov-report=term-missing --cov-fail-under=75
 
   webui:
     name: WebUI

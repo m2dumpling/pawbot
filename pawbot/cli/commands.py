@@ -360,7 +360,12 @@ def serve(
     host = host if host is not None else api_cfg.host
     port = port if port is not None else api_cfg.port
     timeout = timeout if timeout is not None else api_cfg.timeout
-    api_key = api_cfg.api_key.strip() if api_cfg.api_key else ""
+    # Docker Compose can inject the key without mutating the bind-mounted
+    # config.json. The config value remains the first-choice source for local
+    # deployments and both values are normalized identically.
+    api_key = (
+        api_cfg.api_key.strip() if api_cfg.api_key else ""
+    ) or os.environ.get("PAWBOT_API_KEY", "").strip()
     if not is_loopback_host(host) and not api_key:
         console.print(
             f"[red]Error: host {host} is available beyond this device but api_key is not set. "

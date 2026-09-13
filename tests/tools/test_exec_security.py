@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import socket
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -264,6 +265,34 @@ async def test_exec_allows_working_dir_within_workspace(tmp_path):
     result = await tool.execute(command="echo ok", working_dir=str(subdir))
     assert "ok" in result
     assert "outside the configured workspace" not in result
+
+
+@pytest.mark.asyncio
+async def test_exec_resolves_relative_working_dir_against_workspace(tmp_path):
+    """A relative working_dir must be relative to the configured workspace."""
+    workspace = tmp_path / "workspace"
+    subdir = workspace / "project"
+    subdir.mkdir(parents=True)
+    tool = ExecTool(working_dir=str(workspace), restrict_to_workspace=True, timeout=5)
+
+    prepared = tool._prepare_command("echo ok", working_dir="project")
+
+    assert not isinstance(prepared, str)
+    assert Path(prepared.cwd).resolve() == subdir.resolve()
+
+
+@pytest.mark.asyncio
+async def test_exec_keeps_relative_default_workspace_root(tmp_path, monkeypatch):
+    """The default relative workspace root must not be joined to itself."""
+    monkeypatch.chdir(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    tool = ExecTool(working_dir="workspace", restrict_to_workspace=True, timeout=5)
+
+    prepared = tool._prepare_command("echo ok")
+
+    assert not isinstance(prepared, str)
+    assert Path(prepared.cwd).resolve() == workspace.resolve()
 
 
 @pytest.mark.asyncio

@@ -54,6 +54,11 @@ def lookup_replay_result(name: str, args: dict[str, Any]) -> tuple[bool, Any]:
     return store.lookup(tool_key(name, args))
 
 
+def replay_is_active() -> bool:
+    """Return whether the current task is inside a replay turn scope."""
+    return _get_store_var().get() is not None
+
+
 class ReplayStore:
     """In-memory index of recorded tool + LLM rails by stable keys.
 

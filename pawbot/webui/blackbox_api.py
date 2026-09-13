@@ -198,6 +198,9 @@ def _original_execution_status(
 def _turn_diagnostics(turn: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a compact explanation layer above the raw replay rails."""
     tool_events = [event for event in events if event.get("kind") == "tool"]
+    provider_tool_events = [
+        event for event in events if event.get("kind") == "provider_tool"
+    ]
     failed_tools = [
         {
             "name": event.get("name"),
@@ -246,6 +249,7 @@ def _turn_diagnostics(turn: dict[str, Any], events: list[dict[str, Any]]) -> dic
         "failed_tools": failed_tools,
         "provider_errors": provider_errors,
         "unknown_side_effects": unknown_side_effects,
+        "provider_tool_events": _json_safe(provider_tool_events),
         "original_execution": original_execution,
         "budget": turn.get("budget"),
         "message": (
@@ -305,6 +309,9 @@ async def _detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
         "counts": {
             "llm_responses": sum(1 for event in events if event.get("kind") == "llm"),
             "tool_calls": sum(1 for event in events if event.get("kind") == "tool"),
+            "provider_tool_events": sum(
+                1 for event in events if event.get("kind") == "provider_tool"
+            ),
         },
         "files": {
             "turns": "turns.jsonl",

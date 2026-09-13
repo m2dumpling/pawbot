@@ -4153,6 +4153,23 @@ def test_serve_passes_configured_api_key(monkeypatch, tmp_path: Path) -> None:
     assert seen["api_key"] == "secret"
 
 
+def test_serve_accepts_compose_api_key_environment(monkeypatch, tmp_path: Path) -> None:
+    config_file = _write_instance_config(tmp_path)
+    config = Config()
+    seen: dict[str, object] = {}
+    monkeypatch.setenv("PAWBOT_API_KEY", " compose-secret ")
+
+    _patch_serve_runtime(monkeypatch, config, seen)
+
+    result = runner.invoke(
+        app,
+        ["serve", "--config", str(config_file), "--host", "0.0.0.0"],
+    )
+
+    assert result.exit_code == 0
+    assert seen["api_key"] == "compose-secret"
+
+
 def test_serve_rejects_wildcard_host_without_api_key(monkeypatch, tmp_path: Path) -> None:
     config_file = _write_instance_config(tmp_path)
     config = Config()

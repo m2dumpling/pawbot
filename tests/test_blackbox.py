@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -22,7 +23,7 @@ from pawbot.agent.blackbox.replayer import (
     compare_messages,
 )
 from pawbot.agent.hook import AgentHookContext, AgentRunHookContext
-from pawbot.agent.runner import AgentRunner, AgentRunSpec
+from pawbot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
 from pawbot.agent.tools import ToolResult
 from pawbot.agent.tools.base import Tool, tool_parameters
 from pawbot.agent.tools.registry import ToolRegistry
@@ -191,6 +192,144 @@ async def test_record_then_replay_is_deterministic(tmp_path: Path, scripted_turn
     assert not compare_messages(replayed.messages, turn.final_messages), (
         "replayed message sequence must match the recorded one structurally"
     )
+
+
+async def test_replay_missing_tool_observation_fails_closed(tmp_path: Path, scripted_turn):
+    """A damaged rail must never fall through to a real side-effecting tool."""
+    provider = FakeProvider(scripted_turn)
+    runtime = LLMRuntime.capture(provider, "fake-model", context_window_tokens=100_000)
+    tools = ToolRegistry()
+    tools.register(FakeTool())
+    initial = [{"role": "user", "content": "hello"}]
+    bb_dir = tmp_path / "missing-observation"
+    controller = BlackboxController(str(bb_dir))
+    recorder = controller.turn_hook("turn_missing", initial, model="fake-model")
+
+    FakeTool.calls = []
+    with controller.turn_scope("turn_missing"):
+        await AgentRunner().run(_build_spec(tools, runtime, recorder, initial))
+
+    tool_records = [
+        json.loads(line)
+        for line in (bb_dir / "tools.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    (bb_dir / "tools.jsonl").write_text(
+        "\n".join(
+            json.dumps(record, ensure_ascii=False)
+            for record in tool_records
+            if record.get("kind") != "tool"
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    replay = ReplayController(str(bb_dir))
+    turn = replay.turns[0]
+    replay_provider = ReplayProvider(runtime.provider, replay.store, turn.turn_id)
+    replay_runtime = LLMRuntime.capture(
+        replay_provider, "fake-model", context_window_tokens=100_000
+    )
+    FakeTool.calls = []
+    with replay.turn_scope(turn):
+        replayed = await AgentRunner().run(
+            _build_spec(tools, replay_runtime, replay.probe_hook(turn), initial)
+        )
+
+    assert FakeTool.calls == []
+    assert replayed.tool_events[0]["status"] == "error"
+    assert replayed.tool_states[0]["side_effect"] == "not_executed"
+    assert "missing replay observation" in replayed.messages[2]["content"]
+    assert compare_messages(replayed.messages, turn.final_messages)
+
+
+async def test_recording_persists_provider_hosted_tool_events(tmp_path: Path) -> None:
+    controller = BlackboxController(str(tmp_path / "hosted"))
+    recorder = controller.turn_hook(
+        "hosted-turn",
+        [{"role": "user", "content": "search"}],
+        model="fake-model",
+    )
+
+    await recorder.on_provider_tool_event(
+        AgentHookContext(iteration=1, messages=[]),
+        {
+            "kind": "hosted_tool",
+            "phase": "end",
+            "call_id": "search-1",
+            "name": "web_search",
+            "arguments": {"query": "pawbot"},
+            "result": {"status": "completed"},
+        },
+    )
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "hosted" / "tools.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert records == [{
+        "kind": "provider_tool",
+        "schema_version": 2,
+        "turn_id": "hosted-turn",
+        "iteration": 1,
+        "phase": "end",
+        "call_id": "search-1",
+        "name": "web_search",
+        "args": {"query": "pawbot"},
+        "result": {"status": "completed"},
+        "error": None,
+    }]
+
+
+async def test_loop_replay_preserves_current_budget_and_capability_policy() -> None:
+    """Replay must exercise the same admission policy as a live turn."""
+    from pawbot.agent.loop import AgentLoop
+
+    fixture = Path(__file__).parent / "fixtures" / "blackbox" / "basic-turn"
+    controller = ReplayController(str(fixture))
+    turn = controller.turns[0]
+    runtime = LLMRuntime.capture(
+        FakeProvider([]),
+        "fixture-model",
+        context_window_tokens=100_000,
+    )
+
+    loop = AgentLoop.__new__(AgentLoop)
+    loop.runner = type(
+        "RunnerStub",
+        (),
+        {"run": AsyncMock(
+            return_value=AgentRunResult(
+                final_content="done",
+                messages=turn.final_messages,
+            ),
+        )},
+    )()
+    loop.llm_runtime = lambda: runtime
+    loop.tools = ToolRegistry()
+    loop.workspace = Path(".")
+    loop.max_iterations = 4
+    loop.max_tool_calls = 3
+    loop.max_turn_seconds = 12.0
+    loop.max_input_tokens = 1000
+    loop.max_output_tokens = 500
+    loop.max_turn_cost_usd = 0.25
+    loop.input_cost_per_million_usd = 1.0
+    loop.output_cost_per_million_usd = 2.0
+    loop.max_tool_result_chars = 4096
+    loop.context_block_limit = 80_000
+    loop.provider_retry_mode = "standard"
+    loop.denied_tool_capabilities = frozenset({"execute"})
+
+    results = await loop.replay_all(controller)
+
+    assert results == [(turn.turn_id, True, [])]
+    spec = loop.runner.run.call_args.args[0]
+    assert spec.budget.max_iterations == 4
+    assert spec.budget.max_tool_calls == 3
+    assert spec.budget.max_wall_seconds == 12.0
+    assert spec.denied_tool_capabilities == frozenset({"execute"})
 
 
 async def test_replay_consumes_repeated_identical_tool_calls_in_order(

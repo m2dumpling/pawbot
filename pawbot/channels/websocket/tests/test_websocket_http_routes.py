@@ -3202,9 +3202,15 @@ class _FakeConn:
         self.remote_address = remote_address
 
     def respond(self, status: int, body: str) -> Any:
+        from websockets.datastructures import Headers
         from websockets.http11 import Response
 
-        return Response(status=status, body=body.encode())
+        return Response(
+            status_code=status,
+            reason_phrase=body,
+            headers=Headers(),
+            body=body.encode(),
+        )
 
 
 class _FakeReq:
@@ -3471,6 +3477,14 @@ def test_trusted_proxy_authorizes_websocket_without_token(bus: MagicMock) -> Non
     assert _LOCAL in channel._webui_connections
 
 
+def test_trusted_proxy_rejects_websocket_without_assertion(bus: MagicMock) -> None:
+    channel = _ch(bus, **_trusted_proxy_config())
+    response = channel._authorize_websocket_handshake(_LOCAL, {}, {})
+    assert response is not None
+    assert response.status_code == 401
+    assert _LOCAL not in channel._webui_connections
+
+
 def test_forwarding_headers_alone_never_authorize_bootstrap(bus: MagicMock) -> None:
     channel = _ch(bus)
     resp = channel.gateway.http._handle_bootstrap(
@@ -3501,6 +3515,23 @@ def test_trusted_proxy_bypasses_bootstrap_secret_and_tokens(bus: MagicMock) -> N
     payload = json.loads(resp.body)
     assert "token" not in payload
     assert "api_token" not in payload
+
+
+def test_trusted_proxy_token_issue_requires_proxy_assertion(bus: MagicMock) -> None:
+    channel = _ch(
+        bus,
+        host="0.0.0.0",
+        tokenIssuePath="/auth/token",
+        **_trusted_proxy_config(),
+    )
+    denied = channel.gateway.http._handle_token_issue(_REMOTE, _FakeReq())
+    assert denied.status_code == 403
+
+    allowed = channel.gateway.http._handle_token_issue(
+        _LOCAL,
+        _FakeReq({"Cf-Access-Jwt-Assertion": "present"}),
+    )
+    assert allowed.status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -3560,8 +3591,22 @@ def test_wildcard_host_with_token_is_valid(bus: MagicMock) -> None:
 
 
 def test_wildcard_host_with_secret_is_valid(bus: MagicMock) -> None:
-    channel = _ch(bus, host="0.0.0.0", tokenIssueSecret="s3cret")
+    channel = _ch(
+        bus,
+        host="0.0.0.0",
+        tokenIssueSecret="s3cret",
+        websocketRequiresToken=True,
+    )
     assert channel.config.host == "0.0.0.0"
+
+
+def test_wildcard_host_with_issue_secret_but_optional_ws_token_is_rejected(
+    bus: MagicMock,
+) -> None:
+    from pydantic_core import ValidationError
+
+    with pytest.raises(ValidationError, match="authentication"):
+        _ch(bus, host="0.0.0.0", tokenIssueSecret="s3cret")
 
 
 def test_wildcard_host_with_trusted_proxy_auth_is_valid(bus: MagicMock) -> None:
@@ -3578,7 +3623,12 @@ def test_wildcard_ipv6_without_auth_raises(bus: MagicMock) -> None:
 
 
 def test_wildcard_ipv6_with_secret_is_valid(bus: MagicMock) -> None:
-    channel = _ch(bus, host="::", tokenIssueSecret="s3cret")
+    channel = _ch(
+        bus,
+        host="::",
+        tokenIssueSecret="s3cret",
+        websocketRequiresToken=True,
+    )
     resp = channel.gateway.http._handle_bootstrap(
         _REMOTE, _FakeReq({"X-Pawbot-Auth": "s3cret"})
     )
@@ -3739,7 +3789,12 @@ def test_bootstrap_falls_back_when_runtime_raises(bus: MagicMock, monkeypatch: p
 
 
 def test_bootstrap_rejects_wrong_secret(bus: MagicMock) -> None:
-    channel = _ch(bus, host="0.0.0.0", tokenIssueSecret="correct")
+    channel = _ch(
+        bus,
+        host="0.0.0.0",
+        tokenIssueSecret="correct",
+        websocketRequiresToken=True,
+    )
     resp = channel.gateway.http._handle_bootstrap(
         _REMOTE, _FakeReq({"Authorization": "Bearer wrong"})
     )
@@ -3747,7 +3802,12 @@ def test_bootstrap_rejects_wrong_secret(bus: MagicMock) -> None:
 
 
 def test_bootstrap_accepts_remote_with_valid_secret(bus: MagicMock) -> None:
-    channel = _ch(bus, host="0.0.0.0", tokenIssueSecret="s3cret")
+    channel = _ch(
+        bus,
+        host="0.0.0.0",
+        tokenIssueSecret="s3cret",
+        websocketRequiresToken=True,
+    )
     resp = channel.gateway.http._handle_bootstrap(
         _REMOTE, _FakeReq({"Authorization": "Bearer s3cret"})
     )
@@ -3757,7 +3817,12 @@ def test_bootstrap_accepts_remote_with_valid_secret(bus: MagicMock) -> None:
 
 
 def test_bootstrap_accepts_x_pawbot_auth_header(bus: MagicMock) -> None:
-    channel = _ch(bus, host="0.0.0.0", tokenIssueSecret="s3cret")
+    channel = _ch(
+        bus,
+        host="0.0.0.0",
+        tokenIssueSecret="s3cret",
+        websocketRequiresToken=True,
+    )
     resp = channel.gateway.http._handle_bootstrap(
         _REMOTE, _FakeReq({"X-Pawbot-Auth": "s3cret"})
     )
@@ -3766,6 +3831,11 @@ def test_bootstrap_accepts_x_pawbot_auth_header(bus: MagicMock) -> None:
 
 def test_bootstrap_secret_also_enforced_on_localhost(bus: MagicMock) -> None:
     """When secret is set, even localhost must provide it (reverse-proxy safety)."""
-    channel = _ch(bus, host="0.0.0.0", tokenIssueSecret="s3cret")
+    channel = _ch(
+        bus,
+        host="0.0.0.0",
+        tokenIssueSecret="s3cret",
+        websocketRequiresToken=True,
+    )
     resp = channel.gateway.http._handle_bootstrap(_LOCAL, _NO_HEADERS)
     assert resp.status_code == 401

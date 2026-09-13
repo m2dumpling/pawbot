@@ -312,7 +312,7 @@ class CallExecutor:
             # offline, every tool call is served from the JSONL snapshot by
             # stable key instead of touching the real system (side-effect
             # isolation).
-            from pawbot.agent.blackbox import lookup_replay_result
+            from pawbot.agent.blackbox import lookup_replay_result, replay_is_active
 
             found, replayed = lookup_replay_result(tool_call.name, params)
             if found:
@@ -345,6 +345,34 @@ class CallExecutor:
                     self._context, tool_call, tool, params, replayed
                 )
                 return replayed, event
+            if replay_is_active():
+                # A replay fixture that is missing a tool observation is
+                # malformed. Never fall through to the real executor: doing
+                # so would turn a debugging operation into a side-effecting
+                # live run and could make the replay appear green.
+                replay_error = ToolResult.error(
+                    f"Error: missing replay observation for tool '{tool_call.name}'; "
+                    "tool execution was blocked"
+                )
+                self._finish_state(
+                    lifecycle,
+                    lifecycle="failed",
+                    side_effect="not_executed",
+                    started_at=started_at,
+                )
+                await self._hook.on_execute_tool_error(
+                    self._context,
+                    tool_call,
+                    tool,
+                    params,
+                    replay_error,
+                )
+                event = {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": "missing replay observation; execution blocked",
+                }
+                return replay_error, event
             if tool is not None:
                 result = await tool.execute(**params)
             else:

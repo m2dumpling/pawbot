@@ -271,11 +271,14 @@ class WebSocketConfig(Base):
     def wildcard_host_requires_auth(self) -> Self:
         if self.host not in ("0.0.0.0", "::"):
             return self
-        if self.token.strip() or self.token_issue_secret.strip() or self.trusted_proxy_auth is not None:
+        if self.trusted_proxy_auth is not None or self.token.strip():
+            return self
+        if self.token_issue_secret.strip() and self.websocket_requires_token:
             return self
         raise ValueError(
-            "host is 0.0.0.0 (all interfaces) but neither token, token_issue_secret, "
-            "nor trusted_proxy_auth is set — set one to prevent unauthenticated access"
+            "host is bound to all interfaces but WebSocket authentication is not enforced — "
+            "set token, enable websocket_requires_token with token_issue_secret, or configure "
+            "trusted_proxy_auth"
         )
 
 

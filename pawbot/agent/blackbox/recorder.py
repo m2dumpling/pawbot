@@ -141,6 +141,34 @@ class TurnRecorder(AgentHook):
         # response is observed (see after_iteration).
         return
 
+    async def on_provider_tool_event(
+        self,
+        context: AgentHookContext,
+        event: dict[str, Any],
+    ) -> None:
+        """Persist provider-hosted tool activity for inspection.
+
+        Hosted tools (for example Responses API web search) do not produce a
+        local ``tool`` result and therefore cannot use the replay tool rail.
+        Keep them as a separate event kind so the raw recording remains
+        complete without accidentally making replay consume them as local
+        tool observations.
+        """
+        if event.get("kind") != "hosted_tool":
+            return
+        self._append_tools({
+            "kind": "provider_tool",
+            "schema_version": _BLACKBOX_SCHEMA_VERSION,
+            "turn_id": self._turn_id,
+            "iteration": context.iteration,
+            "phase": event.get("phase"),
+            "call_id": event.get("call_id"),
+            "name": event.get("name"),
+            "args": _json_safe(event.get("arguments") or {}),
+            "result": _json_safe(event.get("result")),
+            "error": _json_safe(event.get("error")),
+        })
+
     async def on_execute_tool_cancelled(
         self,
         context: AgentHookContext,

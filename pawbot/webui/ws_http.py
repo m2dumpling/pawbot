@@ -594,14 +594,17 @@ class GatewayHTTPHandler:
 
     def _handle_token_issue(self, connection: Any, request: Any) -> Any:
         secret = self.config.token_issue_secret.strip() or self.config.token.strip()
-        if secret:
+        is_proxy_authenticated = _is_trusted_proxy_authenticated_request(
+            connection,
+            request.headers,
+            self.config,
+        )
+        is_local_browser = _is_local_browser_request(connection, request.headers)
+        if secret and not is_proxy_authenticated:
             if not _issue_route_secret_matches(request.headers, secret):
                 return connection.respond(401, "Unauthorized")
-        else:
-            self._log.warning(
-                "token_issue_path is set but token_issue_secret is empty; "
-                "any client can obtain connection tokens — set token_issue_secret for production."
-            )
+        elif not secret and not (is_proxy_authenticated or is_local_browser):
+            return _http_error(403, "token issue requires localhost or trusted proxy authentication")
         if not self.tokens.can_issue():
             self._log.error(
                 "too many outstanding issued tokens ({}), rejecting issuance",

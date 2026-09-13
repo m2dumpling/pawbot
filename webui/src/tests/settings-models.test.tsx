@@ -1391,10 +1391,9 @@ describe("Settings models", () => {
           status: "available",
           catalog_kind: "official",
           models: [
-            { id: "deepseek-chat", owned_by: "deepseek", context_window: 65536 },
             { id: "deepseek-reasoner", owned_by: "deepseek", context_window: 65536 },
           ],
-          model_count: 2,
+          model_count: 1,
           fetched_at: 1,
         });
       }
@@ -1408,6 +1407,7 @@ describe("Settings models", () => {
     await togglePresetEditor();
     const modelButtons = await screen.findAllByRole("button", { name: /deepseek-chat/i });
     await openPopover(modelButtons[modelButtons.length - 1]);
+    expect(await screen.findByRole("option", { name: /deepseek-chat/i })).toBeInTheDocument();
     await screen.findByText("deepseek-reasoner");
     fireEvent.click(screen.getAllByText("deepseek-reasoner")[0]);
     fireEvent.click(screen.getByRole("button", { name: /Advanced options/ }));

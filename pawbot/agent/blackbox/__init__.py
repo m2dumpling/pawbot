@@ -16,6 +16,7 @@ from pawbot.agent.blackbox.replayer import (
     ReplayStore,
     compare_messages,
     lookup_replay_result,
+    replay_is_active,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "ReplayStore",
     "compare_messages",
     "lookup_replay_result",
+    "replay_is_active",
 ]

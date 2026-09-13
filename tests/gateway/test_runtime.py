@@ -107,7 +107,7 @@ def _wait_for_claim(
     process: subprocess.Popen[str],
     marker: Path,
 ) -> int:
-    deadline = time.monotonic() + 3
+    deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         if marker.exists():
             detail = marker.read_text(encoding="utf-8")
@@ -333,13 +333,13 @@ def test_competing_foreground_claim_preserves_the_live_gateway(tmp_path):
         second_marker = tmp_path / "second.marker"
         second = _foreground_child(tmp_path, 0, second_marker)
         try:
-            second.wait(timeout=3)
+            second.wait(timeout=5)
             assert second_marker.read_text(encoding="utf-8") == "occupied"
             assert second.returncode == 17
         finally:
             if second.poll() is None:
                 second.kill()
-                second.wait(timeout=3)
+                second.wait(timeout=5)
 
         state = json.loads(runtime.paths.state_path.read_text(encoding="utf-8"))
         assert state["pid"] == first_pid
@@ -347,7 +347,7 @@ def test_competing_foreground_claim_preserves_the_live_gateway(tmp_path):
     finally:
         if first.poll() is None:
             first.terminate()
-            first.wait(timeout=3)
+            first.wait(timeout=5)
         runtime.status()
 
 

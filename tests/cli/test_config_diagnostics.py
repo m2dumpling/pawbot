@@ -339,7 +339,9 @@ def test_gateway_provider_setup_failure_points_to_shortest_routes_when_webui_dis
 
     assert result.exit_code == 1
     assert "Gateway cannot start: No provider is configured for model" in output
-    assert "Settings → Models" in output
+    # Rich may replace the Unicode arrow when several Windows workers share
+    # a non-UTF-8 console; keep checking both route labels.
+    assert "Settings" in output and "Models" in output
     assert "pawbot onboard --wizard" in output
     assert "pawbot status --config" in output
     assert config_path.name in output

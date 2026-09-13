@@ -216,10 +216,25 @@ export function ModelIdPicker({
     hasConcreteProvider && providerConfigured && !providerUsesManualModelIds;
   const normalizedQuery = query.trim().toLowerCase();
   const providerModels: ProviderModelsPayload["models"] = useMemo(
-    () => hasStaticModels
-      ? (models?.map((id) => ({ id })) ?? [])
-      : (payload?.models ?? []),
-    [hasStaticModels, models, payload?.models],
+    () => {
+      const available = hasStaticModels
+        ? (models?.map((id) => ({ id })) ?? [])
+        : (payload?.models ?? []);
+      const currentModel = value.trim();
+      if (
+        hasStaticModels ||
+        !currentModel ||
+        payload?.status !== "available" ||
+        available.some((model) => model.id === currentModel)
+      ) {
+        return available;
+      }
+      // Keep a configured model visible when a provider's /models response is
+      // incomplete or uses an account-specific alias. It is a selected
+      // configuration value, not an assertion that the provider advertised it.
+      return [{ id: currentModel }, ...available];
+    },
+    [hasStaticModels, models, payload?.models, payload?.status, value],
   );
   const visibleModels = useMemo(
     () => providerModels

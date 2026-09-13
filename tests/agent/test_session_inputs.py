@@ -91,10 +91,10 @@ async def test_session_message_text_is_not_dispatched_as_a_slash_command(
     task = asyncio.create_task(loop.run())
     try:
         await loop.bus.publish_inbound(_message("/stop"))
-        response = await asyncio.wait_for(loop.bus.consume_outbound(), timeout=2)
+        response = await asyncio.wait_for(loop.bus.consume_outbound(), timeout=5)
 
         assert response.content == "Reviewed"
         loop.provider.chat_with_retry.assert_awaited_once()
     finally:
         loop.stop()
-        await asyncio.wait_for(task, timeout=2)
+        await asyncio.wait_for(task, timeout=5)

@@ -39,6 +39,17 @@ services:
   pawbot-api:
     container_name: pawbot-api
     <<: *common-config
+    # The API server is an optional dependency group; install it in this
+    # service explicitly instead of inheriting the gateway's channel-only image.
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PAWBOT_CHANNELS: ${PAWBOT_CHANNELS:-whatsapp}
+        PAWBOT_EXTRAS: api
+    # Set PAWBOT_API_KEY in the shell or .env when using the 0.0.0.0 bind below.
+    environment:
+      PAWBOT_API_KEY: ${PAWBOT_API_KEY:-}
     command:
       ["serve", "--host", "0.0.0.0", "-w", "/home/pawbot/.pawbot/api-workspace"]
     restart: unless-stopped

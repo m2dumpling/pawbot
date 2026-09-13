@@ -12,7 +12,9 @@ import hmac
 import json as _json
 import time
 import uuid
+from collections.abc import MutableMapping
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
+from weakref import WeakValueDictionary
 
 from aiohttp import web
 from loguru import logger
@@ -49,7 +51,7 @@ API_CHAT_ID = "default"
 _AGENT_LOOP_KEY = web.AppKey[Any]("agent_loop")
 _MODEL_NAME_KEY = web.AppKey[str]("model_name")
 _REQUEST_TIMEOUT_KEY = web.AppKey[float]("request_timeout")
-_SESSION_LOCKS_KEY = web.AppKey[dict[str, asyncio.Lock]]("session_locks")
+_SESSION_LOCKS_KEY = web.AppKey[MutableMapping[str, asyncio.Lock]]("session_locks")
 _PREPARE_AGENT_KEY = web.AppKey[Callable[[], Awaitable[None]] | None]("prepare_agent")
 _MISSING = object()
 
@@ -331,7 +333,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
         return _error_json(400, f"Only configured model '{model_name}' is available")
 
     session_key = f"api:{session_id}" if session_id else API_SESSION_KEY
-    session_locks: dict[str, asyncio.Lock] = _app_value(
+    session_locks: MutableMapping[str, asyncio.Lock] = _app_value(
         request.app,
         _SESSION_LOCKS_KEY,
         "session_locks",
@@ -353,6 +355,9 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
         chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         stream_failed = False
+        stream_error = ""
+        stream_error_type = "server_error"
+        stream_error_code = 500
         emitted_content = False
 
         async def _on_stream(token: str) -> None:
@@ -368,7 +373,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
             return None
 
         async def _run() -> None:
-            nonlocal stream_failed
+            nonlocal stream_failed, stream_error, stream_error_type, stream_error_code
             try:
                 async with session_lock:
                     async with asyncio.timeout(timeout_s):
@@ -386,8 +391,15 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
                         response_text = _response_text(response)
                         if response_text.strip():
                             await queue.put(response_text)
+            except asyncio.TimeoutError:
+                stream_failed = True
+                stream_error = "Request timed out"
+                stream_error_type = "timeout"
+                stream_error_code = 504
+                logger.exception("Streaming timeout for session {}", session_key)
             except Exception:
                 stream_failed = True
+                stream_error = "Internal server error"
                 logger.exception("Streaming error for session {}", session_key)
             finally:
                 await queue.put(None)
@@ -405,7 +417,17 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 
-        if not stream_failed:
+        if stream_failed:
+            error_payload = {
+                "error": {
+                    "message": stream_error or "Internal server error",
+                    "type": stream_error_type,
+                    "code": stream_error_code,
+                }
+            }
+            await resp.write(f"data: {_json.dumps(error_payload)}\n\n".encode("utf-8"))
+            await resp.write(_SSE_DONE)
+        else:
             await resp.write(_sse_chunk("", model_name, chunk_id, finish_reason="stop"))
             await resp.write(_SSE_DONE)
         return resp
@@ -492,7 +514,10 @@ def create_app(
     app[_AGENT_LOOP_KEY] = agent_loop
     app[_MODEL_NAME_KEY] = model_name
     app[_REQUEST_TIMEOUT_KEY] = request_timeout
-    app[_SESSION_LOCKS_KEY] = {}  # per-user locks, keyed by session_key
+    # Weak values keep one lock only while a request still references it. This
+    # preserves per-session serialization without retaining attacker-controlled
+    # session ids forever.
+    app[_SESSION_LOCKS_KEY] = WeakValueDictionary()
     app[_PREPARE_AGENT_KEY] = prepare_agent
 
     @web.middleware

@@ -343,7 +343,7 @@ async def test_stream_with_session_id(aiohttp_client) -> None:
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
 @pytest.mark.asyncio
 async def test_streaming_backend_failure_does_not_emit_success_terminator(aiohttp_client) -> None:
-    """Backend exceptions should not surface as a normal stop+[DONE] stream."""
+    """Backend exceptions should surface as an SSE error before [DONE]."""
     agent = MagicMock()
 
     async def boom(**kwargs):
@@ -364,4 +364,6 @@ async def test_streaming_backend_failure_does_not_emit_success_terminator(aiohtt
     assert resp.status == 200
     body = await resp.text()
     assert '"finish_reason": "stop"' not in body
-    assert "[DONE]" not in body
+    assert '"type": "server_error"' in body
+    assert '"message": "Internal server error"' in body
+    assert body.rstrip().endswith("data: [DONE]")
