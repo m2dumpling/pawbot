@@ -224,6 +224,36 @@ def onboard(
     typer.echo(f"\n✓ pawbot is ready. Run: {webui_cmd}")
 
 
+@app.command()
+def update():
+    """Update pawbot to the latest release without rerunning setup."""
+    from pawbot.cli.update import UpdateError, update_package
+
+    try:
+        result = update_package()
+    except UpdateError as exc:
+        console.print(f"[red]✗[/red] {escape(str(exc))}")
+        raise typer.Exit(1) from exc
+
+    if result.changed:
+        if result.after_version:
+            console.print(
+                f"[green]✓[/green] Pawbot updated from v{result.before_version} "
+                f"to v{result.after_version}."
+            )
+        else:
+            console.print(
+                f"[green]✓[/green] Pawbot update completed from v{result.before_version}."
+            )
+    else:
+        console.print(f"[green]✓[/green] Pawbot v{result.before_version} is already up to date.")
+    console.print(
+        "Existing provider settings, API keys, sessions, workspace, and channel "
+        "configuration were not reinitialized."
+    )
+    console.print("Run `pawbot` or `pawbot agent` again to use the updated version.")
+
+
 def _onboard_plugins(config_path: Path) -> None:
     """Inject default config for all discovered channels (built-in + plugins)."""
     import json

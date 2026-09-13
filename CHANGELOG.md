@@ -5,6 +5,24 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
+## 0.3.9 - 2026-09-13
+
+### Added
+
+- Added `pawbot update`, which detects the active uv, pipx, or pip installation
+  method and upgrades Pawbot without rerunning onboarding or rewriting user
+  configuration.
+- Added the `recording` extra for optional vcrpy HTTP cassette support and a
+  local HTTPX cassette regression test.
+
+### Fixed
+
+- Made the native TUI prefer terminal-native selection in SSH and Mosh sessions,
+  improving copy and paste behavior in Termius while retaining an explicit
+  `PAWBOT_TUI_MOUSE=1` opt-in.
+- Avoided treating remote `Ctrl+V` as a server-side image clipboard request;
+  terminal paste events remain available for remote clients.
+
 ## 0.3.8 - 2026-09-13
 
 ### Fixed

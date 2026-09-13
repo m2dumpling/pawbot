@@ -1971,7 +1971,7 @@ wheels = [
 
 [[package]]
 name = "pawbot-ai"
-version = "0.3.8"
+version = "0.3.9"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -2036,6 +2036,7 @@ dev = [
     { name = "python-pptx" },
     { name = "python-socketio" },
     { name = "ruff" },
+    { name = "vcrpy" },
 ]
 documents = [
     { name = "defusedxml" },
@@ -2052,6 +2053,9 @@ olostep = [
 ]
 pdf = [
     { name = "pypdf" },
+]
+recording = [
+    { name = "vcrpy" },
 ]
 
 [package.metadata]
@@ -2114,10 +2118,12 @@ requires-dist = [
     { name = "typer", specifier = ">=0.20.0,<1.0.0" },
     { name = "tzdata", specifier = ">=2025.2" },
     { name = "tzlocal", specifier = ">=5.3.1,<6.0.0" },
+    { name = "vcrpy", marker = "extra == 'dev'", specifier = ">=6.0.0,<9.0.0" },
+    { name = "vcrpy", marker = "extra == 'recording'", specifier = ">=6.0.0,<9.0.0" },
     { name = "watchfiles", specifier = ">=1.1.1,<2.0.0" },
     { name = "websockets", specifier = ">=15.0,<17.0" },
 ]
-provides-extras = ["api", "azure", "bedrock", "documents", "langfuse", "pdf", "olostep", "dev"]
+provides-extras = ["api", "azure", "bedrock", "documents", "langfuse", "pdf", "olostep", "recording", "dev"]
 
 [[package]]
 name = "pillow"
@@ -3495,6 +3501,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f2/0f/3f86e61397dd33bf2ccf28188c40db6a740658aeebbbf6e7dbc101a1f487/uvicorn-0.52.4.tar.gz", hash = "sha256:73acfee47a0b133c5de13d219492d62d8a31e935f4fe6e41a232451a15379f86", size = 100627, upload-time = "2026-08-19T06:27:41.821Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/79/4a20b54ab0491485ccd8c077db2d39187c7f12b3e15485d38a7be37c81b4/uvicorn-0.52.4-py3-none-any.whl", hash = "sha256:f86e41a149d7d05a9969337e3946a9c171c06a5d42680896daaba624aeac8da1", size = 79871, upload-time = "2026-08-19T06:27:40.36Z" },
+]
+
+[[package]]
+name = "vcrpy"
+version = "8.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/39/d5/8a1f8eb603e2d35fbb0ecd1e309d0c5c18a0ecfc8c0a8f04088bbc8f833b/vcrpy-8.3.0.tar.gz", hash = "sha256:46d64e77e8d95e5c76c7d9a94ff05d8b38b2ae4e1d4869eb0235024b6fcb5212", size = 96117, upload-time = "2026-07-04T14:27:01.608Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/77/cb4219be91508399cbcb6143bad89462cfb16f6c638458f454a5d46ac95a/vcrpy-8.3.0-py3-none-any.whl", hash = "sha256:bd66e6143746778157f00e2a922527a8d96b2fdc350be8988a45a29c843815b9", size = 46530, upload-time = "2026-07-04T14:27:00.546Z" },
 ]
 
 [[package]]

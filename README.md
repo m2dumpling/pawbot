@@ -123,6 +123,17 @@ macOS / Linux:
 uv tool install --force --upgrade pawbot-ai && pawbot
 ```
 
+After installation, update any existing Pawbot installation without repeating
+provider setup:
+
+```bash
+pawbot update
+```
+
+The update command upgrades the package through its detected installation
+manager and leaves provider credentials, channel settings, sessions, and the
+workspace untouched.
+
 Windows PowerShell:
 
 ```powershell
@@ -140,19 +151,19 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.8/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.9/scripts/install.sh | sh
 ```
 
 If `curl` is not available, use `wget` instead:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.8/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.9/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.8/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.9/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a
@@ -349,7 +360,7 @@ The core source is organized around:
 
 - [Documentation index](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
-- [Release notes](docs/release-notes/0.3.8.md)
+- [Release notes](docs/release-notes/0.3.9.md)
 - [Publishing guide](docs/publishing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)

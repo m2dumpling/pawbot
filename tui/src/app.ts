@@ -95,6 +95,7 @@ import {
   type FooterHintTheme,
 } from "./footer-hints"
 import { createTuiHost, type TuiHost } from "./host"
+import { isRemoteTerminal, shouldUseTerminalMouse } from "./terminal-compat"
 
 interface AppOptions {
   wsUrl?: string
@@ -110,6 +111,8 @@ interface AppOptions {
   version: string
   access: string
   theme: "auto" | ThemeMode
+  remoteTerminal?: boolean
+  useMouse?: boolean
   onDetach?: (chatId?: string) => void
   onExit?: (chatId: string) => void
 }
@@ -511,6 +514,8 @@ export class PawbotTui {
   private recoveryPending = false
   private readonly apiReauthenticator: ApiReauthenticator | undefined
   private readonly clipboardImageReader: ClipboardImageReader
+  private readonly remoteTerminal: boolean
+  private readonly useMouse: boolean
   private apiRefreshPromise: Promise<GatewayApiConnection> | null = null
   private skillLoadId = 0
   private clipboardImagePending = false
@@ -528,6 +533,8 @@ export class PawbotTui {
     clipboardImageReader: ClipboardImageReader = createClipboardImageReader(),
   ) {
     this.renderer = renderer
+    this.remoteTerminal = options.remoteTerminal ?? isRemoteTerminal()
+    this.useMouse = options.useMouse ?? true
     this.clipboardImageReader = clipboardImageReader
     this.defaultModelName = options.model
     this.defaultModelPreset = options.modelPreset
@@ -821,15 +828,23 @@ export class PawbotTui {
 
   static async create(options: AppOptions): Promise<PawbotTui> {
     const host = createTuiHost()
+    const remoteTerminal = isRemoteTerminal()
+    const useMouse = shouldUseTerminalMouse()
     const renderer = await createCliRenderer({
       targetFps: 30,
       exitOnCtrlC: false,
-      useMouse: true,
+      useMouse,
       screenMode: "alternate-screen",
       externalOutputMode: "passthrough",
       consoleMode: "disabled",
     })
-    return PawbotTui.mount(renderer, options, undefined, undefined, host)
+    return PawbotTui.mount(
+      renderer,
+      { ...options, remoteTerminal, useMouse },
+      undefined,
+      undefined,
+      host,
+    )
   }
 
   static mount(
@@ -1727,6 +1742,7 @@ export class PawbotTui {
     if (
       (key.ctrl || key.meta)
       && key.name.toLocaleLowerCase() === "v"
+      && !this.remoteTerminal
       && !this.sessionLoading
       && !this.sessionMenu.visible
       && !this.branchMenu.visible
@@ -1781,6 +1797,12 @@ export class PawbotTui {
       }
     }
     if (key.ctrl && key.name === "c") {
+      if (this.remoteTerminal && !this.useMouse && key.shift) {
+        // Termius and other SSH clients may keep Ctrl+Shift+C locally. If a
+        // client forwards it, never interpret it as Pawbot's quit shortcut.
+        key.preventDefault()
+        return
+      }
       key.preventDefault()
       const selected = this.renderer.getSelection()?.getSelectedText()
       if (selected) {

@@ -78,6 +78,8 @@ def main() -> int:
         "PAWBOT_TUI_VERSION": "test",
         "PAWBOT_TUI_ACCESS": "workspace access",
         "PAWBOT_TUI_THEME": "dark",
+        # Exercise the SSH/Termius compatibility path under ConPTY as well.
+        "SSH_TTY": "\\\\.\\pipe\\pawbot-smoke",
         # Headless ConPTY has no terminal emulator to answer optional OSC 66
         # width probes. Keep this smoke test focused on application behavior.
         "OPENTUI_FORCE_EXPLICIT_WIDTH": "false",
@@ -130,6 +132,9 @@ def main() -> int:
         raise AssertionError("TUI did not print exactly one reusable session command")
     if text.index(RESUME_COMMAND) < text.index(LEAVE_ALT_SCREEN):
         raise AssertionError("TUI printed the session command before restoring the terminal")
+    for mouse_mode in ("\x1b[?1000h", "\x1b[?1002h", "\x1b[?1003h", "\x1b[?1006h"):
+        if mouse_mode in text:
+            raise AssertionError(f"SSH-compatible TUI enabled mouse reporting: {mouse_mode!r}")
     print("ConPTY smoke test passed: Unicode input, resize, restoration, and session resume")
     return 0
 

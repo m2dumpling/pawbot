@@ -123,6 +123,14 @@ Windows PowerShell：
 uv tool install --force --upgrade pawbot-ai; pawbot
 ```
 
+已有安装可以直接更新到最新版本，不会重新进入 Provider 和 API Key 配置流程：
+
+```bash
+pawbot update
+```
+
+更新命令会保留 Provider 凭证、通道配置、会话和工作区。
+
 仓库还提供隔离安装脚本。全新桌面环境会自动打开 WebUI；如果需要终端/TUI，
 请显式运行 `pawbot agent`：
 
@@ -132,19 +140,19 @@ uv tool install --force --upgrade pawbot-ai; pawbot
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.8/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.9/scripts/install.sh | sh
 ```
 
 如果系统没有 `curl`，也可以使用 `wget`：
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.8/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.9/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.8/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.3.9/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
@@ -324,7 +332,7 @@ Provider + ToolRegistry + MCP
 
 - [文档索引](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
-- [发布说明](docs/release-notes/0.3.8.md)
+- [发布说明](docs/release-notes/0.3.9.md)
 - [发布与 PyPI 指南](docs/publishing.md)
 - [变更记录](CHANGELOG.md)
 - [贡献指南](CONTRIBUTING.md)

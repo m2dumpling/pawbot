@@ -83,6 +83,18 @@ and is not required for replay. A turn envelope also carries a budget snapshot
 when resource limits are configured, including iterations, tool calls, elapsed
 time, input/output tokens, and estimated cost when pricing is known.
 
+To enable the optional raw HTTP cassette support, install the recording extra:
+
+```bash
+uv tool install --force --upgrade "pawbot-ai[recording]"
+```
+
+For an existing virtual environment, `python -m pip install vcrpy` is enough.
+The cassette may contain prompts, request bodies, local paths, tool results, and
+model responses; review it before sharing or committing it. Authentication
+headers are filtered by the recorder, but the cassette is not a general-purpose
+secret scrubber.
+
 ## Turn budgets and capability policy
 
 The limits are configured under `agents.defaults` and are optional. Existing

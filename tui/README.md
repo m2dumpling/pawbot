@@ -13,6 +13,17 @@ bun run --cwd tui build
 
 The TUI uses OpenTUI's retained full-screen layout: the transcript reflows with the terminal while the composer stays fixed at the bottom. Mouse and keyboard scrolling operate inside the transcript, and leaving the TUI restores the previous terminal screen.
 
+### SSH and Termius
+
+When the TUI runs through SSH or Mosh, it disables mouse reporting by default so
+the terminal client can provide its own text selection and copy behavior. All
+keyboard navigation remains available. Set `PAWBOT_TUI_MOUSE=1` if the remote
+terminal supports OpenTUI mouse events and you prefer the in-app controls.
+
+For mobile Termius, use its **Paste mode** or terminal paste action when putting
+text into the composer. The remote process cannot directly read the local phone
+or desktop clipboard; native terminal copy support is owned by the SSH client.
+
 Assistant math written with `$...$`, `$$...$$`, `\\(...\\)`, or `\\[...\\]` is presented as
 Unicode plain text so formulas remain readable in terminals without a math renderer. Currency and
 LaTeX inside inline or fenced code remain literal.

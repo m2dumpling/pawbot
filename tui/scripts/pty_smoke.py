@@ -91,6 +91,9 @@ def main() -> int:
         # A fixed theme keeps this test about PTY behavior rather than the
         # terminal emulator's optional OSC 10/11 response.
         "PAWBOT_TUI_THEME": "dark",
+        # Exercise the SSH/Termius compatibility path: native terminal
+        # selection must remain available when OpenTUI mouse reporting is off.
+        "SSH_TTY": "/dev/pts/pawbot-smoke",
     }
     env.pop("HERDR_ENV", None)
     env.pop("HERDR_PANE_ID", None)
@@ -153,6 +156,9 @@ def main() -> int:
         raise AssertionError("TUI did not print exactly one reusable session command")
     if output.index(RESUME_COMMAND) < output.index(LEAVE_ALT_SCREEN):
         raise AssertionError("TUI printed the session command before restoring the terminal")
+    for mouse_mode in (b"\x1b[?1000h", b"\x1b[?1002h", b"\x1b[?1003h", b"\x1b[?1006h"):
+        if mouse_mode in output:
+            raise AssertionError(f"SSH-compatible TUI enabled mouse reporting: {mouse_mode!r}")
     # The UI must inherit the host terminal background. Fixed RGB/indexed
     # surfaces become black strips in embedded terminals after long output.
     for escape in (
