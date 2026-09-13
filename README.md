@@ -205,20 +205,26 @@ On a Linux server, localhost is intentionally private to the server. Bind the
 WebUI explicitly when you need to open it from another machine:
 
 ```bash
-pawbot webui --remote --yes --no-open
+pawbot webui --remote --yes --no-open --show-access --detach
 ```
 
-Then open `http://<server-ip>:8765` from your own computer and enter the
-`channels.websocket.tokenIssueSecret` value from the server's config file. Keep
-the gateway health port (`18790` by default) private, allow only the WebUI port
+The command creates a random WebSocket path, prints a copyable authenticated URL,
+and leaves the gateway running in the background. `--show-access` prints a URL
+containing the WebUI password; keep the terminal output private. Keep the
+gateway health port (`18790` by default) private, allow only the WebUI port
 through the firewall, and use HTTPS/reverse proxy before exposing it to the
-public Internet. For a private setup, use an SSH tunnel instead:
+public Internet. For a private setup, keep the default localhost binding and
+use an SSH tunnel instead:
 
 ```bash
+pawbot webui --yes --no-open --detach
 ssh -N -L 8765:127.0.0.1:8765 <user>@<server>
 ```
 
-Then open `http://127.0.0.1:8765` on your own computer.
+Then open `http://127.0.0.1:8765` on your own computer. See the full
+[`Debian/Ubuntu VPS deployment guide`](docs/deploy-linux.md) for domains,
+systemd, TUI, and Telegram.
+
 
 ### CLI
 

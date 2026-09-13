@@ -19,6 +19,8 @@ supported surface and known boundaries of each published version.
   point; bounded API session-lock lifetime and corrected relative exec paths.
 - Kept configured model aliases visible in the WebUI model picker and recorded
   provider-hosted tool events for later inspection.
+- Added a headless VPS path that generates a random remote WebUI endpoint,
+  supports a copyable authenticated URL, and can detach the gateway after setup.
 
 ## 0.3.7 - 2026-09-10
 

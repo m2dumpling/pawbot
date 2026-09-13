@@ -80,3 +80,11 @@ def test_install_failure_hints_do_not_advertise_startup() -> None:
         assert "Then open the WebUI with:" not in hint
         assert "Run: pawbot" not in hint
         assert "Installation successful." not in hint
+
+
+def test_posix_installer_explains_headless_vps_entrypoints() -> None:
+    shell_script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+
+    assert "webui --remote --yes --no-open --show-access --detach" in shell_script
+    assert "webui --yes --no-open --detach, then use an SSH tunnel" in shell_script
+    assert "pawbot_try_command) agent" in shell_script

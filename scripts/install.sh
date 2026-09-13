@@ -424,11 +424,21 @@ show_install_success() {
   fi
 }
 
+show_headless_next_steps() {
+  if has_browser_session; then
+    return 0
+  fi
+  info "For a remote VPS WebUI: $(pawbot_try_command) webui --remote --yes --no-open --show-access --detach"
+  info "For private access: $(pawbot_try_command) webui --yes --no-open --detach, then use an SSH tunnel."
+  info "For the terminal UI: $(pawbot_try_command) agent"
+}
+
 show_install_success
 
 if [ "${PAWBOT_SKIP_WIZARD:-}" = "1" ]; then
   info "Skipping automatic setup because PAWBOT_SKIP_WIZARD=1."
   info "Run this later: $(pawbot_try_command)"
+  show_headless_next_steps
   exit 0
 fi
 
@@ -457,3 +467,4 @@ fi
 
 info "Done. Open the WebUI with: $(pawbot_try_command)"
 info "For the terminal/TUI client, run: $(pawbot_try_command) agent"
+show_headless_next_steps

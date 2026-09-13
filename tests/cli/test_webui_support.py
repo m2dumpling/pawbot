@@ -63,6 +63,8 @@ def test_webui_remote_host_requires_and_generates_authentication() -> None:
     assert websocket["websocketRequiresToken"] is True
     assert isinstance(websocket["tokenIssueSecret"], str)
     assert len(websocket["tokenIssueSecret"]) >= 32
+    assert websocket["path"].startswith("/pawbot-")
+    assert websocket["path"] != "/"
 
 
 def test_webui_keeps_an_existing_remote_host_without_local_reset() -> None:
@@ -124,6 +126,51 @@ def test_webui_access_url_uses_a_routable_placeholder_for_wildcard_bind() -> Non
     url = _webui_access_url(config)
 
     assert url == "http://<server-ip>:8765/#/?bootstrapSecret=secret-value"
+
+
+def test_webui_access_url_includes_configured_remote_path() -> None:
+    config = Config(
+        channels={
+            "websocket": {
+                "enabled": True,
+                "host": "0.0.0.0",
+                "port": 8765,
+                "path": "/pawbot-random-path",
+                "tokenIssueSecret": "secret-value",
+            }
+        }
+    )
+
+    assert _webui_access_url(config) == (
+        "http://<server-ip>:8765/pawbot-random-path/#/?bootstrapSecret=secret-value"
+    )
+
+
+def test_webui_access_instructions_can_print_authenticated_url(capsys, tmp_path: Path) -> None:
+    secret = "print-only-secret"
+    config = Config(
+        channels={
+            "websocket": {
+                "enabled": True,
+                "host": "0.0.0.0",
+                "port": 8765,
+                "path": "/pawbot-random-path",
+                "tokenIssueSecret": secret,
+            }
+        }
+    )
+
+    _print_webui_access_instructions(
+        config,
+        tmp_path / "config.json",
+        reveal_secret=True,
+    )
+
+    output = capsys.readouterr().out
+    assert (
+        f"http://<server-ip>:8765/pawbot-random-path/#/?bootstrapSecret={secret}"
+        in output
+    )
 
 
 def test_headless_detection_is_linux_display_aware(monkeypatch) -> None:

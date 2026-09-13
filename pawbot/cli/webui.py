@@ -104,6 +104,16 @@ def webui(
         help="Run the Vite development server with live frontend updates",
     ),
     no_open: bool = typer.Option(False, "--no-open", help="Do not open a browser"),
+    show_access: bool = typer.Option(
+        False,
+        "--show-access",
+        help="Print an authenticated WebUI URL; keep the terminal output private",
+    ),
+    detach: bool = typer.Option(
+        False,
+        "--detach",
+        help="Leave the managed gateway running and return instead of attaching",
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -120,6 +130,8 @@ def webui(
     )
 
     cli_terminal._ensure_interactive_tty_mode()
+    if detach and dev:
+        raise typer.BadParameter("--detach cannot be combined with --dev", param_hint="--detach")
     if remote:
         if host is not None and host.strip() not in {"0.0.0.0", "::"}:
             raise typer.BadParameter(
@@ -227,9 +239,17 @@ def webui(
     else:
         display_url = _webui_access_url(setup_config)
         console.print(f"WebUI: [cyan]{_webui_display_url(display_url)}[/cyan]")
-    _print_webui_access_instructions(setup_config, config_path)
+    _print_webui_access_instructions(
+        setup_config,
+        config_path,
+        reveal_secret=show_access and not headless,
+    )
     if headless:
-        _print_headless_webui_instructions(setup_config, config_path)
+        _print_headless_webui_instructions(
+            setup_config,
+            config_path,
+            reveal_secret=show_access,
+        )
     gateway_health_url = _gateway_health_url(
         runtime_config.gateway.host,
         effective_gateway_port,
@@ -325,6 +345,10 @@ def webui(
                 )
                 if not no_open:
                     _open_webui_browser(webui_url, wait=False)
+                if detach:
+                    lease.mark_persistent()
+                    console.print("[green]Gateway left running in the background.[/green]")
+                    return
                 if runtime.status().running:
                     _attach_to_background_gateway(runtime)
                 else:
@@ -400,6 +424,10 @@ def webui(
 
         if not no_open:
             _open_webui_browser(webui_url)
+        if detach:
+            lease.mark_persistent()
+            console.print("[green]Gateway left running in the background.[/green]")
+            return
         _attach_to_background_gateway(runtime)
     finally:
         lease.release(wait_for_stop=False)

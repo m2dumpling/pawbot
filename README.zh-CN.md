@@ -192,19 +192,23 @@ uv run pawbot webui
 电脑无法直接打开。需要远程访问时显式绑定所有网卡：
 
 ```bash
-pawbot webui --remote --yes --no-open
+pawbot webui --remote --yes --no-open --show-access --detach
 ```
 
-然后在你自己的电脑浏览器打开 `http://<服务器IP>:8765`，并填写服务器配置文件中的
-`channels.websocket.tokenIssueSecret`。只放行 WebUI 端口，默认 `18790` 的
-Gateway health 端口必须保持内网；公网使用前应加 HTTPS/reverse proxy。更
-安全的方式是使用 SSH 隧道：
+命令会生成随机 WebSocket 路径、输出可复制的认证 URL，并让 gateway 在后台运行。
+`--show-access` 输出的 URL 包含 WebUI 密码，只应保留在自己的 SSH 会话中。只放行
+WebUI 端口，默认 `18790` 的 Gateway health 端口必须保持内网；公网使用前应加
+HTTPS/reverse proxy。更安全的方式是保持 localhost 监听并使用 SSH 隧道：
 
 ```bash
+pawbot webui --yes --no-open --detach
 ssh -N -L 8765:127.0.0.1:8765 <用户>@<服务器>
 ```
 
 然后在本地打开 `http://127.0.0.1:8765`。
+
+Debian/Ubuntu VPS 的 IP 直连、域名 HTTPS、systemd、TUI 和 Telegram 完整部署清单，
+请看 [`docs/deploy-linux.zh-CN.md`](docs/deploy-linux.zh-CN.md)。
 
 ### CLI
 

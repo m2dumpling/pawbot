@@ -266,13 +266,23 @@ def webui_bootstrap_secret(config: Config) -> str:
     return str(ws_cfg.get("tokenIssueSecret") or ws_cfg.get("token") or "").strip()
 
 
+def _webui_listener_path(config: Config) -> str:
+    """Return the configured WebSocket path in browser URL form."""
+    ws_cfg = _webui_config_dict(config)
+    path = str(ws_cfg.get("path") or "/").strip()
+    if not path.startswith("/"):
+        path = "/" + path
+    return path.rstrip("/") or "/"
+
+
 def _webui_browser_url(config: Config) -> str:
     from urllib.parse import quote
 
     ws_cfg = _webui_config_dict(config)
     host = _host_for_local_browser(str(ws_cfg.get("host") or "127.0.0.1"))
     port = int(ws_cfg.get("port") or 8765)
-    base_url = f"http://{host}:{port}"
+    path = _webui_listener_path(config)
+    base_url = f"http://{host}:{port}{'' if path == '/' else path}"
     secret = webui_bootstrap_secret(config)
     if not secret:
         return base_url
@@ -292,7 +302,8 @@ def _webui_access_url(config: Config) -> str:
     host = str(ws_cfg.get("host") or "127.0.0.1")
     visible_host = _webui_url_host(host)
     port = int(ws_cfg.get("port") or 8765)
-    base_url = f"http://{visible_host}:{port}"
+    path = _webui_listener_path(config)
+    base_url = f"http://{visible_host}:{port}{'' if path == '/' else path}"
     secret = webui_bootstrap_secret(config)
     if not secret:
         return base_url
@@ -319,19 +330,28 @@ def _webui_url_host(host: str) -> str:
     return normalized
 
 
-def _print_webui_access_instructions(config: Config, config_path: Path) -> None:
+def _print_webui_access_instructions(
+    config: Config,
+    config_path: Path,
+    *,
+    reveal_secret: bool = False,
+) -> None:
     """Explain how to reach a non-loopback WebUI without exposing its secret."""
     ws_cfg = _webui_config_dict(config)
     host = str(ws_cfg.get("host") or "127.0.0.1").strip()
     if is_loopback_host(host):
         return
     port = int(ws_cfg.get("port") or 8765)
-    remote_host = _webui_url_host(host)
+    access_url = _webui_access_url(config)
+    public_url = access_url.split("#", 1)[0]
     console.print()
     console.print("[bold]Remote WebUI access[/bold]")
-    console.print(
-        f"  Open from another machine: [cyan]http://{remote_host}:{port}[/cyan]"
-    )
+    console.print(f"  Open from another machine: [cyan]{public_url}[/cyan]")
+    if reveal_secret:
+        console.print(
+            "  Quick access URL (contains the WebUI password; keep it private): "
+            f"[cyan]{_webui_access_url(config)}[/cyan]"
+        )
     console.print(
         "  Authentication: enter [cyan]channels.websocket.tokenIssueSecret[/cyan] "
         f"from [cyan]{escape(str(config_path))}[/cyan] in the WebUI."
@@ -347,7 +367,12 @@ def _print_webui_access_instructions(config: Config, config_path: Path) -> None:
     )
 
 
-def _print_headless_webui_instructions(config: Config, config_path: Path) -> None:
+def _print_headless_webui_instructions(
+    config: Config,
+    config_path: Path,
+    *,
+    reveal_secret: bool = False,
+) -> None:
     """Explain the two safe ways to use WebUI when the server has no GUI."""
     ws_cfg = _webui_config_dict(config)
     host = str(ws_cfg.get("host") or "127.0.0.1").strip()
@@ -367,8 +392,14 @@ def _print_headless_webui_instructions(config: Config, config_path: Path) -> Non
             "[cyan]pawbot webui --remote --yes --no-open[/cyan]"
         )
     else:
+        public_url = _webui_access_url(config).split("#", 1)[0]
         console.print(
-            f"  Open from your own computer: [cyan]http://{_webui_url_host(host)}:{port}[/cyan]"
+            f"  Open from your own computer: [cyan]{public_url}[/cyan]"
+        )
+    if reveal_secret:
+        console.print(
+            "  Quick access URL (contains the WebUI password; keep it private): "
+            f"[cyan]{_webui_access_url(config)}[/cyan]"
         )
     console.print(
         "  Authentication: enter [cyan]channels.websocket.tokenIssueSecret[/cyan] "
@@ -398,13 +429,20 @@ def _ensure_local_webui_channel(
     needs_port = port is not None and model.port != port
     needs_host = requested_host is not None and model.host != requested_host
     needs_secret = not model.token_issue_secret.strip() and not model.token.strip()
-    if not needs_enable and not needs_port and not needs_host and not needs_secret:
-        return False, False
 
     target_port = port if port is not None else model.port
     target_host = requested_host if requested_host is not None else model.host
-    console.print()
     is_remote = not is_loopback_host(target_host)
+    needs_path = bool(
+        is_remote
+        and requested_host is not None
+        and model.path == "/"
+        and not model.public_ws_url
+    )
+    if not needs_enable and not needs_port and not needs_host and not needs_secret and not needs_path:
+        return False, False
+
+    console.print()
     console.print("[bold]WebUI setup[/bold]")
     if is_remote:
         console.print(
@@ -414,7 +452,13 @@ def _ensure_local_webui_channel(
     else:
         console.print(f"  URL: [cyan]http://127.0.0.1:{target_port}[/cyan]")
         console.print("  Bind: [cyan]127.0.0.1 only[/cyan] (not exposed to your LAN)")
-    console.print("  Auth: generated WebUI bootstrap secret stored in config")
+    if needs_path:
+        console.print("  Path: random WebSocket endpoint will be generated for remote access")
+    console.print(
+        "  Auth: generated WebUI bootstrap secret stored in config"
+        if needs_secret
+        else "  Auth: existing WebUI bootstrap secret will be retained"
+    )
     if not is_remote:
         console.print("  Remote access requires an explicit --host plus WebUI authentication.")
     _confirm_webui_action("Update the WebUI channel in this config?", yes=yes)
@@ -437,6 +481,11 @@ def _ensure_local_webui_channel(
         model.token_issue_secret = secrets.token_urlsafe(32)
         changed = True
         generated_secret = True
+    if needs_path:
+        import secrets
+
+        model.path = f"/pawbot-{secrets.token_urlsafe(18)}"
+        changed = True
 
     setattr(config.channels, "websocket", model.model_dump(by_alias=True, exclude_none=True))
     return changed, generated_secret
