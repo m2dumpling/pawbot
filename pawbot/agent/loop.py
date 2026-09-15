@@ -24,9 +24,10 @@ from pawbot.agent.automation_turns import publish_next_deferred_turn
 from pawbot.agent.budget import TurnBudget
 from pawbot.agent.context import ContextBuilder, PersistedPromptContextResolver
 from pawbot.agent.cron_turns import CronTurnCoordinator
-from pawbot.agent.hook import AgentHook, AgentTurnHookFactory
+from pawbot.agent.hook import AgentHook, AgentTurnHookFactory, CompositeHook
 from pawbot.agent.memory import Consolidator
 from pawbot.agent.model_runtime import ModelRuntimeResolver
+from pawbot.agent.observability import TraceRun, TraceStore, redact_text
 from pawbot.agent.runner import (
     _MAX_INJECTIONS_PER_TURN,
     AgentRunner,
@@ -235,9 +236,12 @@ class AgentLoop(TurnStagesMixin):
         idle_compact_check_interval_seconds: int = 0,
         recovery_admission: RecoveryAdmission | None = None,
         blackbox: Any | None = None,
+        trace_store: TraceStore | None = None,
     ):
-        from pawbot.config.schema import ToolsConfig
+        from pawbot.config.schema import ToolsConfig, _resolve_tool_config_refs
 
+        if not bool(getattr(ToolsConfig, "__pydantic_complete__", True)):
+            _resolve_tool_config_refs()
         _tc = tools_config or ToolsConfig()
         defaults = AgentDefaults()
         self.bus = bus
@@ -321,6 +325,8 @@ class AgentLoop(TurnStagesMixin):
         self.cron_service = cron_service
         self.local_trigger_store = local_trigger_store
         self.blackbox = blackbox  # Record & Replay controller (ADR-004)
+        self._blackbox_policy_active = False
+        self.trace_store = trace_store
         self.restrict_to_workspace = restrict_to_workspace
         self.workspace_scopes = WorkspaceScopeResolver(
             default_workspace=workspace,
@@ -338,7 +344,12 @@ class AgentLoop(TurnStagesMixin):
         # SessionManager owns every durable deletion entrypoint, including the
         # WebUI and fork rollback paths.  Observe that boundary once instead of
         # duplicating cleanup in each consumer.
-        self.sessions.set_delete_observer(self._file_state_store.discard)
+        def _on_session_deleted(key: str) -> None:
+            self._file_state_store.discard(key)
+            if self.trace_store is not None:
+                self.trace_store.delete_session(key)
+
+        self.sessions.set_delete_observer(_on_session_deleted)
         self.tools = tool_registry if tool_registry is not None else ToolRegistry()
         self._exec_session_manager = ExecSessionManager()
         self.runner = AgentRunner()
@@ -432,6 +443,7 @@ class AgentLoop(TurnStagesMixin):
         allowing callers to override or extend the standard config-derived
         parameters (e.g. ``cron_service``, ``session_manager``).
         """
+        from pawbot.config.paths import get_data_dir
         from pawbot.providers.factory import make_provider
 
         if bus is None:
@@ -442,6 +454,41 @@ class AgentLoop(TurnStagesMixin):
             extra["session_manager"] = SessionManager(
                 config.workspace_path,
                 sessions_root=data_dir / "sessions" if data_dir is not None else None,
+            )
+        if "trace_store" not in extra:
+            from pawbot.bus.events import OutboundMessage
+            from pawbot.bus.outbound_events import TraceEvent
+
+            data_dir = config.runtime_data_dir or get_data_dir()
+            websocket_config = getattr(config.channels, "websocket", None)
+            websocket_enabled = (
+                bool(cast(Mapping[str, Any], websocket_config).get("enabled"))
+                if isinstance(websocket_config, Mapping)
+                else bool(getattr(websocket_config, "enabled", False))
+            )
+
+            def _publish_trace_event(payload: dict[str, Any]) -> None:
+                if not websocket_enabled or payload.get("channel") != "websocket":
+                    return
+                chat_id = payload.get("chat_id")
+                if not isinstance(chat_id, str) or not chat_id:
+                    return
+                bus.outbound.put_nowait(
+                    OutboundMessage(
+                        channel="websocket",
+                        chat_id=chat_id,
+                        content="",
+                        event=TraceEvent(payload=payload),
+                    )
+                )
+
+            extra["trace_store"] = TraceStore(
+                data_dir / "traces",
+                enabled=config.observability.enabled,
+                retention_days=config.observability.retention_days,
+                max_traces=config.observability.max_traces,
+                max_bytes=config.observability.max_bytes,
+                event_callback=_publish_trace_event,
             )
         provider = extra.pop("provider", None) or make_provider(config)
         resolved = config.resolve_preset()
@@ -1104,6 +1151,7 @@ class AgentLoop(TurnStagesMixin):
         tools: ToolRegistry | None = None,
         request_context: RequestContext | None = None,
         provider_state: ProviderConversationState | None = None,
+        trace: TraceRun | None = None,
     ) -> AgentRunResult:
         """Run the agent iteration loop.
 
@@ -1131,6 +1179,16 @@ class AgentLoop(TurnStagesMixin):
                     self._PROVIDER_STATE_CHECKPOINT_VERSION
                 )
             self._set_runtime_checkpoint(session, public_payload)
+            if trace is not None:
+                trace.emit(
+                    "checkpoint.saved",
+                    status="completed",
+                    phase=payload.get("phase"),
+                    iteration=payload.get("iteration"),
+                    pending_tool_count=len(payload.get("pending_tool_calls") or []),
+                    completed_tool_count=len(payload.get("completed_tool_results") or []),
+                    provider_state_saved=private_state is not None,
+                )
 
         async def _drain_pending(
             *,
@@ -1273,6 +1331,9 @@ class AgentLoop(TurnStagesMixin):
                 request_ctx,
                 workspace=effective_scope.project_path,
             )
+        recording_turn_id = request_ctx.turn_id or (
+            f"{active_session_key or request_ctx.chat_id}:{time.time_ns()}"
+        )
         effective_tools = tools or self.tools
         file_state_token = bind_file_states(self._file_state_store.for_session(active_session_key))
         request_token = bind_request_context(request_ctx)
@@ -1294,13 +1355,13 @@ class AgentLoop(TurnStagesMixin):
         # ADR-004: Record & Replay blackbox — enter the vcr/tool rails and
         # attach the recorder hook when --record is active.
         blackbox_scope = (
-            self.blackbox.turn_scope(request_ctx.turn_id)
+            self.blackbox.turn_scope(recording_turn_id)
             if self.blackbox is not None
             else None
         )
         blackbox_hook = (
             self.blackbox.turn_hook(
-                request_ctx.turn_id,
+                recording_turn_id,
                 initial_messages,
                 session_key=active_session_key,
                 model=runtime.model,
@@ -1309,11 +1370,26 @@ class AgentLoop(TurnStagesMixin):
             if self.blackbox is not None
             else None
         )
+        trace_hook = (
+            trace.hook(
+                initial_messages=initial_messages,
+                tools_count=len(effective_tools.get_definitions()),
+            )
+            if trace is not None
+            else None
+        )
+        if trace is not None:
+            trace.set_runtime(
+                provider=getattr(runtime.provider, "provider_name", None),
+                model=runtime.model,
+            )
         if self.blackbox is not None:
             self.blackbox.write_meta(session_key=active_session_key, model=runtime.model)
         turn_hooks = list(hooks or [])
         if blackbox_hook is not None:
             turn_hooks.append(blackbox_hook)
+        if trace_hook is not None:
+            turn_hooks.append(trace_hook)
         try:
             for scope in turn_scopes or ():
                 turn_scope_stack.enter_context(scope)
@@ -1761,6 +1837,55 @@ class AgentLoop(TurnStagesMixin):
         self._running = False
         logger.info("Agent loop stopping")
 
+    def start_detailed_recording(self, name: str) -> Path:
+        """Enable shared detailed recording for all subsequent sessions."""
+        from pawbot.agent.blackbox import BlackboxController, write_recording_policy
+
+        directory = write_recording_policy(self.workspace, name)
+        self.blackbox = BlackboxController(str(directory))
+        self._blackbox_policy_active = True
+        return directory
+
+    def stop_detailed_recording(self) -> None:
+        """Disable shared detailed recording while keeping existing samples."""
+        from pawbot.agent.blackbox import clear_recording_policy
+
+        clear_recording_policy(self.workspace)
+        if self._blackbox_policy_active:
+            self.blackbox = None
+            self._blackbox_policy_active = False
+
+    def sync_recording_policy(self) -> None:
+        """Apply a recording switch written by a separate CLI/WebUI process."""
+        from pawbot.agent.blackbox import (
+            BlackboxController,
+            read_recording_policy,
+        )
+
+        workspace_value: Any = self.workspace
+        if isinstance(workspace_value, Path):
+            workspace = workspace_value
+        elif isinstance(workspace_value, str):
+            workspace = Path(workspace_value)
+        else:
+            # Keep lightweight embedders and test doubles that do not expose a
+            # filesystem workspace compatible with the normal message path.
+            return
+        directory = read_recording_policy(workspace)
+        if directory is None:
+            if self._blackbox_policy_active:
+                self.blackbox = None
+                self._blackbox_policy_active = False
+            return
+        if not self._blackbox_policy_active and self.blackbox is not None:
+            # ``--record DIR`` is a process-local explicit recording request.
+            # Do not overwrite it merely because an old policy file exists.
+            return
+        current = getattr(self.blackbox, "directory", None)
+        if not isinstance(current, Path) or current.resolve() != directory:
+            self.blackbox = BlackboxController(str(directory))
+        self._blackbox_policy_active = True
+
     async def _process_message(
         self,
         msg: InboundMessage,
@@ -1780,6 +1905,7 @@ class AgentLoop(TurnStagesMixin):
         attributes: Mapping[str, Any] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
+        self.sync_recording_policy()
         kind = TurnKind.USER if msg.is_user_input else TurnKind.SYSTEM
         if kind is TurnKind.SYSTEM:
             destination = (
@@ -1827,6 +1953,26 @@ class AgentLoop(TurnStagesMixin):
             tools=tools,
             attributes=dict(attributes or {}),
         )
+        if self.trace_store is not None:
+            recording_directory = None
+            if getattr(self.blackbox, "mode", None) == "record":
+                candidate = getattr(self.blackbox, "directory", None)
+                if isinstance(candidate, Path):
+                    recording_directory = candidate
+            provider_name = (
+                getattr(getattr(runtime, "provider", None), "provider_name", None)
+                if runtime is not None
+                else None
+            )
+            ctx.trace = self.trace_store.start_turn(
+                session_key=key,
+                turn_id=ctx.turn_id,
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                model=runtime.model if runtime is not None else None,
+                provider=provider_name,
+                recording_directory=recording_directory,
+            )
         # A streaming callback may be present even when the final text comes from a
         # non-streaming recovery. Only the last completed segment can suppress the
         # regular outbound message.
@@ -1871,15 +2017,37 @@ class AgentLoop(TurnStagesMixin):
             ctx.on_stream = _tracked_stream
             ctx.on_stream_end = _tracked_stream_end
 
-        await self._run_turn_stage(ctx, "restore", self._restore_turn)
-        await self._run_turn_stage(ctx, "compact", self._compact_session)
-        if await self._run_turn_stage(ctx, "command", self._dispatch_command):
+        try:
+            await self._run_turn_stage(ctx, "restore", self._restore_turn)
+            await self._run_turn_stage(ctx, "compact", self._compact_session)
+            if await self._run_turn_stage(ctx, "command", self._dispatch_command):
+                return ctx.outbound
+            await self._run_turn_stage(ctx, "build", self._build_turn)
+            await self._run_turn_stage(ctx, "run", self._run_turn)
+            await self._run_turn_stage(ctx, "save", self._persist_turn)
+            await self._run_turn_stage(ctx, "respond", self._prepare_outbound)
             return ctx.outbound
-        await self._run_turn_stage(ctx, "build", self._build_turn)
-        await self._run_turn_stage(ctx, "run", self._run_turn)
-        await self._run_turn_stage(ctx, "save", self._persist_turn)
-        await self._run_turn_stage(ctx, "respond", self._prepare_outbound)
-        return ctx.outbound
+        except asyncio.CancelledError:
+            if ctx.trace is not None:
+                ctx.trace.finish(
+                    status="cancelled",
+                    stop_reason=ctx.stop_reason or "cancelled",
+                )
+            raise
+        except Exception as exc:
+            if ctx.trace is not None:
+                ctx.trace.finish(
+                    status="error",
+                    stop_reason=ctx.stop_reason or "error",
+                    error=exc,
+                )
+            raise
+        finally:
+            if ctx.trace is not None and not ctx.trace.closed:
+                ctx.trace.finish(
+                    status="completed",
+                    stop_reason=ctx.stop_reason or "completed",
+                )
 
     async def _run_turn_stage(
         self,
@@ -1888,9 +2056,21 @@ class AgentLoop(TurnStagesMixin):
         handler: Callable[[TurnContext], Awaitable[_T]],
     ) -> _T:
         started_at = time.perf_counter()
+        if ctx.trace is not None:
+            ctx.trace.emit("stage.started", status="running", stage=name)
         try:
             result = await handler(ctx)
-        except Exception:
+        except asyncio.CancelledError:
+            duration_ms = (time.perf_counter() - started_at) * 1000
+            if ctx.trace is not None:
+                ctx.trace.emit(
+                    "stage.cancelled",
+                    status="cancelled",
+                    stage=name,
+                    duration_ms=duration_ms,
+                )
+            raise
+        except Exception as exc:
             duration_ms = (time.perf_counter() - started_at) * 1000
             logger.debug(
                 "[turn {}] Stage {} failed after {:.1f}ms",
@@ -1898,6 +2078,19 @@ class AgentLoop(TurnStagesMixin):
                 name,
                 duration_ms,
             )
+            if ctx.trace is not None:
+                ctx.trace.emit(
+                    "stage.failed",
+                    status="error",
+                    stage=name,
+                    duration_ms=duration_ms,
+                    error={
+                        "type": type(exc).__name__,
+                        "code": type(exc).__name__.upper(),
+                        "message": redact_text(exc),
+                        "retryable": False,
+                    },
+                )
             raise
         duration_ms = (time.perf_counter() - started_at) * 1000
         logger.debug(
@@ -1906,6 +2099,13 @@ class AgentLoop(TurnStagesMixin):
             name,
             duration_ms,
         )
+        if ctx.trace is not None:
+            ctx.trace.emit(
+                "stage.completed",
+                status="completed",
+                stage=name,
+                duration_ms=duration_ms,
+            )
         return result
 
     def _assemble_outbound(
@@ -2144,20 +2344,44 @@ class AgentLoop(TurnStagesMixin):
         the tool rail short-circuits every call by stable key (no side
         effects). Exit semantics: ok=True ⇔ structural diff is empty.
         """
-        from pawbot.agent.blackbox import ReplayBreakpoint, ReplayProvider, compare_messages
+        from pawbot.agent.blackbox import (
+            ReplayBreakpoint,
+            ReplayProvider,
+            compare_messages,
+            compare_trace_events,
+        )
+        from pawbot.agent.blackbox.replayer import ReplayTraceWriter
+        from pawbot.agent.observability import TraceRun
 
         results: list[tuple[str, bool, list[str]]] = []
         benchmark_rows: list[dict[str, Any]] = []
+        replay_details: list[dict[str, Any]] = []
         runtime = self.llm_runtime()
         for turn in controller.turns:
             replay_started_at = time.perf_counter()
             probe = controller.probe_hook(turn)
+            trace_writer = ReplayTraceWriter()
             replay_provider = ReplayProvider(runtime.provider, controller.store, turn.turn_id)
             replay_runtime = LLMRuntime.capture(
                 cast(LLMProvider, replay_provider),
                 turn.model or runtime.model,
                 context_window_tokens=runtime.context_window_tokens,
             )
+            replay_trace = TraceRun(
+                writer=trace_writer,
+                trace_id=f"replay:{turn.turn_id}",
+                session_key=turn.session_key,
+                turn_id=turn.turn_id,
+                channel="replay",
+                chat_id="replay",
+                model=turn.model or runtime.model,
+                provider=getattr(runtime.provider, "provider_name", None),
+            )
+            replay_trace_hook = replay_trace.hook(
+                initial_messages=turn.initial_messages,
+                tools_count=len(self.tools.get_definitions()),
+            )
+            replay_hook = CompositeHook([replay_trace_hook, probe])
             try:
                 with controller.turn_scope(turn):
                     result = await self.runner.run(AgentRunSpec(
@@ -2176,7 +2400,7 @@ class AgentLoop(TurnStagesMixin):
                             output_cost_per_million_usd=self.output_cost_per_million_usd,
                         ),
                         max_tool_result_chars=self.max_tool_result_chars,
-                        hook=probe,
+                        hook=replay_hook,
                         concurrent_tools=True,
                         workspace=self.workspace,
                         session_key=turn.session_key,
@@ -2186,6 +2410,7 @@ class AgentLoop(TurnStagesMixin):
                         finalize_on_max_iterations=True,
                     ))
             except ReplayBreakpoint as bp:
+                replay_trace.finish(status="cancelled", stop_reason="breakpoint")
                 # Capture the dumped messages so WebUI callers can render them
                 # instead of surfacing a bare exception.
                 controller.last_breakpoint = {
@@ -2194,17 +2419,75 @@ class AgentLoop(TurnStagesMixin):
                     "messages": list(probe.messages),
                 }
                 raise
-            diffs = compare_messages(result.messages, turn.final_messages)
-            results.append((turn.turn_id, not diffs, diffs))
+            except Exception as exc:
+                replay_trace.finish(status="error", stop_reason="error", error=exc)
+                raise
+            else:
+                replay_trace.finish(
+                    status="error" if result.error else "completed",
+                    stop_reason=result.stop_reason,
+                    error=result.error,
+                )
+            message_diffs = compare_messages(result.messages, turn.final_messages)
+            trace_loader = getattr(controller, "trace_events", None)
+            raw_recorded_trace_events: Any = (
+                trace_loader(turn.turn_id) if callable(trace_loader) else []
+            )
+            recorded_trace_events = (
+                [
+                    cast(dict[str, Any], event)
+                    for event in cast(list[Any], raw_recorded_trace_events)
+                    if isinstance(event, dict)
+                ]
+                if isinstance(raw_recorded_trace_events, list)
+                else []
+            )
+            trace_diffs = compare_trace_events(trace_writer.events, recorded_trace_events)
+            trace_comparable = bool(recorded_trace_events)
+            diffs = [*message_diffs, *trace_diffs]
+            ok = not message_diffs and (not trace_comparable or not trace_diffs)
+            results.append((turn.turn_id, ok, diffs))
+            elapsed_ms = max(0, int((time.perf_counter() - replay_started_at) * 1000))
             benchmark_rows.append({
                 "turn_id": turn.turn_id,
-                "elapsed_ms": max(0, int((time.perf_counter() - replay_started_at) * 1000)),
+                "elapsed_ms": elapsed_ms,
                 "messages": len(result.messages),
                 "diffs": len(diffs),
+                "message_diffs": len(message_diffs),
+                "trace_diffs": len(trace_diffs),
+                "trace_comparable": trace_comparable,
+                "recorded_trace_events": len(recorded_trace_events),
+                "replayed_trace_events": len(trace_writer.events),
                 "tool_calls": len(result.tool_states),
+            })
+            replay_details.append({
+                "turn_id": turn.turn_id,
+                "message_diffs": list(message_diffs),
+                "trace_diffs": list(trace_diffs),
+                "trace_comparable": trace_comparable,
             })
         if hasattr(controller, "last_benchmark"):
             controller.last_benchmark = benchmark_rows
+        if hasattr(controller, "last_replay_details"):
+            controller.last_replay_details = replay_details
+        elapsed_values = [int(row["elapsed_ms"]) for row in benchmark_rows]
+        trace_comparable_turns = sum(
+            1 for row in benchmark_rows if row["trace_comparable"]
+        )
+        trace_diff_turns = sum(1 for row in benchmark_rows if row["trace_diffs"] > 0)
+        if hasattr(controller, "last_benchmark_summary"):
+            total_elapsed_ms = sum(elapsed_values)
+            controller.last_benchmark_summary = {
+                "turns": len(benchmark_rows),
+                "total_elapsed_ms": total_elapsed_ms,
+                "average_elapsed_ms": (
+                    round(total_elapsed_ms / len(elapsed_values), 1) if elapsed_values else 0
+                ),
+                "fastest_elapsed_ms": min(elapsed_values, default=0),
+                "slowest_elapsed_ms": max(elapsed_values, default=0),
+                "trace_comparable_turns": trace_comparable_turns,
+                "trace_diff_turns": trace_diff_turns,
+            }
         return results
 
     async def process_direct(

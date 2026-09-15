@@ -3,8 +3,10 @@
 # pyright: reportConstantRedefinition=false, reportMissingTypeStubs=false, reportPrivateUsage=false, reportUnusedFunction=false, reportUnusedImport=false
 
 import asyncio
+import json
 import os
 import sys
+import time
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
@@ -490,6 +492,239 @@ app.add_typer(
 
 
 app.command(name="agent")(agent)
+
+
+# ============================================================================
+# Execution Trace Commands
+# ============================================================================
+
+
+trace_app = typer.Typer(help="Inspect automatic live execution records")
+app.add_typer(trace_app, name="trace")
+
+
+def _cli_trace_store(
+    config: str | None,
+    workspace: str | None,
+) -> tuple[Any, Config]:
+    from pawbot.agent.observability import TraceStore
+
+    config_path, loaded = _load_inspection_config(config=config, workspace=workspace)
+    return TraceStore(config_path.parent / "traces"), loaded
+
+
+def _format_trace_duration(value: Any) -> str:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "running"
+    milliseconds = max(0, int(value))
+    return f"{milliseconds}ms" if milliseconds < 1_000 else f"{milliseconds / 1000:.1f}s"
+
+
+@trace_app.command("list")
+def trace_list(
+    trace_filter: str = typer.Option("all", "--filter", help="all, errors, or slow"),
+    session: str | None = typer.Option(None, "--session", help="Only show one session key"),
+    limit: int = typer.Option(50, "--limit", min=1, max=100, help="Maximum traces to show"),
+    json_output: bool = typer.Option(False, "--json", help="Print JSON instead of a table"),
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+) -> None:
+    """List recent lightweight traces."""
+    store, _ = _cli_trace_store(config, workspace)
+    normalized_filter = trace_filter.strip().lower()
+    if normalized_filter not in {"all", "errors", "slow"}:
+        console.print("[red]--filter must be all, errors, or slow[/red]")
+        raise typer.Exit(2)
+    rows = store.list_summaries(
+        limit=limit,
+        session_key=session,
+        issues_only=normalized_filter == "errors",
+        slow_only=normalized_filter == "slow",
+    )
+    if json_output:
+        console.print_json(json.dumps(rows, ensure_ascii=False))
+        return
+    table = Table(title="Agent Execution Traces")
+    table.add_column("Trace", style="cyan", no_wrap=True)
+    table.add_column("Session", style="dim")
+    table.add_column("Status")
+    table.add_column("Duration", justify="right")
+    table.add_column("Events", justify="right")
+    table.add_column("Tools", justify="right")
+    table.add_column("Tool errors", justify="right")
+    table.add_column("Model errors", justify="right")
+    table.add_column("Uncertain", justify="right")
+    for row in rows:
+        duration_text = _format_trace_duration(row.get("duration_ms"))
+        table.add_row(
+            escape(str(row.get("id") or row.get("trace_id") or "unknown")),
+            escape(str(row.get("session_key") or "-")),
+            escape(str(row.get("status") or "unknown")),
+            duration_text,
+            str(row.get("event_count") or 0),
+            str(row.get("tool_count") or 0),
+            str(row.get("tool_failure_count") or 0),
+            str(row.get("provider_error_count") or 0),
+            str(row.get("unknown_side_effect_count") or 0),
+        )
+    console.print(table)
+    console.print(f"[dim]Trace directory: {escape(str(store.root))}[/dim]")
+
+
+@trace_app.command("show")
+def trace_show(
+    identifier: str = typer.Argument(..., help="Trace ID from `pawbot trace list`"),
+    raw: bool = typer.Option(False, "--raw", help="Print the complete JSON event stream"),
+    errors_only: bool = typer.Option(False, "--errors", help="Only print failed events"),
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+) -> None:
+    """Show one trace's ordered events."""
+    store, _ = _cli_trace_store(config, workspace)
+    try:
+        summary, events = store.detail(identifier)
+    except FileNotFoundError:
+        console.print(f"[red]Trace not found:[/red] {escape(identifier)}")
+        raise typer.Exit(1) from None
+    except ValueError as exc:
+        console.print(f"[red]Could not inspect trace:[/red] {escape(str(exc))}")
+        raise typer.Exit(1) from exc
+    if errors_only:
+        events = [
+            event
+            for event in events
+            if str(event.get("status") or "").lower()
+            in {"error", "failed", "blocked", "cancelled", "incomplete", "unknown_side_effect"}
+        ]
+    if raw:
+        console.print_json(
+            json.dumps({"summary": summary, "events": events}, ensure_ascii=False)
+        )
+        return
+    console.print(f"[bold]Trace[/bold] {escape(str(summary.get('trace_id') or identifier))}")
+    console.print(f"Session: {escape(str(summary.get('session_key') or '-'))}")
+    console.print(
+        f"Status: {escape(str(summary.get('status') or 'unknown'))} · "
+        f"Duration: {_format_trace_duration(summary.get('duration_ms'))} · "
+        f"Events: {len(events)}"
+    )
+    console.print(
+        "Errors: "
+        f"tool={int(summary.get('tool_failure_count') or 0)} · "
+        f"model={int(summary.get('provider_error_count') or 0)} · "
+        f"uncertain={int(summary.get('unknown_side_effect_count') or 0)}"
+    )
+    for event in events:
+        name = str(event.get("event") or "event")
+        status = str(event.get("status") or "")
+        duration = event.get("duration_ms")
+        duration_text = (
+            f" · {_format_trace_duration(duration)}"
+            if isinstance(duration, (int, float)) and not isinstance(duration, bool)
+            else ""
+        )
+        tool = event.get("tool_name")
+        tool_text = f" · {tool}" if isinstance(tool, str) and tool else ""
+        style = "red" if status in {"error", "failed"} else "yellow" if status in {"blocked", "incomplete"} or "unknown" in status or "cancel" in status else "green"
+        console.print(f"[{style}]•[/{style}] {escape(name)}{escape(tool_text)}{duration_text} {escape(status)}")
+
+
+record_app = typer.Typer(help="Save and inspect Agent regression samples")
+app.add_typer(record_app, name="record")
+
+
+@record_app.command("status")
+def record_status(
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+) -> None:
+    """Show whether regression-sample capture is armed for the workspace."""
+    from pawbot.agent.blackbox import read_recording_policy
+
+    _, loaded = _load_inspection_config(config=config, workspace=workspace)
+    directory = read_recording_policy(loaded.workspace_path)
+    if directory is None:
+        console.print("Regression sample capture: [dim]off[/dim]")
+        console.print("[dim]Automatic live execution records remain enabled for new turns.[/dim]")
+        return
+    console.print(f"Regression sample capture: [green]armed[/green] ({escape(directory.name)})")
+    console.print(
+        "[dim]A running gateway will pick this up before its next turn; "
+        "existing samples are not changed.[/dim]"
+    )
+
+
+@record_app.command("start")
+def record_start(
+    name: str = typer.Option("session", "--name", "--session", help="Sample name"),
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+) -> None:
+    """Start a regression sample that captures every subsequent session."""
+    from pawbot.agent.blackbox import read_recording_policy, write_recording_policy
+
+    _, loaded = _load_inspection_config(config=config, workspace=workspace)
+    current = read_recording_policy(loaded.workspace_path)
+    if current is not None:
+        console.print(f"[yellow]Regression sample capture is already armed:[/yellow] {escape(current.name)}")
+        console.print("[dim]Run `pawbot record stop` before starting another sample.[/dim]")
+        raise typer.Exit(2)
+    requested_name = name.strip() or f"session-{int(time.time() * 1000)}"
+    directory = write_recording_policy(loaded.workspace_path, requested_name)
+    console.print(f"Regression sample capture started: [green]{escape(directory.name)}[/green]")
+    console.print(
+        "[dim]The running gateway will capture every subsequent session. "
+        "Stop it with `pawbot record stop`.[/dim]"
+    )
+
+
+@record_app.command("stop")
+def record_stop(
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+) -> None:
+    """Stop regression-sample capture without deleting saved samples."""
+    from pawbot.agent.blackbox import clear_recording_policy, read_recording_policy
+
+    _, loaded = _load_inspection_config(config=config, workspace=workspace)
+    current = read_recording_policy(loaded.workspace_path)
+    clear_recording_policy(loaded.workspace_path)
+    if current is None:
+        console.print("Regression sample capture was already off.")
+    else:
+        console.print(f"Regression sample capture stopped: [green]{escape(current.name)}[/green]")
+        console.print("[dim]The saved sample was kept.[/dim]")
+
+
+@record_app.command("list")
+def record_list(
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+) -> None:
+    """List regression samples saved under the workspace."""
+    from pawbot.webui.blackbox_api import _recording_summary
+
+    _, loaded = _load_inspection_config(config=config, workspace=workspace)
+    root = loaded.workspace_path / "blackbox"
+    table = Table(title="Agent Regression Samples")
+    table.add_column("Sample", style="cyan")
+    table.add_column("Status")
+    table.add_column("Turns", justify="right")
+    table.add_column("Trace events", justify="right")
+    if root.exists():
+        for directory in sorted(path for path in root.iterdir() if path.is_dir()):
+            summary = _recording_summary(directory)
+            status = str(summary.get("status") or "invalid")
+            status_text = "[green]ready[/green]" if status == "ready" else "[yellow]invalid[/yellow]"
+            table.add_row(
+                escape(directory.name),
+                status_text,
+                str(summary.get("turns") or 0),
+                str(summary.get("trace_events") or 0),
+            )
+    console.print(table)
+    console.print(f"[dim]Sample directory: {escape(str(root))}[/dim]")
+    console.print("[dim]Use `pawbot replay <sample>` for offline validation, or `/record` in a running gateway.[/dim]")
 
 
 # ============================================================================

@@ -347,13 +347,35 @@ class ManagedProcessRuntime(Generic[_StartOptionsT]):
         # not an individual process, and can interrupt the caller when a
         # detached/no-window child has no addressable console group.  Keep
         # termination scoped to the recorded PID tree instead.
+        owned_process = self._owned_process
+        owned_pid = getattr(owned_process, "pid", None)
+        owned_pid_int = owned_pid if isinstance(owned_pid, int) else None
+        has_distinct_owned_process = (
+            owned_pid_int is not None and owned_pid_int > 0 and owned_pid_int != pid
+        )
+
+        if has_distinct_owned_process:
+            terminate = getattr(owned_process, "terminate", None)
+            if callable(terminate):
+                with suppress(OSError):
+                    terminate()
+
+        def _wait_for_tree(timeout: int | float) -> bool:
+            if not self._wait_for_exit(pid, timeout):
+                return False
+            if not has_distinct_owned_process:
+                return True
+            if owned_pid_int is None:
+                return False
+            return self._wait_for_exit(owned_pid_int, min(float(timeout), 2.0))
+
         self._subprocess_run(
             ["taskkill", "/PID", str(pid), "/T"],
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        if self._wait_for_exit(pid, timeout_s):
+        if _wait_for_tree(timeout_s):
             return True
         self._subprocess_run(
             ["taskkill", "/PID", str(pid), "/T", "/F"],
@@ -361,7 +383,12 @@ class ManagedProcessRuntime(Generic[_StartOptionsT]):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        return self._wait_for_exit(pid, 2)
+        if has_distinct_owned_process:
+            kill = getattr(owned_process, "kill", None)
+            if callable(kill):
+                with suppress(OSError):
+                    kill()
+        return _wait_for_tree(2)
 
     def _wait_for_exit(self, pid: int, timeout_s: int | float) -> bool:
         deadline = time.monotonic() + max(float(timeout_s), 0.0)

@@ -16,7 +16,9 @@ Turn envelopes (initial messages, final messages, stop reason) are written to
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
 _TOOL_JSONL = "tools.jsonl"
 _TURNS_JSONL = "turns.jsonl"
 _META_JSON = "meta.json"
+_RECORDING_POLICY_JSON = ".recording.json"
 _BLACKBOX_SCHEMA_VERSION = 2
 
 
@@ -76,6 +79,62 @@ def _safe_vcr_import() -> Any | None:
 
 def _sanitize_turn_name(turn_id: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in turn_id)
+
+
+def _recording_root(workspace: Path) -> Path:
+    return (workspace / "blackbox").resolve()
+
+
+def recording_policy_path(workspace: Path) -> Path:
+    """Return the cross-process detailed-recording policy path."""
+    return _recording_root(workspace) / _RECORDING_POLICY_JSON
+
+
+def read_recording_policy(workspace: Path) -> Path | None:
+    """Read the active recording directory, if another client enabled it."""
+    path = recording_policy_path(workspace)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    payload_mapping = cast(dict[str, Any], payload)
+    name = payload_mapping.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    root = _recording_root(workspace)
+    directory = (root / name).resolve()
+    if directory == root or root not in directory.parents:
+        return None
+    return directory
+
+
+def write_recording_policy(workspace: Path, name: str) -> Path:
+    """Atomically enable detailed recording for every subsequent turn."""
+    root = _recording_root(workspace)
+    root.mkdir(parents=True, exist_ok=True)
+    safe_name = _sanitize_turn_name(name).strip("._") or f"session-{int(time.time() * 1000)}"
+    directory = (root / safe_name).resolve()
+    if directory == root or root not in directory.parents:
+        raise ValueError("recording name must stay within workspace/blackbox")
+    policy = recording_policy_path(workspace)
+    temporary = policy.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps({
+            "schema_version": _BLACKBOX_SCHEMA_VERSION,
+            "name": safe_name,
+            "started_at_ms": int(time.time() * 1000),
+        }, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, policy)
+    return directory
+
+
+def clear_recording_policy(workspace: Path) -> None:
+    """Disable cross-process detailed recording without deleting its samples."""
+    recording_policy_path(workspace).unlink(missing_ok=True)
 
 
 def _json_safe(value: Any) -> Any:
@@ -238,6 +297,11 @@ class TurnRecorder(AgentHook):
             },
         })
 
+        states_by_call_id = {
+            str(state.get("call_id")): state
+            for state in context.tool_states
+            if state.get("call_id")
+        }
         for index, (tool_call, result) in enumerate(
             zip(context.tool_calls, context.tool_results, strict=False),
         ):
@@ -263,9 +327,10 @@ class TurnRecorder(AgentHook):
                 "status": str(event.get("status") or "ok"),
                 "detail": event.get("detail", ""),
                 "execution": _json_safe(
-                    context.tool_states[index]
-                    if index < len(context.tool_states)
-                    else {"state": "succeeded"},
+                    states_by_call_id.get(
+                        str(tool_call.id),
+                        {"state": "succeeded"},
+                    ),
                 ),
                 "result": _json_safe(result),
             })

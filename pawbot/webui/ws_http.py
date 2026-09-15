@@ -196,6 +196,8 @@ _WEBUI_MUTATION_PATHS = {
     "blackbox.delete": "/api/blackbox/delete",
     "blackbox.replay": "/api/blackbox/replay",
     "blackbox.tokens": "/api/blackbox/tokens",
+    "trace.list": "/api/trace/list",
+    "trace.detail": "/api/trace/detail",
 }
 
 _WEBUI_CHANNEL_CONNECT_ACTIONS = {
@@ -477,6 +479,8 @@ class GatewayHTTPHandler:
         if path in {"/api/webui/recovery/continue", "/api/webui/recovery/dismiss"}:
             return True
         if re.match(r"^/api/blackbox/(status|start|stop|list|detail|delete|replay|tokens)$", path):
+            return True
+        if re.match(r"^/api/trace/(list|detail)$", path):
             return True
         return path in {
             "/api/webui/skills/install",
@@ -768,14 +772,19 @@ class GatewayHTTPHandler:
             path,
         )
         if match is None:
-            return None
+            trace_match = re.fullmatch(r"/api/trace/(list|detail)", path)
+            if trace_match is None:
+                return None
+            action = f"trace.{trace_match.group(1)}"
+        else:
+            action = match.group(1)
         if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
             return _http_error(405, "Blackbox actions require an authenticated WebSocket")
         if self.blackbox_action is None:
             return _http_error(503, "Blackbox is unavailable")
         payload = _mutation_payload(request) or {}
         try:
-            result = await self.blackbox_action(match.group(1), payload)
+            result = await self.blackbox_action(action, payload)
         except Exception as exc:  # BlackboxActionError and internal errors
             status = getattr(exc, "status", 500)
             return _http_error(status, str(exc))

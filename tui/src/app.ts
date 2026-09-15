@@ -1151,6 +1151,21 @@ export class PawbotTui {
         this.transcript.fileEdits(event.edits)
         this.setActive(true)
         return
+      case "execution_trace": {
+        const trace = event.trace
+        const name = typeof trace.tool_name === "string" ? trace.tool_name : ""
+        const failed = ["error", "failed", "unknown_side_effect", "cancelled"].includes(
+          String(trace.status || "").toLowerCase(),
+        )
+        if (trace.event === "tool.started") this.activeLabel = "Working"
+        if (trace.event === "llm.response") this.activeLabel = "Thinking"
+        if (failed) {
+          this.status.content = name
+            ? `Tool needs attention · ${name}`
+            : "Execution needs attention · use /trace errors"
+        }
+        return
+      }
       case "reasoning_delta":
         this.activeLabel = "Thinking"
         this.setActive(true)

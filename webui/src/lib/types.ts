@@ -59,6 +59,18 @@ export interface RecoveryState {
   can_continue?: boolean;
 }
 
+export interface ExecutionTraceEvent {
+  event: string;
+  trace_id?: string;
+  session_key?: string | null;
+  turn_id?: string;
+  status?: string;
+  duration_ms?: number;
+  iteration?: number;
+  tool_name?: string;
+  [key: string]: unknown;
+}
+
 export interface UIMessage {
   id: string;
   role: Role;
@@ -656,6 +668,10 @@ export interface SettingsPayload {
     provider: "langfuse" | string;
     configured: boolean;
     base_url: string;
+    local_trace_enabled?: boolean;
+    local_trace_retention_days?: number;
+    local_trace_max_traces?: number;
+    local_trace_max_bytes?: number;
   };
   image_generation: {
     enabled: boolean;
@@ -1361,6 +1377,11 @@ export type InboundEvent =
       event: "file_edit";
       chat_id: string;
       edits: UIFileEdit[];
+    } & InboundTurnMetadata)
+  | ({
+      event: "execution_trace";
+      chat_id: string;
+      trace: ExecutionTraceEvent;
     } & InboundTurnMetadata)
   | ({
       event: "delta";

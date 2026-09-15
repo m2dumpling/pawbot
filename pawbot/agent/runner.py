@@ -542,6 +542,18 @@ class AgentRunner:
             budget.note_iteration(iteration)
             budget_reason = budget.limit_reason()
             if budget_reason is not None:
+                await hook.on_budget_exhausted(
+                    AgentHookContext(
+                        iteration=iteration,
+                        messages=messages,
+                        model=spec.runtime.model,
+                        provider=getattr(spec.runtime.provider, "provider_name", None),
+                        model_message_count=len(messages),
+                        context_window_tokens=spec.runtime.context_window_tokens,
+                        budget=budget.snapshot(),
+                    ),
+                    budget_reason,
+                )
                 self._finish_budget_limit(messages, state, budget, budget_reason)
                 break
             messages_for_model = self.context_governor.prepare_for_model(
@@ -553,6 +565,10 @@ class AgentRunner:
                 iteration=iteration,
                 messages=messages,
                 session_key=spec.session_key,
+                model=spec.runtime.model,
+                provider=getattr(spec.runtime.provider, "provider_name", None),
+                model_message_count=len(messages_for_model),
+                context_window_tokens=spec.runtime.context_window_tokens,
                 budget=budget.snapshot(),
             )
             await hook.before_iteration(context)
@@ -585,6 +601,7 @@ class AgentRunner:
             budget.observe_usage(raw_usage)
             context.budget = budget.snapshot()
             state.usage = self._merge_usage(state.usage, raw_usage)
+            await hook.on_model_response(context)
             if reasoning_text and not context.streamed_reasoning:
                 await hook.emit_reasoning(reasoning_text)
                 await hook.emit_reasoning_end()
@@ -598,6 +615,7 @@ class AgentRunner:
                     # that case; the response is still captured as evidence.
                     tool_budget_reason = budget.limit_reason()
                 if tool_budget_reason is not None:
+                    await hook.on_budget_exhausted(context, tool_budget_reason)
                     await self._finish_blocked_tool_calls(
                         spec,
                         hook,
@@ -1141,6 +1159,15 @@ class AgentRunner:
             messages,
             tools=spec.tools.get_definitions(),
         )
+        original_retry_wait = spec.retry_wait_callback
+
+        async def _retry_wait(reason: str) -> None:
+            await hook.on_model_retry(context, reason)
+            if original_retry_wait is not None:
+                await original_retry_wait(reason)
+
+        if hook.observes_model_retry():
+            kwargs["on_retry_wait"] = _retry_wait
         wants_streaming = hook.wants_streaming()
 
         active_hosted_tools: dict[str, dict[str, Any]] = {}
@@ -1242,6 +1269,7 @@ class AgentRunner:
             else timeout_s
         )
         request_started_at = time.perf_counter()
+        await hook.on_model_request_started(context)
         try:
             response = (
                 await coro if outer_timeout_s is None
@@ -1260,6 +1288,11 @@ class AgentRunner:
                     finish_reason="error",
                     error_kind="timeout",
                 )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await hook.on_model_error(context, exc)
+            raise
         _pause_generation()
         await _close_native_reasoning()
         if first_output_at is not None:
@@ -1453,10 +1486,15 @@ class AgentRunner:
         context = AgentHookContext(
             iteration=spec.max_iterations,
             messages=messages,
+            model=spec.runtime.model,
+            provider=getattr(spec.runtime.provider, "provider_name", None),
+            model_message_count=len(messages),
+            context_window_tokens=spec.runtime.context_window_tokens,
             response=response,
             usage=raw_usage,
             session_key=spec.session_key,
         )
+        await hook.on_model_response(context)
         clean = hook.finalize_content(context, response.content)
         if is_blank_text(clean):
             return None, usage

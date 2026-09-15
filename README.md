@@ -260,7 +260,19 @@ uv run pawbot gateway logs
 
 ## Record & Replay
 
-Record a real turn:
+Pawbot separates three jobs that are easy to confuse:
+
+- **Live execution records** are created automatically for every turn. They
+  show stages, timing, status, and failures without copying full prompts or
+  tool results.
+- **Regression samples** are saved manually when you want to keep one complete
+  run. They include the request, model responses, tool calls, and tool results
+  across every session until capture is stopped.
+- **Offline validation** re-runs the current orchestration against a saved
+  sample. It does not call the provider or execute real tools, and reports
+  whether the recorded path still matches.
+
+Save a real turn as a regression sample:
 
 ```bash
 uv run pawbot agent \
@@ -283,13 +295,24 @@ uv run pawbot replay .pawbot/blackbox/demo
 Add `--benchmark` to print provider-free local replay timing and message/diff
 counts.
 
-In the WebUI, **Settings → Record & Replay** provides the same workflow:
-click **Start recording**, run tasks across as many chat sessions as needed,
-then click **Stop recording**. The recording window belongs to the agent, so
+In the WebUI, **Settings → Execution & regression** provides the same workflow:
+use **Save as regression sample**, run tasks across as many chat sessions as
+needed, then click **Stop saving**. The capture window belongs to the agent, so
 all turns before Stop are stored in one sample. Incomplete samples stay visible
-with a reason and can be deleted from the UI instead of failing later on replay.
+with a reason and can be deleted from the UI instead of failing later.
 
-After replay, expand a turn to see a readable execution trace: the user's
+For a running gateway, the same controls are available from the CLI:
+
+```bash
+uv run pawbot record start --name demo
+uv run pawbot record status
+uv run pawbot record stop
+uv run pawbot record list
+uv run pawbot trace list --filter errors
+uv run pawbot trace show <trace-id>
+```
+
+After offline validation, expand a turn to see a readable execution trace: the user's
 request, model thinking when the provider returned it, model decisions, tool
 calls, tool-result previews, and the final answer in event order. Long values
 can be expanded in place. **View raw record** opens the complete JSON/JSONL

@@ -1,5 +1,6 @@
 import type {
   ConnectionStatus,
+  ExecutionTraceEvent,
   InboundEvent,
   Outbound,
   OutboundCliAppMention,
@@ -75,6 +76,7 @@ type SessionUpdateHandler = (
 ) => void;
 type SidebarStateUpdateHandler = (state: SidebarStatePayload) => void;
 type RunStatusHandler = (chatId: string, startedAt: number | null) => void;
+type TraceHandler = (chatId: string, trace: ExecutionTraceEvent) => void;
 
 /** Structured errors surfaced to the UI.
  *
@@ -185,6 +187,7 @@ export class PawbotClient {
   private sessionUpdateHandlers = new Set<SessionUpdateHandler>();
   private sidebarStateUpdateHandlers = new Set<SidebarStateUpdateHandler>();
   private runStatusHandlers = new Set<RunStatusHandler>();
+  private traceHandlers = new Set<TraceHandler>();
   private errorHandlers = new Set<ErrorHandler>();
   // chat_id -> handlers listening on it
   private chatHandlers = new Map<string, Set<EventHandler>>();
@@ -295,6 +298,13 @@ export class PawbotClient {
     }
     return () => {
       this.runStatusHandlers.delete(handler);
+    };
+  }
+
+  onTrace(handler: TraceHandler): Unsubscribe {
+    this.traceHandlers.add(handler);
+    return () => {
+      this.traceHandlers.delete(handler);
     };
   }
 
@@ -1189,6 +1199,11 @@ export class PawbotClient {
       return;
     }
 
+    if (parsed.event === "execution_trace") {
+      this.emitTrace(parsed.chat_id, parsed.trace);
+      return;
+    }
+
     if (parsed.event === "runtime_model_updated") {
       this.emitRuntimeModelUpdate(parsed.model_name || null, parsed.model_preset ?? null);
       return;
@@ -1272,6 +1287,16 @@ export class PawbotClient {
   private emitRunStatus(chatId: string, startedAt: number | null): void {
     for (const handler of this.runStatusHandlers) {
       handler(chatId, startedAt);
+    }
+  }
+
+  private emitTrace(chatId: string, trace: ExecutionTraceEvent): void {
+    for (const handler of this.traceHandlers) {
+      try {
+        handler(chatId, trace);
+      } catch {
+        // Observability UI is best-effort and must not block chat delivery.
+      }
     }
   }
 

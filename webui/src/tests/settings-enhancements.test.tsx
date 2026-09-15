@@ -163,6 +163,49 @@ describe("Record & Replay inspection", () => {
           model: "demo-model",
         };
       }
+      if (action === "trace.list") {
+        return {
+          root: "/tmp/traces",
+          traces: [{
+            id: "cli_direct/trace.jsonl",
+            trace_id: "trace:trace",
+            session_key: "cli:trace",
+            turn_id: "trace",
+            channel: "cli",
+            chat_id: "direct",
+            model: "demo-model",
+            provider: "fake",
+            status: "completed",
+            duration_ms: 42,
+            event_count: 2,
+            tool_count: 0,
+            failure_count: 0,
+          }],
+        };
+      }
+      if (action === "trace.detail") {
+        return {
+          summary: {
+            id: "cli_direct/trace.jsonl",
+            trace_id: "trace:trace",
+            session_key: "cli:trace",
+            turn_id: "trace",
+            channel: "cli",
+            chat_id: "direct",
+            model: "demo-model",
+            provider: "fake",
+            status: "completed",
+            duration_ms: 42,
+            event_count: 2,
+            tool_count: 0,
+            failure_count: 0,
+          },
+          events: [
+            { event: "stage.completed", sequence: 1, stage: "build", status: "completed", duration_ms: 12 },
+            { event: "turn.completed", sequence: 2, status: "completed", duration_ms: 42 },
+          ],
+        };
+      }
       if (action === "blackbox.replay") {
         return {
           directory: "/tmp/blackbox/demo",
@@ -173,11 +216,25 @@ describe("Record & Replay inspection", () => {
           original_failed_tool_calls: 0,
           original_provider_errors: 0,
           original_unknown_side_effects: 0,
+          trace_comparable_turns: 1,
+          trace_diff_turns: 0,
+          benchmark: {
+            turns: 1,
+            total_elapsed_ms: 12,
+            average_elapsed_ms: 12,
+            fastest_elapsed_ms: 12,
+            slowest_elapsed_ms: 12,
+            trace_comparable_turns: 1,
+            trace_diff_turns: 0,
+          },
           summary: "1/1 个回合未发现可观察差异",
           results: [{
             turn_id: "turn-1",
             ok: true,
             diffs: [],
+            message_diffs: [],
+            trace_diffs: [],
+            trace_comparable: true,
             summary: "未发现可观察差异",
             original_execution: {
               status: "success",
@@ -200,12 +257,23 @@ describe("Record & Replay inspection", () => {
       </ClientProvider>,
     );
 
-    await user.click(await screen.findByRole("button", { name: "Replay offline" }));
+    expect(screen.getByText("Agent execution & regression")).toBeInTheDocument();
+    expect(screen.getByText("1. Live execution record")).toBeInTheDocument();
+    expect(screen.getByText("2. Save a regression sample")).toBeInTheDocument();
+    expect(screen.getByText("3. Validate offline")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View live records" })).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: /cli:trace/ }));
+    expect(await screen.findByText(/build/)).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "Validate offline" }));
     const turnButton = await screen.findByRole("button", { name: /Turn 1/ });
     await user.click(turnButton);
 
     expect(await screen.findByText("Turn execution")).toBeInTheDocument();
-    expect(screen.getAllByText("Replay result · Consistent").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Replay benchmark")).toBeInTheDocument();
+    expect(screen.getByText("Trace comparison · Consistent")).toBeInTheDocument();
+    expect(screen.getAllByText("Replay consistency · Consistent").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Original execution · Completed without recorded errors").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("请检查示例文件")).toBeInTheDocument();
     expect(screen.getAllByText("Model thinking trace")).toHaveLength(2);
@@ -290,10 +358,10 @@ describe("Record & Replay inspection", () => {
       </ClientProvider>,
     );
 
-    await user.click(await screen.findByRole("button", { name: "Replay offline" }));
+    await user.click(await screen.findByRole("button", { name: "Validate offline" }));
     await user.click(await screen.findByRole("button", { name: /Turn 1/ }));
 
-    expect(screen.getAllByText("Replay result · Consistent").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Replay consistency · Consistent").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Original execution · Model request failed").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Model request failed")).toBeInTheDocument();
     expect(screen.getByText("HTTP 503 · kind=http · type=server_error · code=overloaded")).toBeInTheDocument();

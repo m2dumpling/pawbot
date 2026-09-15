@@ -3,15 +3,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
+from pawbot.agent.observability import TraceStore
 from pawbot.webui.blackbox_api import (
     BlackboxActionError,
     _delete,
     _detail,
     _list,
     _replay,
+    _trace_detail,
+    _trace_list,
     _turn_diagnostics,
 )
 
@@ -128,6 +132,99 @@ async def test_detail_returns_raw_turn_and_execution_rail(tmp_path: Path) -> Non
     assert result["diagnostics"]["original_execution"]["status"] == "unknown"
 
 
+@pytest.mark.asyncio
+async def test_detail_returns_structured_trace_events_when_available(tmp_path: Path) -> None:
+    root = tmp_path / "blackbox" / "trace-sample"
+    root.mkdir(parents=True)
+    (root / "turns.jsonl").write_text(
+        json.dumps({
+            "kind": "turn",
+            "complete": True,
+            "turn_id": "turn-trace",
+            "session_key": "cli:direct",
+            "model": "fake-model",
+            "initial_messages": [{"role": "user", "content": "hello"}],
+            "final_messages": [{"role": "assistant", "content": "done"}],
+            "final_content": "done",
+            "stop_reason": "completed",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (root / "events.jsonl").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "sequence": 1,
+            "event": "stage.completed",
+            "turn_id": "turn-trace",
+            "stage": "build",
+            "status": "completed",
+            "duration_ms": 12,
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    result = await _detail(
+        _agent(tmp_path),
+        {"directory": str(root), "turn_id": "turn-trace"},
+    )
+
+    assert result["trace_events"] == [{
+        "schema_version": 1,
+        "sequence": 1,
+        "event": "stage.completed",
+        "turn_id": "turn-trace",
+        "stage": "build",
+        "status": "completed",
+        "duration_ms": 12,
+    }]
+    assert result["files"]["events"] == "events.jsonl"
+
+
+@pytest.mark.asyncio
+async def test_trace_list_and_detail_read_default_lightweight_traces(tmp_path: Path) -> None:
+    trace_root = tmp_path / "traces"
+    trace_file = trace_root / "cli_direct" / "turn-1.jsonl"
+    trace_file.parent.mkdir(parents=True)
+    trace_file.write_text(
+        "\n".join([
+            json.dumps({
+                "event": "turn.accepted",
+                "trace_id": "trace:turn-1",
+                "session_key": "cli:direct",
+                "turn_id": "turn-1",
+                "timestamp_ms": 1,
+            }),
+            json.dumps({
+                "event": "turn.completed",
+                "trace_id": "trace:turn-1",
+                "session_key": "cli:direct",
+                "turn_id": "turn-1",
+                "status": "completed",
+                "duration_ms": 25,
+                "timestamp_ms": 2,
+            }),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    agent = SimpleNamespace(
+        workspace=tmp_path,
+        blackbox=None,
+        trace_store=TraceStore(trace_root),
+    )
+
+    listed = await _trace_list(agent, {})
+    assert listed["traces"][0]["id"] == "cli_direct/turn-1.jsonl"
+    assert listed["traces"][0]["duration_ms"] == 25
+    assert listed["traces"][0]["failure_count"] == 0
+
+    detail = await _trace_detail(agent, {"id": "cli_direct/turn-1.jsonl"})
+    assert detail["summary"]["trace_id"] == "trace:turn-1"
+    assert len(detail["events"]) == 2
+
+    with pytest.raises(BlackboxActionError, match="traces"):
+        await _trace_detail(agent, {"id": "../outside.jsonl"})
+
+
 def test_turn_diagnostics_separates_replay_health_from_original_errors() -> None:
     diagnostics = _turn_diagnostics(
         {"complete": True, "stop_reason": "completed"},
@@ -189,6 +286,31 @@ async def test_replay_reports_original_execution_separately(tmp_path: Path) -> N
     )
 
     async def replay_all(_controller: object) -> list[tuple[str, bool, list[str]]]:
+        controller = cast(Any, _controller)
+        controller.last_replay_details = [{
+            "turn_id": "turn-1",
+            "message_diffs": [],
+            "trace_diffs": ["trace event[0] differs"],
+            "trace_comparable": True,
+        }]
+        controller.last_benchmark = [{
+            "turn_id": "turn-1",
+            "elapsed_ms": 12,
+            "messages": 2,
+            "diffs": 1,
+            "trace_diffs": 1,
+            "trace_comparable": True,
+            "tool_calls": 0,
+        }]
+        controller.last_benchmark_summary = {
+            "turns": 1,
+            "total_elapsed_ms": 12,
+            "average_elapsed_ms": 12,
+            "fastest_elapsed_ms": 12,
+            "slowest_elapsed_ms": 12,
+            "trace_comparable_turns": 1,
+            "trace_diff_turns": 1,
+        }
         return [("turn-1", True, [])]
 
     agent = SimpleNamespace(workspace=tmp_path, blackbox=None, replay_all=replay_all)
@@ -201,3 +323,8 @@ async def test_replay_reports_original_execution_separately(tmp_path: Path) -> N
     assert result["original_unknown_side_effects"] == 0
     assert result["results"][0]["ok"] is True
     assert result["results"][0]["original_execution"]["status"] == "tool_error"
+    assert result["trace_comparable_turns"] == 1
+    assert result["trace_diff_turns"] == 1
+    assert result["results"][0]["trace_comparable"] is True
+    assert result["results"][0]["trace_diffs"] == ["trace event[0] differs"]
+    assert result["benchmark"]["slowest_elapsed_ms"] == 12

@@ -52,6 +52,7 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
 
     valid_turns = 0
     malformed_lines = 0
+    trace_events = 0
     try:
         with turns_path.open(encoding="utf-8") as handle:
             for line in handle:
@@ -87,6 +88,25 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
                         continue
                     if not isinstance(raw_record, dict):
                         malformed_lines += 1
+
+        # Newer recordings include a structured lifecycle timeline. Keep this
+        # file optional so recordings created before the trace layer remain
+        # replayable and visible.
+        events_path = directory / "events.jsonl"
+        if events_path.exists():
+            with events_path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    try:
+                        raw_record = json.loads(line)
+                    except (json.JSONDecodeError, TypeError):
+                        malformed_lines += 1
+                        continue
+                    if isinstance(raw_record, dict):
+                        trace_events += 1
+                    else:
+                        malformed_lines += 1
     except (OSError, UnicodeError):
         return {
             "status": "invalid",
@@ -113,6 +133,7 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
         "status": "ready",
         "message": "记录完整",
         "turns": valid_turns,
+        "trace_events": trace_events,
     }
 
 
@@ -287,6 +308,11 @@ async def _detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
             for record in _read_jsonl(directory / "tools.jsonl")
             if str(record.get("turn_id")) == turn_id
         ]
+        trace_events = [
+            record
+            for record in _read_jsonl(directory / "events.jsonl")
+            if str(record.get("turn_id")) == turn_id
+        ]
     except BlackboxActionError:
         raise
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
@@ -305,6 +331,7 @@ async def _detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
         "turn_id": turn_id,
         "turn": _json_safe(turn),
         "events": _json_safe(events),
+        "trace_events": _json_safe(trace_events),
         "diagnostics": _json_safe(_turn_diagnostics(turn, events)),
         "counts": {
             "llm_responses": sum(1 for event in events if event.get("kind") == "llm"),
@@ -317,6 +344,7 @@ async def _detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
             "turns": "turns.jsonl",
             "tools": "tools.jsonl" if (directory / "tools.jsonl").exists() else None,
             "cassette": cassette if (directory / cassette).exists() else None,
+            "events": "events.jsonl" if (directory / "events.jsonl").exists() else None,
         },
     }
 
@@ -340,6 +368,9 @@ def _resolve_directory(agent: Any, name: str) -> Path:
 async def _status(agent: Any) -> dict[str, Any]:
     from pawbot.agent.blackbox import BlackboxController
 
+    sync_policy = getattr(agent, "sync_recording_policy", None)
+    if callable(sync_policy):
+        sync_policy()
     bb = agent.blackbox
     recording = isinstance(bb, BlackboxController)
     runtime = agent.llm_runtime()
@@ -356,13 +387,21 @@ async def _start(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
     from pawbot.agent.blackbox import BlackboxController
 
     name = str(payload.get("directory") or "session")
-    directory = _resolve_directory(agent, name)
-    agent.blackbox = BlackboxController(str(directory))
+    start_recording = getattr(agent, "start_detailed_recording", None)
+    if callable(start_recording):
+        directory = Path(str(start_recording(name)))
+    else:
+        directory = _resolve_directory(agent, name)
+        agent.blackbox = BlackboxController(str(directory))
     return {"recording": True, "directory": str(directory)}
 
 
 async def _stop(agent: Any) -> dict[str, Any]:
-    agent.blackbox = None
+    stop_recording = getattr(agent, "stop_detailed_recording", None)
+    if callable(stop_recording):
+        stop_recording()
+    else:
+        agent.blackbox = None
     return {"recording": False}
 
 
@@ -380,6 +419,48 @@ async def _list(agent: Any) -> dict[str, Any]:
                 **summary,
             })
     return {"recordings": recordings, "root": str(root)}
+
+
+def _trace_store(agent: Any) -> Any:
+    """Return the configured local TraceStore without exposing its implementation."""
+    store = getattr(agent, "trace_store", None)
+    if not callable(getattr(store, "list_summaries", None)):
+        raise BlackboxActionError(503, "执行追踪不可用")
+    return store
+
+
+async def _trace_list(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    store = _trace_store(agent)
+    raw_limit = payload.get("limit", 50)
+    limit = raw_limit if isinstance(raw_limit, int) and not isinstance(raw_limit, bool) else 50
+    session_key = payload.get("session_key")
+    if not isinstance(session_key, str) or not session_key:
+        session_key = None
+    return {
+        "traces": _json_safe(
+            store.list_summaries(
+                limit=limit,
+                session_key=session_key,
+                issues_only=payload.get("filter") == "issues",
+                slow_only=payload.get("filter") == "slow",
+            )
+        ),
+        "root": str(store.root),
+    }
+
+
+async def _trace_detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    identifier = str(payload.get("id") or "")
+    if not identifier:
+        raise BlackboxActionError(400, "id is required for trace detail")
+    store = _trace_store(agent)
+    try:
+        summary, events = store.detail(identifier)
+    except FileNotFoundError as exc:
+        raise BlackboxActionError(404, "执行追踪不存在") from exc
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise BlackboxActionError(422, f"无法读取执行追踪：{exc}") from exc
+    return {"summary": _json_safe(summary), "events": _json_safe(events)}
 
 
 async def _delete(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -449,16 +530,53 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
         if turn_id:
             events_by_id.setdefault(turn_id, []).append(event)
 
+    raw_replay_details: Any = getattr(controller, "last_replay_details", [])
+    replay_detail_by_id: dict[str, dict[str, Any]] = {}
+    for detail in (
+        cast(list[Any], raw_replay_details)
+        if isinstance(raw_replay_details, list)
+        else []
+    ):
+        if isinstance(detail, dict):
+            detail_mapping = cast(dict[str, Any], detail)
+            if isinstance(detail_mapping.get("turn_id"), str):
+                replay_detail_by_id[detail_mapping["turn_id"]] = detail_mapping
+    raw_benchmark_rows: Any = getattr(controller, "last_benchmark", [])
+    benchmark_by_id: dict[str, dict[str, Any]] = {}
+    for benchmark in (
+        cast(list[Any], raw_benchmark_rows)
+        if isinstance(raw_benchmark_rows, list)
+        else []
+    ):
+        if isinstance(benchmark, dict):
+            benchmark_mapping = cast(dict[str, Any], benchmark)
+            if isinstance(benchmark_mapping.get("turn_id"), str):
+                benchmark_by_id[benchmark_mapping["turn_id"]] = benchmark_mapping
+
     rows: list[dict[str, Any]] = []
     for turn_id, ok, diffs in results:
         diagnostics = _turn_diagnostics(
             turns_by_id.get(turn_id, {"turn_id": turn_id}),
             events_by_id.get(turn_id, []),
         )
+        replay_detail = replay_detail_by_id.get(turn_id, {})
+        message_diffs = replay_detail.get("message_diffs")
+        trace_diffs = replay_detail.get("trace_diffs")
+        trace_comparable = replay_detail.get("trace_comparable")
+        if not isinstance(message_diffs, list):
+            message_diffs = list(diffs)
+        if not isinstance(trace_diffs, list):
+            trace_diffs = []
+        if not isinstance(trace_comparable, bool):
+            trace_comparable = False
         rows.append({
             "turn_id": turn_id,
             "ok": ok,
             "diffs": _json_safe(diffs),
+            "message_diffs": _json_safe(message_diffs),
+            "trace_diffs": _json_safe(trace_diffs),
+            "trace_comparable": trace_comparable,
+            "benchmark": _json_safe(benchmark_by_id.get(turn_id)),
             "summary": (
                 "未发现可观察差异"
                 if ok
@@ -485,6 +603,24 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
         int(row["original_execution"].get("unknown_side_effect_count") or 0)
         for row in rows
     )
+    trace_comparable_turns = sum(1 for row in rows if row["trace_comparable"])
+    trace_diff_turns = sum(1 for row in rows if row["trace_diffs"])
+    benchmark_summary = getattr(controller, "last_benchmark_summary", None)
+    if not isinstance(benchmark_summary, dict):
+        benchmark_rows = [
+            row["benchmark"] for row in rows if isinstance(row.get("benchmark"), dict)
+        ]
+        elapsed = [int(row.get("elapsed_ms") or 0) for row in benchmark_rows]
+        total_elapsed = sum(elapsed)
+        benchmark_summary = {
+            "turns": len(benchmark_rows),
+            "total_elapsed_ms": total_elapsed,
+            "average_elapsed_ms": round(total_elapsed / len(elapsed), 1) if elapsed else 0,
+            "fastest_elapsed_ms": min(elapsed, default=0),
+            "slowest_elapsed_ms": max(elapsed, default=0),
+            "trace_comparable_turns": trace_comparable_turns,
+            "trace_diff_turns": trace_diff_turns,
+        }
     return {
         "directory": directory,
         "total_turns": total,
@@ -494,6 +630,9 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
         "original_failed_tool_calls": original_failed_tool_calls,
         "original_provider_errors": original_provider_errors,
         "original_unknown_side_effects": original_unknown_side_effects,
+        "trace_comparable_turns": trace_comparable_turns,
+        "trace_diff_turns": trace_diff_turns,
+        "benchmark": _json_safe(benchmark_summary),
         "summary": (
             f"{deterministic}/{total} 个回合回放一致；"
             f"{original_issue_turns} 个回合原始执行包含问题"
@@ -569,6 +708,10 @@ def blackbox_action_factory(
             return await _replay(agent, payload)
         if action == "tokens":
             return await _tokens(agent, session_manager, payload)
+        if action == "trace.list":
+            return await _trace_list(agent, payload)
+        if action == "trace.detail":
+            return await _trace_detail(agent, payload)
         raise BlackboxActionError(400, f"unknown blackbox action {action!r}")
 
     return dispatch

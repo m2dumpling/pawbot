@@ -80,6 +80,30 @@ class DreamConfig(Base):
         return f"every {hours}h"
 
 
+class ObservabilityConfig(Base):
+    """Local execution-trace retention and privacy policy."""
+
+    enabled: bool = True
+    retention_days: int = Field(
+        default=14,
+        ge=0,
+        validation_alias=AliasChoices("retentionDays", "retention_days"),
+        serialization_alias="retentionDays",
+    )
+    max_traces: int = Field(
+        default=500,
+        ge=1,
+        validation_alias=AliasChoices("maxTraces", "max_traces"),
+        serialization_alias="maxTraces",
+    )
+    max_bytes: int = Field(
+        default=256 * 1024 * 1024,
+        ge=0,
+        validation_alias=AliasChoices("maxBytes", "max_bytes"),
+        serialization_alias="maxBytes",
+    )
+
+
 class InlineFallbackConfig(Base):
     """One inline fallback model configuration."""
 
@@ -490,6 +514,7 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     model_presets: dict[str, ModelPresetConfig] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("modelPresets", "model_presets"),

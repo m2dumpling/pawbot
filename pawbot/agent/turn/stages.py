@@ -118,13 +118,25 @@ class TurnStagesMixin:
         if ctx.kind is TurnKind.USER:
             self.workspace_scopes.persist_message_scope(session, msg)
 
-        if restore_runtime_checkpoint(session):
+        checkpoint_restored = restore_runtime_checkpoint(session)
+        if checkpoint_restored:
             self.sessions.save(session)
+            if ctx.trace is not None:
+                ctx.trace.emit(
+                    "recovery.checkpoint_restored",
+                    status="completed",
+                    checkpoint_present=True,
+                )
         if (
             RECOVERY_INBOUND_METADATA_KEY not in msg.metadata
             and restore_pending_interruption(session)
         ):
             self.sessions.save(session)
+            if ctx.trace is not None:
+                ctx.trace.emit(
+                    "recovery.interruption_restored",
+                    status="completed",
+                )
 
     async def _compact_session(self: _TurnStagesHost, ctx: TurnContext) -> None:
         session = ctx.require_session()
@@ -189,6 +201,11 @@ class TurnStagesMixin:
         if runtime is None:
             runtime = self.runtime_for_session(session)
             ctx.runtime = runtime
+        if ctx.trace is not None:
+            ctx.trace.set_runtime(
+                provider=getattr(runtime.provider, "provider_name", None),
+                model=runtime.model,
+            )
         if ctx.session_key.startswith("dream:"):
             logger.info(
                 "Dream run using model={} (preset={})",
@@ -311,6 +328,15 @@ class TurnStagesMixin:
             # prompt assembly and the first model checkpoint.
             self.sessions.save(session)
         ctx.initial_messages = self._build_initial_messages(ctx)
+        if ctx.trace is not None:
+            ctx.trace.emit(
+                "context.ready",
+                status="completed",
+                message_count=len(ctx.initial_messages),
+                history_message_count=len(ctx.history),
+                runtime_context_block_count=len(ctx.runtime_context_blocks),
+                provider_state_resumable=ctx.provider_state is not None,
+            )
 
         if ctx.on_progress is None:
             ctx.on_progress = ctx.delivery.progress_callback()
@@ -340,6 +366,7 @@ class TurnStagesMixin:
                 tools=ctx.tools,
                 request_context=ctx.request_context,
                 provider_state=ctx.provider_state,
+                trace=ctx.trace,
             )
         ctx.final_content = result.final_content
         ctx.all_messages = result.messages

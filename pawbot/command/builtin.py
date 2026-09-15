@@ -9,6 +9,7 @@ import sys
 import time
 from contextlib import suppress
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pawbot import __version__
@@ -119,6 +120,22 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "Print the last N persisted conversation messages.",
         "history",
         "[n]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/trace",
+        "Inspect execution traces",
+        "Show recent, failed, slow, or one specific execution trace.",
+        "activity",
+        "[errors|slow|all|trace-id]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/record",
+        "Save a regression sample",
+        "Show, start, or stop full execution capture across sessions.",
+        "radio",
+        "[status|start [name]|stop]",
         accepts_args=True,
     ),
     BuiltinCommandSpec(
@@ -385,6 +402,183 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
             max_completion_tokens=runtime.generation.max_tokens,
         ),
         metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+def _trace_row_text(row: dict[str, Any]) -> str:
+    """Render one compact trace row without exposing raw recorded payloads."""
+    turn_id = str(row.get("turn_id") or "unknown")
+    status = str(row.get("status") or "unknown")
+    duration = row.get("duration_ms")
+    duration_text = _format_trace_duration(duration)
+    tools = int(row.get("tool_count") or 0)
+    failures = int(row.get("failure_count") or 0)
+    suffix = f" · {tools} tool(s)"
+    if failures:
+        suffix += f" · {failures} issue(s)"
+    return f"- `{turn_id}` — {status} · {duration_text}{suffix}"
+
+
+def _format_trace_duration(value: Any) -> str:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "running"
+    milliseconds = max(0, int(value))
+    return f"{milliseconds}ms" if milliseconds < 1_000 else f"{milliseconds / 1000:.1f}s"
+
+
+async def cmd_trace(ctx: CommandContext) -> OutboundMessage:
+    """Inspect lightweight execution traces for the active session."""
+    store = cast(Any, getattr(ctx.loop, "trace_store", None))
+    metadata = {**dict(ctx.msg.metadata or {}), "render_as": "text"}
+    if not callable(getattr(store, "list_summaries", None)):
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content="Execution tracing is unavailable for this pawbot instance.",
+            metadata=metadata,
+        )
+
+    args = ctx.args.strip()
+    lowered = args.lower()
+    if args and lowered not in {"all", "errors", "slow"}:
+        try:
+            summary, events = store.detail(args)
+        except FileNotFoundError:
+            content = f"Trace `{args}` was not found. Run `/trace` to list this chat's traces."
+        except (OSError, ValueError) as exc:
+            content = f"Could not inspect trace `{args}`: {_command_error_message(exc)}"
+        else:
+            lines = [
+                "## Execution trace",
+                _trace_row_text(summary),
+                "",
+                "### Steps",
+            ]
+            for event in events:
+                event_name = str(event.get("event") or "event")
+                status = str(event.get("status") or "")
+                duration = event.get("duration_ms")
+                duration_text = (
+                    f" · {_format_trace_duration(duration)}"
+                    if isinstance(duration, (int, float)) and not isinstance(duration, bool)
+                    else ""
+                )
+                tool = event.get("tool_name")
+                detail = f" · {tool}" if isinstance(tool, str) and tool else ""
+                lines.append(f"- `{event_name}`{detail}{duration_text} {status}".rstrip())
+            content = "\n".join(lines)
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=content,
+            metadata=metadata,
+        )
+
+    traces = store.list_summaries(
+        limit=10,
+        session_key=None if lowered == "all" else ctx.key,
+        issues_only=lowered == "errors",
+        slow_only=lowered == "slow",
+    )
+    scope = "all sessions" if lowered == "all" else "this chat"
+    if lowered == "errors":
+        scope += " with issues"
+    elif lowered == "slow":
+        scope += " slower than 2s"
+    lines = [f"## Execution traces · {scope}"]
+    if traces:
+        lines.extend(_trace_row_text(row) for row in traces)
+        lines.append("")
+        lines.append("Use `/trace <trace-id>` for the structured event list.")
+    else:
+        lines.append("No matching traces yet.")
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content="\n".join(lines),
+        metadata=metadata,
+    )
+
+
+def _recording_name(value: str) -> str:
+    compact = "".join(character if character.isalnum() or character in "-_" else "-" for character in value)
+    return compact.strip("-_")[:80] or f"session-{int(time.time() * 1000)}"
+
+
+async def cmd_record(ctx: CommandContext) -> OutboundMessage:
+    """Manage the global regression-sample capture window."""
+    from pawbot.agent.blackbox import (
+        BlackboxController,
+        clear_recording_policy,
+        read_recording_policy,
+        write_recording_policy,
+    )
+
+    loop = ctx.loop
+    metadata = {**dict(ctx.msg.metadata or {}), "render_as": "text"}
+    args = ctx.args.strip()
+    action, _, raw_name = args.partition(" ")
+    action = action.lower() or "status"
+    active = getattr(loop, "blackbox", None)
+    recording = isinstance(active, BlackboxController)
+    workspace = Path(loop.workspace)
+    policy_directory = read_recording_policy(workspace)
+
+    if action == "status":
+        if recording:
+            content = (
+                f"Regression sample capture is active: `{active.directory.name}`. "
+                "Every session is captured until `/record stop`."
+            )
+        elif policy_directory is not None:
+            content = (
+                f"Regression sample capture is armed: `{policy_directory.name}`. "
+                "The running gateway will capture every subsequent session."
+            )
+        else:
+            content = "Regression sample capture is off. Automatic live execution records remain on for every new turn."
+    elif action == "start":
+        if recording:
+            content = (
+                f"Regression sample capture is already active: `{active.directory.name}`. "
+                "Run `/record stop` before starting another sample."
+            )
+        else:
+            name = _recording_name(raw_name.strip() or f"session-{int(time.time() * 1000)}")
+            start_recording = getattr(loop, "start_detailed_recording", None)
+            if callable(start_recording):
+                directory = Path(str(start_recording(name)))
+            else:
+                directory = write_recording_policy(workspace, name)
+                loop.blackbox = BlackboxController(str(directory))
+            content = (
+                f"Started regression sample capture: `{name}`. Every session is included until `/record stop`. "
+                "This sample stores prompts, model responses, and tool results."
+            )
+    elif action == "stop":
+        if not recording:
+            if policy_directory is None:
+                content = "Regression sample capture is already off."
+            else:
+                clear_recording_policy(workspace)
+                content = "Regression sample capture is now off. Existing samples were kept."
+        else:
+            name = active.directory.name
+            stop_recording = getattr(loop, "stop_detailed_recording", None)
+            if callable(stop_recording):
+                stop_recording()
+            else:
+                clear_recording_policy(workspace)
+                loop.blackbox = None
+            content = f"Stopped regression sample capture: `{name}`. You can validate it offline with `pawbot replay`."
+    else:
+        content = "Usage: `/record status`, `/record start [name]`, or `/record stop`."
+
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata=metadata,
     )
 
 
@@ -1309,6 +1503,10 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.prefix("/effort ", cmd_effort)
     router.exact("/history", cmd_history)
     router.prefix("/history ", cmd_history)
+    router.exact("/trace", cmd_trace)
+    router.prefix("/trace ", cmd_trace)
+    router.exact("/record", cmd_record)
+    router.prefix("/record ", cmd_record)
     router.exact("/goal", cmd_goal)
     router.prefix("/goal ", cmd_goal)
     router.exact("/trigger", cmd_trigger)

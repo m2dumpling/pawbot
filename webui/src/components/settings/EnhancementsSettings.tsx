@@ -44,16 +44,21 @@ import {
   blackboxStatus,
   blackboxStop,
   blackboxTokens,
+  traceDetail,
+  traceList,
   type BlackboxBreakpoint,
   type BlackboxDetail,
   type BlackboxRecording,
   type BlackboxReplayResult,
   type BlackboxStatus,
   type BlackboxTokens,
+  type TraceDetail,
+  type TraceSummary,
 } from "@/lib/api";
 import { useClient } from "@/providers/ClientProvider";
 
 type Translate = TFunction;
+type TraceFilter = "all" | "issues" | "slow";
 
 function tx(
   t: Translate,
@@ -62,6 +67,13 @@ function tx(
   values?: Record<string, unknown>,
 ): string {
   return t(key, { defaultValue: fallback, ...(values ?? {}) });
+}
+
+function scrollToSection(id: string): void {
+  const element = document.getElementById(id);
+  if (element && typeof element.scrollIntoView === "function") {
+    element.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 }
 
 function StatCard({
@@ -84,8 +96,8 @@ function StatCard({
 
 function recordingStatusLabel(recording: BlackboxRecording, t: Translate): string {
   return recording.status === "ready"
-    ? tx(t, "settings.enhancements.status.ready", "Ready to replay")
-    : tx(t, "settings.enhancements.status.incomplete", "Incomplete recording");
+    ? tx(t, "settings.enhancements.status.ready", "Ready for offline validation")
+    : tx(t, "settings.enhancements.status.incomplete", "Sample incomplete");
 }
 
 function recordingStatusMessage(recording: BlackboxRecording, t: Translate): string {
@@ -148,6 +160,12 @@ function compactText(value: string, maxLength = 320, emptyValue = "Not recorded"
   return normalized.length > maxLength
     ? `${normalized.slice(0, maxLength).trimEnd()}…`
     : normalized;
+}
+
+function formatDuration(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "";
+  const milliseconds = Math.max(0, Math.round(value));
+  return milliseconds < 1000 ? `${milliseconds}ms` : `${(milliseconds / 1000).toFixed(1)}s`;
 }
 
 function humanizeStopReason(value: unknown, t: Translate): string {
@@ -530,6 +548,272 @@ function ConversationCard({
   );
 }
 
+function ToolPolicySummary({
+  events,
+  t,
+}: {
+  events: Array<Record<string, unknown>>;
+  t: Translate;
+}) {
+  const toolEvents = events.filter((event) => ["tool.started", "tool.finished"].includes(String(event.event ?? "")));
+  if (toolEvents.length === 0) return null;
+  const capabilities = [...new Set(toolEvents.flatMap((event) => (
+    Array.isArray(event.tool_capabilities)
+      ? event.tool_capabilities.filter((value): value is string => typeof value === "string")
+      : []
+  )))];
+  const sideEffects = toolEvents
+    .filter((event) => String(event.event ?? "") === "tool.finished")
+    .reduce<Record<string, number>>((counts, event) => {
+    const value = typeof event.side_effect === "string" ? event.side_effect : "unknown";
+    counts[value] = (counts[value] ?? 0) + 1;
+    return counts;
+    }, {});
+  const sideEffectLabel = (value: string): string => {
+    switch (value) {
+      case "none":
+        return tx(t, "settings.enhancements.result.sideEffectNone", "read-only");
+      case "may_have_occurred":
+        return tx(t, "settings.enhancements.result.sideEffectPossible", "may have occurred");
+      case "not_executed":
+        return tx(t, "settings.enhancements.result.sideEffectIsolated", "isolated in replay");
+      default:
+        return tx(t, "settings.enhancements.result.sideEffectUnknown", "needs confirmation");
+    }
+  };
+  return (
+    <div className="rounded-xl border border-settings-border bg-background/55 p-3">
+      <div className="flex items-center gap-2 text-xs font-semibold text-settings-foreground">
+        <Wrench className="h-4 w-4 text-settings-muted" />
+        {tx(t, "settings.enhancements.result.toolPolicyTitle", "Tool safety summary")}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+        <span className="rounded-full border border-settings-border bg-background/70 px-2 py-1 text-settings-muted">
+          {tx(t, "settings.enhancements.result.capabilities", "Capabilities")} · {capabilities.length > 0 ? capabilities.join(" · ") : tx(t, "settings.enhancements.result.noCapabilities", "not reported")}
+        </span>
+        {Object.entries(sideEffects).map(([value, count]) => (
+          <span key={value} className={`rounded-full border px-2 py-1 ${value === "may_have_occurred" || value === "unknown"
+            ? "border-amber-200 bg-amber-50 text-amber-800"
+            : "border-settings-border bg-background/70 text-settings-muted"}`}>
+            {count} · {sideEffectLabel(value)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function structuredTraceLabel(event: Record<string, unknown>, t: Translate): string {
+  const name = String(event.event ?? "");
+  const iteration = Number(event.iteration);
+  const stage = String(event.stage ?? "unknown");
+  const stageName = tx(
+    t,
+    `settings.enhancements.trace.stage.${stage}`,
+    stage,
+  );
+  const iterationLabel = Number.isFinite(iteration)
+    ? tx(t, "settings.enhancements.trace.iteration", "Round {{number}}", { number: iteration + 1 })
+    : "";
+  switch (name) {
+    case "stage.completed":
+      return tx(t, "settings.enhancements.trace.stageCompleted", "Stage · {{stage}}", { stage: stageName });
+    case "stage.failed":
+      return tx(t, "settings.enhancements.trace.stageFailed", "Stage failed · {{stage}}", { stage: stageName });
+    case "stage.cancelled":
+      return tx(t, "settings.enhancements.trace.stageCancelled", "Stage cancelled · {{stage}}", { stage: stageName });
+    case "llm.response":
+      return tx(t, "settings.enhancements.trace.modelResponse", "Model response · {{round}}", { round: iterationLabel });
+    case "llm.request_started":
+      return tx(t, "settings.enhancements.trace.modelRequestStarted", "Model request started · {{round}}", { round: iterationLabel });
+    case "llm.request_failed":
+      return tx(t, "settings.enhancements.trace.modelRequestFailed", "Model request failed · {{round}}", { round: iterationLabel });
+    case "llm.retry":
+      return tx(t, "settings.enhancements.trace.modelRetry", "Model request retry · {{round}}", { round: iterationLabel });
+    case "context.ready":
+      return tx(t, "settings.enhancements.trace.contextReady", "Context prepared");
+    case "checkpoint.saved":
+      return tx(t, "settings.enhancements.trace.checkpointSaved", "Recovery checkpoint saved");
+    case "recovery.checkpoint_restored":
+      return tx(t, "settings.enhancements.trace.checkpointRestored", "Resumed from checkpoint");
+    case "recovery.interruption_restored":
+      return tx(t, "settings.enhancements.trace.interruptionRestored", "Recovered interrupted work");
+    case "budget.exhausted":
+      return tx(t, "settings.enhancements.trace.budgetExhausted", "Execution budget reached");
+    case "tool.planned":
+      return tx(t, "settings.enhancements.trace.toolPlanned", "Tool planned · {{tool}}", { tool: String(event.tool_name ?? "unknown") });
+    case "tool.started":
+      return tx(t, "settings.enhancements.trace.toolStarted", "Tool started · {{tool}}", { tool: String(event.tool_name ?? "unknown") });
+    case "tool.finished":
+      return tx(t, "settings.enhancements.trace.toolFinished", "Tool result · {{tool}}", { tool: String(event.tool_name ?? "unknown") });
+    case "tool.cancelled":
+      return tx(t, "settings.enhancements.trace.toolCancelled", "Tool cancelled · {{tool}}", { tool: String(event.tool_name ?? "unknown") });
+    case "iteration.completed":
+      return tx(t, "settings.enhancements.trace.iterationCompleted", "Round completed · {{round}}", { round: iterationLabel });
+    case "agent.completed":
+      return tx(t, "settings.enhancements.trace.agentCompleted", "Agent execution completed");
+    case "agent.error":
+      return tx(t, "settings.enhancements.trace.agentError", "Agent execution failed");
+    case "agent.finalized":
+      return tx(t, "settings.enhancements.trace.agentFinalized", "Agent execution interrupted");
+    case "turn.completed":
+      return tx(t, "settings.enhancements.trace.turnCompleted", "Turn completed");
+    case "turn.failed":
+      return tx(t, "settings.enhancements.trace.turnFailed", "Turn failed");
+    case "turn.cancelled":
+      return tx(t, "settings.enhancements.trace.turnCancelled", "Turn cancelled");
+    case "turn.incomplete":
+      return tx(t, "settings.enhancements.trace.turnIncomplete", "Turn was interrupted");
+    default:
+      return name || tx(t, "settings.enhancements.trace.unknown", "Execution event");
+  }
+}
+
+function structuredTraceStatus(event: Record<string, unknown>, t: Translate): string {
+  const status = String(event.status ?? "").toLowerCase();
+  switch (status) {
+    case "completed":
+    case "received":
+    case "succeeded":
+    case "accepted":
+      return tx(t, "settings.enhancements.trace.status.completed", "Completed");
+    case "error":
+    case "failed":
+      return tx(t, "settings.enhancements.trace.status.failed", "Failed");
+    case "cancelled":
+    case "unknown_side_effect":
+    case "blocked":
+    case "incomplete":
+      return tx(t, "settings.enhancements.trace.status.uncertain", "Needs attention");
+    case "running":
+      return tx(t, "settings.enhancements.trace.status.running", "Running");
+    case "planned":
+      return tx(t, "settings.enhancements.trace.status.planned", "Planned");
+    case "retrying":
+      return tx(t, "settings.enhancements.trace.status.retrying", "Retrying");
+    default:
+      return status || tx(t, "settings.enhancements.trace.status.notReported", "Not reported");
+  }
+}
+
+function structuredTraceTone(event: Record<string, unknown>): string {
+  const status = String(event.status ?? "").toLowerCase();
+  if (["error", "failed"].includes(status)) {
+    return "border-red-200 bg-red-50/70 dark:border-red-900 dark:bg-red-950/20";
+  }
+  if (["cancelled", "unknown_side_effect", "blocked", "incomplete"].includes(status)) {
+    return "border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20";
+  }
+  if (String(event.event ?? "").startsWith("tool.")) {
+    return "border-orange-200 bg-orange-50/45 dark:border-orange-900 dark:bg-orange-950/15";
+  }
+  return "border-settings-border bg-background/70";
+}
+
+function structuredTraceIcon(event: Record<string, unknown>) {
+  const name = String(event.event ?? "");
+  const status = String(event.status ?? "").toLowerCase();
+  if (["error", "failed"].includes(status)) return <XCircle className="h-4 w-4 text-red-600" />;
+  if (["cancelled", "unknown_side_effect", "blocked", "incomplete"].includes(status)) return <AlertTriangle className="h-4 w-4 text-amber-600" />;
+  if (["running", "planned", "retrying"].includes(status)) return <CircleDashed className="h-4 w-4 text-blue-600" />;
+  if (name.startsWith("tool.")) return <Wrench className="h-4 w-4 text-orange-600" />;
+  if (name.startsWith("llm.")) return <Bot className="h-4 w-4 text-blue-600" />;
+  return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
+}
+
+function structuredTraceDetails(event: Record<string, unknown>, t: Translate): ReactNode {
+  const labels: Record<string, string> = {
+    finish_reason: tx(t, "settings.enhancements.trace.fields.finishReason", "Finish reason"),
+    tool_names: tx(t, "settings.enhancements.trace.fields.toolNames", "Tools selected"),
+    tool_count: tx(t, "settings.enhancements.trace.fields.toolCount", "Tool count"),
+    context_window_tokens: tx(t, "settings.enhancements.trace.fields.contextWindow", "Context window"),
+    model_message_count: tx(t, "settings.enhancements.trace.fields.modelMessages", "Messages sent to model"),
+    message_count: tx(t, "settings.enhancements.trace.fields.messageCount", "Message count"),
+    stop_reason: tx(t, "settings.enhancements.trace.fields.stopReason", "Stop reason"),
+    side_effect: tx(t, "settings.enhancements.trace.fields.sideEffect", "Side effect"),
+    lifecycle_state: tx(t, "settings.enhancements.trace.fields.lifecycleState", "Tool state"),
+    tools_used: tx(t, "settings.enhancements.trace.fields.toolsUsed", "Tools used"),
+    usage: tx(t, "settings.enhancements.trace.fields.usage", "Token usage"),
+    tool_capabilities: tx(t, "settings.enhancements.trace.fields.toolCapabilities", "Capabilities"),
+    read_only: tx(t, "settings.enhancements.trace.fields.readOnly", "Read-only"),
+    concurrency_safe: tx(t, "settings.enhancements.trace.fields.concurrencySafe", "Concurrency safe"),
+    exclusive: tx(t, "settings.enhancements.trace.fields.exclusive", "Exclusive tool"),
+    reason: tx(t, "settings.enhancements.trace.fields.reason", "Reason"),
+    retry_attempt: tx(t, "settings.enhancements.trace.fields.retryAttempt", "Retry attempt"),
+    pending_tool_count: tx(t, "settings.enhancements.trace.fields.pendingToolCount", "Pending tools"),
+    completed_tool_count: tx(t, "settings.enhancements.trace.fields.completedToolCount", "Completed tools"),
+  };
+  const details: Array<[string, unknown]> = [];
+  for (const key of [
+    "finish_reason",
+    "tool_names",
+    "tool_count",
+    "context_window_tokens",
+    "model_message_count",
+    "message_count",
+    "stop_reason",
+    "side_effect",
+    "lifecycle_state",
+    "tools_used",
+    "usage",
+    "tool_capabilities",
+    "read_only",
+    "concurrency_safe",
+    "exclusive",
+  ]) {
+    if (event[key] !== undefined && event[key] !== null && event[key] !== "") {
+       details.push([labels[key] ?? key, event[key]]);
+    }
+  }
+  if (event.detail) details.push([tx(t, "settings.enhancements.trace.detail", "Detail"), event.detail]);
+  if (event.error) details.push([tx(t, "settings.enhancements.trace.error", "Error"), event.error]);
+  if (details.length === 0) return null;
+  return (
+    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+      {details.map(([label, value]) => (
+        <InlineRecordPreview key={label} label={label} value={value} maxLength={360} />
+      ))}
+    </div>
+  );
+}
+
+function StructuredTraceTimeline({ events }: { events: Array<Record<string, unknown>> }) {
+  const { t } = useTranslation();
+  const visibleEvents = [...events]
+    .filter((event) => !["turn.accepted", "agent.started", "stage.started", "iteration.started"].includes(String(event.event ?? "")))
+    .sort((left, right) => Number(left.sequence ?? 0) - Number(right.sequence ?? 0));
+  return (
+    <div className="space-y-2">
+      {visibleEvents.map((event, index) => {
+        const duration = Number(event.duration_ms);
+        const hasDuration = Number.isFinite(duration) && duration >= 0;
+        return (
+          <details key={`${String(event.event ?? "event")}-${String(event.sequence ?? index)}`} className={`rounded-lg border ${structuredTraceTone(event)}`}>
+            <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-xs [&::-webkit-details-marker]:hidden">
+              {structuredTraceIcon(event)}
+              <span className="min-w-0 flex-1 font-medium text-settings-foreground">
+                {structuredTraceLabel(event, t)}
+              </span>
+              {hasDuration ? <span className="shrink-0 font-mono text-[11px] text-settings-muted">{formatDuration(duration)}</span> : null}
+              <span className="shrink-0 rounded-full bg-background/70 px-2 py-0.5 text-[11px] text-settings-muted">
+                {structuredTraceStatus(event, t)}
+              </span>
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-settings-muted" />
+            </summary>
+            <div className="border-t border-inherit px-3 pb-3 pt-1">
+              {structuredTraceDetails(event, t) ?? (
+                <div className="pt-2 text-[11px] text-settings-muted">
+                  {tx(t, "settings.enhancements.trace.noDetails", "No additional details were recorded.")}
+                </div>
+              )}
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
 function ReplayTurnSummary({
   detail,
   replayOk,
@@ -571,6 +855,7 @@ function ReplayTurnSummary({
     ? turn.final_content
     : lastMessageText(turn.final_messages, "assistant");
   const originalCounts = originalExecutionCounts(originalExecution);
+  const traceEvents = Array.isArray(detail.trace_events) ? detail.trace_events : [];
   const hasProblems = originalExecutionHasIssue(originalExecution)
     || failedTools.length > 0
     || providerErrors.length > 0
@@ -661,6 +946,8 @@ function ReplayTurnSummary({
         </span>
       </div>
 
+      <ToolPolicySummary events={traceEvents} t={t} />
+
       <div className="rounded-xl border border-settings-border bg-background/55 p-3">
         <div className="flex items-start gap-2">
           <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-settings-muted" />
@@ -674,7 +961,9 @@ function ReplayTurnSummary({
           </div>
         </div>
         <div className="mt-3 space-y-2">
-          {detail.events.length > 0 ? detail.events.map((event, index) => (
+          {traceEvents.length > 0 ? (
+            <StructuredTraceTimeline events={traceEvents} />
+          ) : detail.events.length > 0 ? detail.events.map((event, index) => (
             <ReplayTimelineEvent key={`${String(event.kind ?? "event")}-${index}`} event={event} index={index} />
           )) : (
             <div className="rounded-lg border border-dashed border-settings-border px-3 py-4 text-xs text-settings-muted">
@@ -699,6 +988,7 @@ function ReplayTurnSummary({
 function RawExecutionViewer({ detail }: { detail: BlackboxDetail }) {
   const { t } = useTranslation();
   const rawEvents = detail.events.map((event) => JSON.stringify(event)).join("\n");
+  const rawTraceEvents = (detail.trace_events ?? []).map((event) => JSON.stringify(event)).join("\n");
   return (
     <div className="flex h-full min-h-0 flex-col bg-settings-surface">
       <div className="shrink-0 border-b border-settings-border px-6 py-4">
@@ -731,6 +1021,22 @@ function RawExecutionViewer({ detail }: { detail: BlackboxDetail }) {
             </pre>
           </section>
 
+          {detail.trace_events && detail.trace_events.length > 0 ? (
+            <section>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold text-settings-foreground">
+                  {tx(t, "settings.enhancements.raw.traceEvents", "Structured execution timeline")}
+                </h4>
+                <span className="font-mono text-[11px] text-settings-muted">
+                  {tx(t, "settings.enhancements.raw.traceEventCount", "events.jsonl · {{count}} events", { count: detail.trace_events.length })}
+                </span>
+              </div>
+              <pre className="min-h-32 overflow-auto whitespace-pre-wrap break-all rounded-xl border border-settings-border bg-slate-950 p-4 font-mono text-[11px] leading-5 text-slate-100">
+                {rawTraceEvents}
+              </pre>
+            </section>
+          ) : null}
+
           <section>
             <div className="mb-2 flex items-center justify-between gap-2">
               <h4 className="text-sm font-semibold text-settings-foreground">
@@ -746,9 +1052,10 @@ function RawExecutionViewer({ detail }: { detail: BlackboxDetail }) {
           </section>
 
           <div className="text-xs text-settings-muted">
-            {tx(t, "settings.enhancements.raw.associatedFiles", "Files: turns.jsonl{{tools}}{{cassette}}", {
+            {tx(t, "settings.enhancements.raw.associatedFiles", "Files: turns.jsonl{{tools}}{{cassette}}{{events}}", {
               tools: detail.files.tools ? " · tools.jsonl" : "",
               cassette: detail.files.cassette ? ` · ${detail.files.cassette}` : "",
+              events: detail.files.events ? " · events.jsonl" : "",
             })}
           </div>
         </div>
@@ -764,6 +1071,10 @@ export function EnhancementsSettings() {
   const [status, setStatus] = useState<BlackboxStatus | null>(null);
   const [recordings, setRecordings] = useState<BlackboxRecording[]>([]);
   const [tokens, setTokens] = useState<BlackboxTokens | null>(null);
+  const [traces, setTraces] = useState<TraceSummary[]>([]);
+  const [traceFilter, setTraceFilter] = useState<TraceFilter>("all");
+  const [selectedTrace, setSelectedTrace] = useState<TraceDetail | null>(null);
+  const [traceLoading, setTraceLoading] = useState<string | null>(null);
   const [replay, setReplay] = useState<BlackboxReplayResult | null>(null);
   const [breakpoint, setBreakpoint] = useState<BlackboxBreakpoint | null>(null);
   const [breakAt, setBreakAt] = useState<string>("");
@@ -781,18 +1092,41 @@ export function EnhancementsSettings() {
         blackboxList(client),
         blackboxTokens(client, null),
       ]);
+      const nextTraces = await traceList(client, { filter: traceFilter }).catch(() => ({ traces: [], root: "" }));
       setStatus(nextStatus);
       setRecordings(nextRecordings.recordings);
       setTokens(nextTokens);
+      setTraces(nextTraces.traces);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [client]);
+  }, [client, traceFilter]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const subscribeTrace = client.onTrace;
+    if (typeof subscribeTrace !== "function") return;
+    const unsubscribe = subscribeTrace.call(client, (_chatId, trace) => {
+      const turnId = typeof trace.turn_id === "string" ? trace.turn_id : null;
+      if (turnId) {
+        setSelectedTrace((current) => {
+          if (current?.summary.turn_id !== turnId) return current;
+          return { ...current, events: [...current.events, trace] };
+        });
+      }
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void refresh(), 250);
+    });
+    return () => {
+      unsubscribe();
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
+    };
+  }, [client, refresh]);
 
   async function start() {
     setBusy("start");
@@ -886,6 +1220,22 @@ export function EnhancementsSettings() {
     }
   }
 
+  async function openTrace(trace: TraceSummary) {
+    if (selectedTrace?.summary.id === trace.id) {
+      setSelectedTrace(null);
+      return;
+    }
+    setTraceLoading(trace.id);
+    setError(null);
+    try {
+      setSelectedTrace(await traceDetail(client, trace.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTraceLoading(null);
+    }
+  }
+
   const usagePct =
     tokens && tokens.context_window_tokens > 0 && tokens.usage_ratio != null
       ? Math.round(tokens.usage_ratio * 1000) / 10
@@ -897,25 +1247,76 @@ export function EnhancementsSettings() {
       <section className="rounded-2xl border border-violet-200 bg-violet-50/70 p-5 dark:border-violet-900 dark:bg-violet-950/20">
         <div className="flex items-start gap-3">
           <Bug className="mt-0.5 h-5 w-5 shrink-0 text-violet-600" />
-          <div>
-            <h2 className="text-lg font-semibold text-settings-foreground">
-              {tx(t, "settings.enhancements.title", "Record & Replay")}
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-700 dark:text-violet-300">
+              {tx(t, "settings.enhancements.kicker", "Agent execution workbench")}
+            </div>
+            <h2 className="mt-1 text-lg font-semibold text-settings-foreground">
+              {tx(t, "settings.enhancements.title", "Agent execution & regression")}
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-settings-foreground">
-              {tx(t, "settings.enhancements.explainer", "Save a real agent run as a test sample. Replay it offline with the recorded model responses and tool results to see whether the current orchestration still follows the same path.")}
+              {tx(t, "settings.enhancements.explainer", "See what each turn did, save a complete run when you need to reproduce a problem, then validate code changes offline.")}
             </p>
-            <div className="mt-4 grid gap-3 text-xs text-settings-foreground sm:grid-cols-3">
-              <div className="rounded-xl bg-white/70 p-3 dark:bg-black/20">
-                <div className="font-semibold">{tx(t, "settings.enhancements.steps.recordTitle", "1. Record a real task")}</div>
-                <div className="mt-1 text-settings-muted">{tx(t, "settings.enhancements.steps.recordDetail", "The request, model decisions, tool calls, and observations are saved.")}</div>
+            <div className="mt-5 grid gap-3 text-xs text-settings-foreground lg:grid-cols-3">
+              <div className="flex h-full flex-col rounded-xl border border-blue-200 border-l-4 bg-white/80 p-4 dark:border-blue-900 dark:bg-black/20">
+                <div className="flex items-center justify-between gap-2">
+                  <Gauge className="h-5 w-5 text-blue-600" />
+                  <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">
+                    {tx(t, "settings.enhancements.modes.automatic", "Automatic")}
+                  </span>
+                </div>
+                <div className="mt-3 font-semibold">{tx(t, "settings.enhancements.modes.liveTitle", "1. Live execution record")}</div>
+                <div className="mt-1 flex-1 text-settings-muted">{tx(t, "settings.enhancements.modes.liveDetail", "Every turn gets a lightweight record of stages, timing, and failures. Full prompts and tool outputs are not copied here.")}</div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3 w-fit px-0 text-xs"
+                  onClick={() => scrollToSection("execution-traces")}
+                >
+                  {tx(t, "settings.enhancements.modes.liveAction", "View live records")}
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
               </div>
-              <div className="rounded-xl bg-white/70 p-3 dark:bg-black/20">
-                <div className="font-semibold">{tx(t, "settings.enhancements.steps.changeTitle", "2. Change code or investigate")}</div>
-                <div className="mt-1 text-settings-muted">{tx(t, "settings.enhancements.steps.changeDetail", "Useful when checking the agent loop, context handling, or tool flow.")}</div>
+              <div className="flex h-full flex-col rounded-xl border border-violet-200 border-l-4 bg-white/80 p-4 dark:border-violet-900 dark:bg-black/20">
+                <div className="flex items-center justify-between gap-2">
+                  <FileCheck2 className="h-5 w-5 text-violet-600" />
+                  <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-800 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-300">
+                    {tx(t, "settings.enhancements.modes.manual", "Manual")}
+                  </span>
+                </div>
+                <div className="mt-3 font-semibold">{tx(t, "settings.enhancements.modes.sampleTitle", "2. Save a regression sample")}</div>
+                <div className="mt-1 flex-1 text-settings-muted">{tx(t, "settings.enhancements.modes.sampleDetail", "Keep the full request, model responses, tool calls, and tool results from every session until you stop.")}</div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3 w-fit px-0 text-xs"
+                  onClick={() => scrollToSection("regression-samples")}
+                >
+                  {tx(t, "settings.enhancements.modes.sampleAction", "Save a sample")}
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
               </div>
-              <div className="rounded-xl bg-white/70 p-3 dark:bg-black/20">
-                <div className="font-semibold">{tx(t, "settings.enhancements.steps.replayTitle", "3. Replay and compare")}</div>
-                <div className="mt-1 text-settings-muted">{tx(t, "settings.enhancements.steps.replayDetail", "No token cost, no network calls, and no real tool side effects.")}</div>
+              <div className="flex h-full flex-col rounded-xl border border-emerald-200 border-l-4 bg-white/80 p-4 dark:border-emerald-900 dark:bg-black/20">
+                <div className="flex items-center justify-between gap-2">
+                  <Play className="h-5 w-5 text-emerald-600" />
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
+                    {tx(t, "settings.enhancements.modes.offline", "Offline")}
+                  </span>
+                </div>
+                <div className="mt-3 font-semibold">{tx(t, "settings.enhancements.modes.validationTitle", "3. Validate offline")}</div>
+                <div className="mt-1 flex-1 text-settings-muted">{tx(t, "settings.enhancements.modes.validationDetail", "Use the saved responses and tool results to check the current orchestration without provider requests or real side effects.")}</div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3 w-fit px-0 text-xs"
+                  onClick={() => scrollToSection(replay ? "offline-validation" : "regression-samples")}
+                >
+                  {tx(t, "settings.enhancements.modes.validationAction", "Choose a sample")}
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
               </div>
             </div>
           </div>
@@ -929,7 +1330,7 @@ export function EnhancementsSettings() {
         </div>
       ) : null}
 
-      <section className="rounded-xl border border-settings-border bg-settings-surface p-5">
+      <section id="regression-samples" className="scroll-mt-4 rounded-xl border border-settings-border bg-settings-surface p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Radio
@@ -940,15 +1341,20 @@ export function EnhancementsSettings() {
               }
             />
             <div>
-              <h3 className="text-base font-semibold text-settings-foreground">
-                {status?.recording
-                  ? tx(t, "settings.enhancements.recording.activeTitle", "Collecting an execution sample")
-                  : tx(t, "settings.enhancements.recording.inactiveTitle", "Record a task")}
-              </h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold text-settings-foreground">
+                  {status?.recording
+                    ? tx(t, "settings.enhancements.recording.activeTitle", "Saving a regression sample")
+                    : tx(t, "settings.enhancements.recording.inactiveTitle", "Save a regression sample")}
+                </h3>
+                <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-800 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-300">
+                  {tx(t, "settings.enhancements.modes.manual", "Manual")}
+                </span>
+              </div>
               <p className="text-xs text-settings-muted">
                 {status?.recording
-                  ? tx(t, "settings.enhancements.recording.activeHint", "Every task from every session will be added until you stop recording.")
-                  : tx(t, "settings.enhancements.recording.inactiveHint", "Start recording, run the task you want to keep, then stop when it is complete.")}
+                  ? tx(t, "settings.enhancements.recording.activeHint", "Every turn from every session is added until you stop saving.")
+                  : tx(t, "settings.enhancements.recording.inactiveHint", "Save the next execution you want to inspect, then stop when it is complete.")}
               </p>
             </div>
           </div>
@@ -956,12 +1362,12 @@ export function EnhancementsSettings() {
             {status?.recording ? (
               <Button variant="secondary" size="sm" onClick={() => void stop()} disabled={busy !== null}>
                 {busy === "stop" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
-                {tx(t, "settings.enhancements.recording.stop", "Stop recording")}
+                {tx(t, "settings.enhancements.recording.stop", "Stop saving")}
               </Button>
             ) : (
               <Button variant="secondary" size="sm" onClick={() => void start()} disabled={busy !== null}>
                 {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CircleDashed className="h-4 w-4" />}
-                {tx(t, "settings.enhancements.recording.start", "Start recording")}
+                {tx(t, "settings.enhancements.recording.start", "Save as regression sample")}
               </Button>
             )}
             <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={busy !== null}>
@@ -973,20 +1379,20 @@ export function EnhancementsSettings() {
 
         {status?.recording && status.directory ? (
           <div className="mb-4 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-300">
-            {tx(t, "settings.enhancements.recording.currentSample", "Current sample:")} {" "}
+            {tx(t, "settings.enhancements.recording.currentSample", "Current regression sample:")} {" "}
             <span className="font-mono">{status.directory.split(/[\\/]/).pop()}</span>
           </div>
         ) : null}
 
         {status?.recording ? (
           <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-300">
-            {tx(t, "settings.enhancements.recording.allSessions", "Every session is included between Start and Stop.")}
+            {tx(t, "settings.enhancements.recording.allSessions", "Every session's turns are included from Save until Stop.")}
           </div>
         ) : null}
 
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-settings-border bg-settings-hover/40 px-3 py-2 text-xs text-settings-muted">
           <Info className="h-4 w-4 shrink-0" />
-          {tx(t, "settings.enhancements.recording.offlineInfo", "Offline replay uses the sample's model responses and tool results. It will not make a new model request or execute a real tool.")}
+          {tx(t, "settings.enhancements.recording.offlineInfo", "The sample below is used for offline validation. It will not make a new model request or execute a real tool.")}
         </div>
 
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -1008,8 +1414,17 @@ export function EnhancementsSettings() {
         </div>
 
         {recordings.length > 0 ? (
-          <div className="flex flex-col gap-2">
-            {recordings.map((recording) => {
+          <div>
+            <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+              <h4 className="text-sm font-semibold text-settings-foreground">
+                {tx(t, "settings.enhancements.recording.savedTitle", "Saved regression samples")}
+              </h4>
+              <span className="text-xs text-settings-muted">
+                {tx(t, "settings.enhancements.recording.savedDescription", "Choose a sample below to validate the current code offline.")}
+              </span>
+            </div>
+            <div className="flex flex-col gap-2">
+              {recordings.map((recording) => {
               const isReady = recording.status === "ready";
               const replayBusy = busy === `replay:${recording.directory}`;
               const deleteBusy = busy === `delete:${recording.directory}`;
@@ -1033,7 +1448,7 @@ export function EnhancementsSettings() {
                       </div>
                       <div className="mt-1 text-xs text-settings-muted">
                           {isReady
-                            ? tx(t, "settings.enhancements.recording.savedTurns", "{{count}} task(s) saved", { count: recording.turns })
+                            ? tx(t, "settings.enhancements.recording.savedTurns", "{{count}} turn(s) saved", { count: recording.turns })
                             : recordingStatusMessage(recording, t)}
                       </div>
                     </div>
@@ -1047,8 +1462,8 @@ export function EnhancementsSettings() {
                     >
                       {replayBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                       {breakAt
-                        ? tx(t, "settings.enhancements.recording.breakpointReplay", "Replay to breakpoint")
-                        : tx(t, "settings.enhancements.recording.replay", "Replay offline")}
+                        ? tx(t, "settings.enhancements.recording.breakpointReplay", "Validate to breakpoint")
+                        : tx(t, "settings.enhancements.recording.replay", "Validate offline")}
                     </Button>
                     <Button
                       variant="ghost"
@@ -1063,25 +1478,131 @@ export function EnhancementsSettings() {
                   </div>
                 </div>
               );
-            })}
+              })}
+            </div>
           </div>
         ) : (
           <div className="rounded-xl border border-dashed border-settings-border px-4 py-6 text-center text-sm text-settings-muted">
-            {tx(t, "settings.enhancements.recording.empty", "No execution samples yet. Start recording, run a task, then come back and stop recording.")}
+            {tx(t, "settings.enhancements.recording.empty", "No regression samples yet. Save a run, finish the task, then stop saving.")}
+          </div>
+        )}
+      </section>
+
+      <section id="execution-traces" className="scroll-mt-4 rounded-xl border border-settings-border bg-settings-surface p-5">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-2">
+            <Gauge className="mt-0.5 h-5 w-5 text-settings-muted" />
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold text-settings-foreground">
+                  {tx(t, "settings.enhancements.trace.recentTitle", "Live execution records")}
+                </h3>
+                <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">
+                  {tx(t, "settings.enhancements.modes.automatic", "Automatic")}
+                </span>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-settings-muted">
+                {tx(t, "settings.enhancements.trace.recentDescription", "A lightweight record is created automatically for every turn. It shows stages, timing, and failures without copying the full prompt or tool output.")}
+              </p>
+            </div>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={busy !== null}>
+            <RefreshCw className="h-4 w-4" />
+            {tx(t, "settings.enhancements.recording.refresh", "Refresh")}
+          </Button>
+        </div>
+        <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label={tx(t, "settings.enhancements.trace.filterLabel", "Trace filter")}>
+          {(["all", "issues", "slow"] as const).map((filter) => (
+            <Button
+              key={filter}
+              type="button"
+              variant={traceFilter === filter ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setTraceFilter(filter)}
+              disabled={busy !== null}
+            >
+              {filter === "all"
+                ? tx(t, "settings.enhancements.trace.filterAll", "All")
+                : filter === "issues"
+                  ? tx(t, "settings.enhancements.trace.filterIssues", "Issues")
+                  : tx(t, "settings.enhancements.trace.filterSlow", "Slow (≥2s)")}
+            </Button>
+          ))}
+        </div>
+        {traces.length > 0 ? (
+          <div className="space-y-2">
+            {traces.map((trace) => {
+              const toolFailures = trace.tool_failure_count ?? 0;
+              const providerErrors = trace.provider_error_count ?? 0;
+              const uncertainSideEffects = trace.unknown_side_effect_count ?? 0;
+              const hasFailure = trace.failure_count > 0 || trace.status === "error" || trace.status === "cancelled";
+              const isActive = trace.status === "accepted" || trace.status === "running";
+              const issueSummary = [
+                toolFailures > 0
+                  ? tx(t, "settings.enhancements.trace.toolFailures", "{{count}} tool failures", { count: toolFailures })
+                  : "",
+                providerErrors > 0
+                  ? tx(t, "settings.enhancements.trace.providerErrors", "{{count}} model errors", { count: providerErrors })
+                  : "",
+                uncertainSideEffects > 0
+                  ? tx(t, "settings.enhancements.trace.unknownSideEffects", "{{count}} uncertain side effects", { count: uncertainSideEffects })
+                  : "",
+              ].filter(Boolean).join(" · ");
+              return (
+                <div key={trace.id} className="rounded-lg border border-settings-border">
+                  <button
+                    type="button"
+                    onClick={() => void openTrace(trace)}
+                    className="flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-settings-hover"
+                  >
+                    {hasFailure ? <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" /> : isActive ? <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-blue-600" /> : <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-mono text-xs text-settings-foreground">{trace.session_key ?? trace.id}</span>
+                      <span className="mt-1 block text-[11px] text-settings-muted">
+                        {trace.event_count} {tx(t, "settings.enhancements.trace.events", "events")} · {trace.tool_count} {tx(t, "settings.enhancements.trace.tools", "tools")} {trace.duration_ms != null ? ` · ${formatDuration(trace.duration_ms)}` : ""}
+                        {issueSummary ? ` · ${issueSummary}` : ""}
+                      </span>
+                    </span>
+                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${hasFailure ? "border-amber-200 bg-amber-50 text-amber-800" : isActive ? "border-blue-200 bg-blue-50 text-blue-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+                      {hasFailure
+                        ? tx(t, "settings.enhancements.trace.needsAttention", "Needs attention")
+                        : isActive
+                          ? tx(t, "settings.enhancements.trace.running", "Running")
+                          : tx(t, "settings.enhancements.trace.completed", "Completed")}
+                    </span>
+                    {traceLoading === trace.id ? <Loader2 className="h-4 w-4 animate-spin text-settings-muted" /> : selectedTrace?.summary.id === trace.id ? <ChevronDown className="h-4 w-4 text-settings-muted" /> : <ChevronRight className="h-4 w-4 text-settings-muted" />}
+                  </button>
+                  {selectedTrace?.summary.id === trace.id ? (
+                    <div className="border-t border-settings-border bg-settings-hover/25 p-3">
+                      <StructuredTraceTimeline events={selectedTrace.events} />
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-settings-border px-3 py-4 text-xs text-settings-muted">
+            {tx(t, "settings.enhancements.trace.empty", "No execution traces are available yet.")}
           </div>
         )}
       </section>
 
       {replay ? (
-        <section className="rounded-xl border border-settings-border bg-settings-surface p-5">
+        <section id="offline-validation" className="scroll-mt-4 rounded-xl border border-settings-border bg-settings-surface p-5">
           <div className="flex items-start gap-3">
-            <Bug className="mt-0.5 h-5 w-5 shrink-0 text-violet-600" />
+            <Play className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
             <div className="min-w-0">
-              <h3 className="text-base font-semibold text-settings-foreground">
-                {tx(t, "settings.enhancements.result.title", "Offline replay result")}
-              </h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold text-settings-foreground">
+                  {tx(t, "settings.enhancements.result.title", "Offline validation")}
+                </h3>
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
+                  {tx(t, "settings.enhancements.modes.offline", "Offline")}
+                </span>
+              </div>
               <p className="mt-1 text-xs text-settings-muted">
-                {tx(t, "settings.enhancements.result.description", "Replay consistency and the original run's health are shown separately. Replay does not grade the model's answer quality.")}
+                {tx(t, "settings.enhancements.result.description", "The two questions are separate: did the current code reproduce the recorded path, and did the original run contain an error?")}
               </p>
             </div>
           </div>
@@ -1126,11 +1647,31 @@ export function EnhancementsSettings() {
               </div>
             </div>
           </div>
+          {replay.benchmark ? (
+            <div className="mt-3 rounded-xl border border-settings-border bg-background/60 p-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-settings-foreground">
+                <Gauge className="h-4 w-4 text-settings-muted" />
+                {tx(t, "settings.enhancements.result.benchmarkTitle", "Replay benchmark")}
+              </div>
+              <div className="mt-1 text-xs text-settings-muted">
+                {tx(t, "settings.enhancements.result.benchmarkSummary", "{{turns}} turn(s) · {{total}} total · {{average}} average · {{slowest}} slowest", {
+                  turns: replay.benchmark.turns,
+                  total: formatDuration(replay.benchmark.total_elapsed_ms),
+                  average: formatDuration(replay.benchmark.average_elapsed_ms),
+                  slowest: formatDuration(replay.benchmark.slowest_elapsed_ms),
+                })}
+              </div>
+            </div>
+          ) : null}
           <p className="mt-3 text-xs text-settings-muted">
             {tx(t, "settings.enhancements.result.detailHint", "Open a turn for the readable trace. Use View raw record for the complete JSON.")}
           </p>
           <div className="mt-4 flex flex-col gap-1">
-            {replay.results.map((row, index) => (
+            {replay.results.map((row, index) => {
+              const messageDiffs = Array.isArray(row.message_diffs) ? row.message_diffs : row.diffs;
+              const traceDiffs = Array.isArray(row.trace_diffs) ? row.trace_diffs : [];
+              const traceChecked = row.trace_comparable === true;
+              return (
               <div key={row.turn_id} className="rounded-lg border border-settings-border">
                 <button
                   type="button"
@@ -1167,6 +1708,17 @@ export function EnhancementsSettings() {
                       <span className={`rounded-full border px-2 py-0.5 text-[11px] ${originalExecutionTone(row.original_execution)}`}>
                         {tx(t, "settings.enhancements.result.originalLabel", "Original execution")} · {originalExecutionLabel(row.original_execution, t)}
                       </span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[11px] ${traceChecked
+                        ? traceDiffs.length > 0
+                          ? "border-amber-200 bg-amber-50 text-amber-800"
+                          : "border-blue-200 bg-blue-50 text-blue-800"
+                        : "border-settings-border bg-background/70 text-settings-muted"}`}>
+                        {tx(t, "settings.enhancements.result.traceComparison", "Trace comparison")} · {traceChecked
+                          ? traceDiffs.length > 0
+                            ? tx(t, "settings.enhancements.result.traceDifferences", "{{count}} trace difference(s)", { count: traceDiffs.length })
+                            : tx(t, "settings.enhancements.result.traceConsistent", "Consistent")
+                          : tx(t, "settings.enhancements.result.traceUnavailable", "Not in sample")}
+                      </span>
                     </div>
                   </div>
                   {detailLoading === row.turn_id ? (
@@ -1181,15 +1733,35 @@ export function EnhancementsSettings() {
                   <div>
                     {row.diffs.length > 0 ? (
                       <div className="border-t border-settings-border bg-settings-hover/50 p-3">
-                        <div className="mb-2 text-xs font-medium text-settings-muted">
-                          {tx(t, "settings.enhancements.result.differenceTitle", "Differences from the recording")}
-                        </div>
-                        <div className="flex flex-col gap-2">
-                          {row.diffs.map((diff, diffIndex) => (
-                            <pre key={diffIndex} className="whitespace-pre-wrap break-all font-mono text-xs text-settings-foreground">
-                              {typeof diff === "string" ? diff : JSON.stringify(diff, null, 2)}
-                            </pre>
-                          ))}
+                        <div className="space-y-3">
+                          {messageDiffs.length > 0 ? (
+                            <div>
+                              <div className="mb-2 text-xs font-medium text-settings-muted">
+                                {tx(t, "settings.enhancements.result.messageDifferenceTitle", "Message differences")}
+                              </div>
+                              <div className="flex flex-col gap-2">
+                                {messageDiffs.map((diff, diffIndex) => (
+                                  <pre key={diffIndex} className="whitespace-pre-wrap break-all font-mono text-xs text-settings-foreground">
+                                    {typeof diff === "string" ? diff : JSON.stringify(diff, null, 2)}
+                                  </pre>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {traceDiffs.length > 0 ? (
+                            <div>
+                              <div className="mb-2 text-xs font-medium text-settings-muted">
+                                {tx(t, "settings.enhancements.result.traceDifferenceTitle", "Execution trace differences")}
+                              </div>
+                              <div className="flex flex-col gap-2">
+                                {traceDiffs.map((diff, diffIndex) => (
+                                  <pre key={diffIndex} className="whitespace-pre-wrap break-all font-mono text-xs text-settings-foreground">
+                                    {typeof diff === "string" ? diff : JSON.stringify(diff, null, 2)}
+                                  </pre>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     ) : null}
@@ -1208,7 +1780,8 @@ export function EnhancementsSettings() {
                   </div>
                 ) : null}
               </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       ) : null}

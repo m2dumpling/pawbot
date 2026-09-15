@@ -243,7 +243,16 @@ uv run pawbot gateway logs
 
 ## Record & Replay（录制与回放）
 
-录制一个真实回合：
+Pawbot 把三个容易混淆的用途分开：
+
+- **实时执行记录**：每个回合自动生成，只展示阶段、耗时、状态和错误，
+  不复制完整 Prompt 或工具返回值。
+- **回归样本**：用户主动保存一次完整执行，包含请求、模型响应、工具调用和
+  工具返回；从开始保存到停止期间，所有会话都会写入同一份样本。
+- **离线验证**：使用回归样本重走当前 Agent 编排，不请求供应商、不执行真实工具，
+  用来判断代码修改后原来的执行路径是否仍然一致。
+
+保存一次真实执行作为回归样本：
 
 ```bash
 uv run pawbot agent \
@@ -266,12 +275,23 @@ uv run pawbot replay .pawbot/blackbox/demo
 加上 `--benchmark` 可以输出不请求 Provider 的本地回放耗时，以及消息和 diff
 数量。
 
-在 WebUI 的 **设置 → Record & Replay** 中也可以完成同样的流程：点击“开始录制”，
-可以切换或新开多个会话，最后点击“停止录制”。录制窗口属于整个 Agent，停止前的
+在 WebUI 的 **设置 → 执行与回归** 中也可以完成同样的流程：点击“保存为回归样本”，
+可以切换或新开多个会话，最后点击“停止保存”。保存窗口属于整个 Agent，停止前的
 所有回合都会写入同一份样本。残缺样本会保留并显示原因，也可以直接在前端删除，
-不会等到回放时才报错。
+不会等到离线验证时才报错。
 
-回放后，展开任意回合即可看到可读的执行过程：用户请求、Provider 实际返回的模型思考
+网关正在运行时，也可以从 CLI 控制：
+
+```bash
+uv run pawbot record start --name demo
+uv run pawbot record status
+uv run pawbot record stop
+uv run pawbot record list
+uv run pawbot trace list --filter errors
+uv run pawbot trace show <trace-id>
+```
+
+离线验证后，展开任意回合即可看到可读的执行过程：用户请求、Provider 实际返回的模型思考
 记录、模型决策、工具调用、工具返回预览和最终回答，并且按实际发生顺序排列。长参数和
 返回值可以在对应事件内展开；点击“查看原始记录”则会进入全屏窗口查看完整 JSON/JSONL。
 绿色结果只表示在录制输入和工具观测保持不变时没有发现可观察差异，不是模型质量评分。

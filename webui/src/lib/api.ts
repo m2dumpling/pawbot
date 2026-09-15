@@ -1142,6 +1142,7 @@ export interface BlackboxRecording {
   directory: string;
   name: string;
   turns: number;
+  trace_events?: number;
   status: "ready" | "invalid";
   message: string;
   reason?: "missing_turn_file" | "unreadable" | "malformed" | "no_valid_turns" | string;
@@ -1156,11 +1157,18 @@ export interface BlackboxReplayResult {
   original_failed_tool_calls: number;
   original_provider_errors: number;
   original_unknown_side_effects: number;
+  trace_comparable_turns?: number;
+  trace_diff_turns?: number;
+  benchmark?: ReplayBenchmark;
   summary: string;
   results: Array<{
     turn_id: string;
     ok: boolean;
     diffs: unknown[];
+    message_diffs?: unknown[];
+    trace_diffs?: unknown[];
+    trace_comparable?: boolean;
+    benchmark?: ReplayBenchmark | null;
     summary: string;
     original_execution: {
       status: string;
@@ -1172,11 +1180,22 @@ export interface BlackboxReplayResult {
   }>;
 }
 
+export interface ReplayBenchmark {
+  turns: number;
+  total_elapsed_ms: number;
+  average_elapsed_ms: number;
+  fastest_elapsed_ms: number;
+  slowest_elapsed_ms: number;
+  trace_comparable_turns?: number;
+  trace_diff_turns?: number;
+}
+
 export interface BlackboxDetail {
   directory: string;
   turn_id: string;
   turn: Record<string, unknown>;
   events: Array<Record<string, unknown>>;
+  trace_events?: Array<Record<string, unknown>>;
   counts: {
     llm_responses: number;
     tool_calls: number;
@@ -1186,6 +1205,7 @@ export interface BlackboxDetail {
     turns: string;
     tools: string | null;
     cassette: string | null;
+    events?: string | null;
   };
 }
 
@@ -1205,6 +1225,34 @@ export interface BlackboxTokens {
   estimated_tokens: number;
   context_window_tokens: number;
   usage_ratio: number | null;
+}
+
+export interface TraceSummary {
+  id: string;
+  trace_id: string;
+  session_key: string | null;
+  turn_id: string;
+  channel: string;
+  chat_id: string;
+  model?: string | null;
+  provider?: string | null;
+  owner_pid?: number | null;
+  status: string;
+  stop_reason?: string | null;
+  duration_ms?: number | null;
+  event_count: number;
+  tool_count: number;
+  failure_count: number;
+  tool_failure_count?: number;
+  provider_error_count?: number;
+  unknown_side_effect_count?: number;
+  max_step_duration_ms?: number;
+  timestamp_ms?: number | null;
+}
+
+export interface TraceDetail {
+  summary: TraceSummary;
+  events: Array<Record<string, unknown>>;
 }
 
 export async function blackboxStatus(
@@ -1269,4 +1317,26 @@ export async function blackboxTokens(
   return mutation<BlackboxTokens>(transport, "blackbox.tokens", {
     session_key: sessionKey ?? null,
   });
+}
+
+export async function traceList(
+  transport: WebUIMutationTransport,
+  options?: {
+    filter?: "all" | "issues" | "slow";
+    sessionKey?: string | null;
+    limit?: number;
+  },
+): Promise<{ traces: TraceSummary[]; root: string }> {
+  return mutation(transport, "trace.list", {
+    filter: options?.filter ?? "all",
+    session_key: options?.sessionKey ?? null,
+    limit: options?.limit ?? 50,
+  });
+}
+
+export async function traceDetail(
+  transport: WebUIMutationTransport,
+  id: string,
+): Promise<TraceDetail> {
+  return mutation<TraceDetail>(transport, "trace.detail", { id });
 }

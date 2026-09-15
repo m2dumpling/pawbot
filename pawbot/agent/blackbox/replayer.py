@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 _TOOLS_JSONL = "tools.jsonl"
 _TURNS_JSONL = "turns.jsonl"
+_TRACE_EVENTS_JSONL = "events.jsonl"
 
 _UNSET = object()
 
@@ -277,10 +278,21 @@ class ReplayBreakpointError(Exception):
 ReplayBreakpoint = ReplayBreakpointError
 
 
+class ReplayTraceWriter:
+    """In-memory event sink used to compare a replay with its source trace."""
+
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+
+    def append(self, event: dict[str, Any]) -> None:
+        self.events.append(dict(event))
+
+
 class ReplayProbe(AgentHook):
     """Observes one replayed turn and supports the iteration breakpoint."""
 
     def __init__(self, turn: RecordedTurn, break_at: int | None = None) -> None:
+        super().__init__(reraise=True)
         self._turn = turn
         self._break_at = break_at
         self.messages: list[dict[str, Any]] = []
@@ -312,12 +324,15 @@ class ReplayController:
         if not self.turns:
             raise ValueError(f"no recorded turns found in {directory}")
         self.store = self._load_store()
+        self._trace_by_turn = self._load_trace_events()
         self._vcr = self._load_vcr()
         # Populated by AgentLoop.replay_all when a breakpoint is hit, so callers
         # (e.g. the WebUI) can surface the dumped messages instead of a bare
         # exception.
         self.last_breakpoint: dict[str, Any] | None = None
         self.last_benchmark: list[dict[str, Any]] = []
+        self.last_benchmark_summary: dict[str, Any] = {}
+        self.last_replay_details: list[dict[str, Any]] = []
 
     def _load_turns(self) -> list[RecordedTurn]:
         turns: list[RecordedTurn] = []
@@ -348,6 +363,36 @@ class ReplayController:
             with open(path, encoding="utf-8") as fh:
                 records = [json.loads(line) for line in fh]
         return ReplayStore(records)
+
+    def _load_trace_events(self) -> dict[str, list[dict[str, Any]]]:
+        """Load optional structured traces without making old fixtures invalid."""
+        path = self.directory / _TRACE_EVENTS_JSONL
+        if not path.exists():
+            return {}
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        try:
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    try:
+                        value = json.loads(line)
+                    except json.JSONDecodeError:
+                        logger.warning("Skipping malformed replay trace event in {}", path)
+                        continue
+                    if not isinstance(value, dict):
+                        continue
+                    event = cast(dict[str, Any], value)
+                    turn_id = event.get("turn_id")
+                    if isinstance(turn_id, str) and turn_id:
+                        grouped.setdefault(turn_id, []).append(event)
+        except (OSError, UnicodeError):
+            logger.warning("Replay trace events are unreadable: {}", path)
+        return grouped
+
+    def trace_events(self, turn_id: str) -> list[dict[str, Any]]:
+        """Return the recorded structured events for one turn, if available."""
+        return list(self._trace_by_turn.get(turn_id, []))
 
     @staticmethod
     def _load_vcr() -> Any | None:
@@ -417,4 +462,100 @@ def compare_messages(actual: list[dict[str, Any]], expected: list[dict[str, Any]
     for i, (a, b) in enumerate(zip(left, right)):
         if a != b:
             diffs.append(f"message[{i}] differs:\n  recorded: {b}\n  replayed: {a}")
+    return diffs
+
+
+_TRACE_VOLATILE_FIELDS = {
+    "schema_version",
+    "sequence",
+    "trace_id",
+    "session_key",
+    "turn_id",
+    "channel",
+    "chat_id",
+    "timestamp_ms",
+    "duration_ms",
+    "owner_pid",
+    "usage",
+    # These describe the execution environment, not orchestration behavior:
+    # replay deliberately avoids side effects and uses a different detail note.
+    "side_effect",
+    "detail",
+}
+
+
+def _trace_error_fingerprint(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    error = cast(dict[str, Any], value)
+    return {
+        key: error[key]
+        for key in ("type", "code", "status_code", "kind", "retryable")
+        if key in error
+    }
+
+
+def _normalize_trace_value(value: Any, *, key: str | None = None) -> Any:
+    if key == "error":
+        return _trace_error_fingerprint(value)
+    if key == "budget" and isinstance(value, dict):
+        # Budget limits are part of the replay contract; wall-clock elapsed time
+        # is not, because replay is intentionally much faster than the live run.
+        mapping = cast(dict[str, Any], value)
+        return {
+            section: {
+                child_key: _normalize_trace_value(child_value, key=child_key)
+                for child_key, child_value in cast(dict[str, Any], child_value_map).items()
+                if child_key != "elapsed_seconds"
+            }
+            if isinstance(child_value_map, dict)
+            else _normalize_trace_value(child_value_map, key=section)
+            for section, child_value_map in mapping.items()
+        }
+    if isinstance(value, dict):
+        mapping = cast(dict[str, Any], value)
+        return {
+            child_key: _normalize_trace_value(child_value, key=child_key)
+            for child_key, child_value in mapping.items()
+        }
+    if isinstance(value, (list, tuple)):
+        sequence = cast(list[Any] | tuple[Any, ...], value)
+        return [_normalize_trace_value(item) for item in sequence]
+    return value
+
+
+def _comparable_trace_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep deterministic lifecycle facts while dropping transport/time noise."""
+    comparable: list[dict[str, Any]] = []
+    for event in events:
+        name = str(event.get("event") or "")
+        if not name or name.startswith(("stage.", "context.", "checkpoint.", "recovery.", "turn.")):
+            continue
+        comparable.append({
+            key: _normalize_trace_value(value, key=key)
+            for key, value in event.items()
+            if key not in _TRACE_VOLATILE_FIELDS
+        })
+    return comparable
+
+
+def compare_trace_events(
+    actual: list[dict[str, Any]],
+    expected: list[dict[str, Any]],
+) -> list[str]:
+    """Compare replay lifecycle facts, independent of timing and process IDs."""
+    left = _comparable_trace_events(actual)
+    right = _comparable_trace_events(expected)
+    if left == right:
+        return []
+    diffs: list[str] = []
+    if len(left) != len(right):
+        diffs.append(f"trace event count differs: {len(right)} != {len(left)}")
+    for index, (replayed, recorded) in enumerate(zip(left, right)):
+        if replayed != recorded:
+            diffs.append(
+                f"trace event[{index}] differs:\n"
+                f"  recorded: {recorded}\n"
+                f"  replayed: {replayed}"
+            )
     return diffs

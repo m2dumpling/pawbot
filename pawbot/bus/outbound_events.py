@@ -113,6 +113,13 @@ class TurnModelUpdatedEvent(OutboundEvent):
     fallback: bool = False
 
 
+@dataclass(frozen=True)
+class TraceEvent(OutboundEvent):
+    """One lightweight execution-trace event for subscribed local clients."""
+
+    payload: dict[str, Any]
+
+
 def outbound_message_for_event(
     *,
     channel: str,

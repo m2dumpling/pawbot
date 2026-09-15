@@ -18,6 +18,10 @@ class AgentHookContext:
 
     iteration: int
     messages: list[dict[str, Any]]
+    model: str | None = None
+    provider: str | None = None
+    model_message_count: int = 0
+    context_window_tokens: int | None = None
     response: LLMResponse | None = None
     usage: LLMUsage | None = None
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
@@ -77,6 +81,10 @@ class AgentHook:
     def wants_streaming(self) -> bool:
         return False
 
+    def observes_model_retry(self) -> bool:
+        """Whether the runner should wrap the provider retry callback."""
+        return self.__class__.on_model_retry is not AgentHook.on_model_retry
+
     async def before_run(self, context: AgentRunHookContext) -> None:
         pass
 
@@ -104,6 +112,30 @@ class AgentHook:
         event: dict[str, Any],
     ) -> None:
         """Observe a provider-hosted tool lifecycle event."""
+        pass
+
+    async def on_model_response(self, context: AgentHookContext) -> None:
+        """Observe a normalized model response before tools are executed."""
+        pass
+
+    async def on_model_request_started(self, context: AgentHookContext) -> None:
+        """Observe the start of one provider request attempt."""
+        pass
+
+    async def on_model_retry(self, context: AgentHookContext, reason: str) -> None:
+        """Observe a provider retry before its backoff wait."""
+        pass
+
+    async def on_model_error(self, context: AgentHookContext, error: BaseException) -> None:
+        """Observe a provider exception that prevented a model response."""
+        pass
+
+    async def on_budget_exhausted(
+        self,
+        context: AgentHookContext,
+        reason: str,
+    ) -> None:
+        """Observe an operation blocked by the turn budget."""
         pass
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
@@ -186,6 +218,9 @@ class CompositeHook(AgentHook):
     def wants_streaming(self) -> bool:
         return any(h.wants_streaming() for h in self._hooks)
 
+    def observes_model_retry(self) -> bool:
+        return any(h.observes_model_retry() for h in self._hooks)
+
     async def _for_each_hook_safe(self, method_name: str, *args: Any, **kwargs: Any) -> None:
         for h in self._hooks:
             if getattr(h, "_reraise", False):
@@ -224,6 +259,25 @@ class CompositeHook(AgentHook):
         event: dict[str, Any],
     ) -> None:
         await self._for_each_hook_safe("on_provider_tool_event", context, event)
+
+    async def on_model_response(self, context: AgentHookContext) -> None:
+        await self._for_each_hook_safe("on_model_response", context)
+
+    async def on_model_request_started(self, context: AgentHookContext) -> None:
+        await self._for_each_hook_safe("on_model_request_started", context)
+
+    async def on_model_retry(self, context: AgentHookContext, reason: str) -> None:
+        await self._for_each_hook_safe("on_model_retry", context, reason)
+
+    async def on_model_error(self, context: AgentHookContext, error: BaseException) -> None:
+        await self._for_each_hook_safe("on_model_error", context, error)
+
+    async def on_budget_exhausted(
+        self,
+        context: AgentHookContext,
+        reason: str,
+    ) -> None:
+        await self._for_each_hook_safe("on_budget_exhausted", context, reason)
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
         await self._for_each_hook_safe("before_execute_tools", context)

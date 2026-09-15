@@ -1,17 +1,20 @@
 # Record & Replay
 
-Record & Replay is pawbot's offline regression harness for agent behavior.
+Record & Replay is pawbot's detailed regression layer for Agent behavior.
+Lightweight live execution records are created automatically for every turn;
+this layer is the deliberate, full-fidelity sample used for offline validation.
 It freezes the provider-response rail and the tool-observation rail, then runs
 the current orchestration code against those recorded inputs.
 
-In WebUI, click **Start recording**, execute one or more tasks, and click
-**Stop recording** when the sample is complete. The recording window belongs to
-the AgentLoop rather than one chat session: switching sessions while recording
+In WebUI, open **Settings → Execution & regression**, click
+**Save as regression sample**, execute one or more tasks, and click
+**Stop saving** when the sample is complete. The capture window belongs to the
+AgentLoop rather than one chat session: switching sessions while saving
 continues appending turns to the same directory.
 
 ## What it guarantees
 
-During replay:
+During offline validation:
 
 - no new provider request is required;
 - no new model token is spent;
@@ -25,13 +28,13 @@ During replay:
 It does not make a live model deterministic and does not replace live provider,
 network, or integration tests.
 
-The WebUI marks a directory as **ready** only when `turns.jsonl` contains valid
+The WebUI marks a directory as **ready for offline validation** only when `turns.jsonl` contains valid
 turn envelopes. A partially created or malformed directory remains visible so
 that it can be diagnosed or deleted; it is not presented as a replayable sample.
 Deleting a recording removes its local prompt, response, tool-result, and
 optional HTTP cassette files.
 
-After replay, expand any turn in the WebUI to see a readable execution trace:
+After offline validation, expand any turn in the WebUI to see a readable execution trace:
 
 - the user request and final answer;
 - model thinking when the provider actually returned a thinking field;
@@ -66,6 +69,16 @@ pawbot replay .pawbot/blackbox/run-1 --benchmark
 pawbot agent \
   --replay .pawbot/blackbox/run-1 \
   --break-at 2
+
+# control a sample window in a running gateway
+pawbot record start --name run-1
+pawbot record status
+pawbot record stop
+pawbot record list
+
+# inspect automatic live execution records
+pawbot trace list --filter errors
+pawbot trace show <trace-id>
 ```
 
 ## Artifact layout

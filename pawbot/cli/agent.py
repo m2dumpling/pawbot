@@ -6,7 +6,7 @@ import signal
 import sys
 from collections.abc import Awaitable, Callable
 from types import FrameType
-from typing import Any
+from typing import Any, cast
 
 import typer
 from rich.console import Console
@@ -90,10 +90,10 @@ def agent(
         help="Terminal UI appearance: auto, dark, or light",
     ),
     record: str | None = typer.Option(
-        None, "--record", help="Record this session into a blackbox directory",
+        None, "--record", help="Save this session as a regression sample",
     ),
     replay: str | None = typer.Option(
-        None, "--replay", help="Replay a recorded blackbox directory offline (zero-token)",
+        None, "--replay", help="Validate a saved regression sample offline (zero-token)",
     ),
     break_at: int | None = typer.Option(
         None, "--break-at", help="In replay mode: pause at iteration N and dump messages",
@@ -295,10 +295,38 @@ def agent(
                     for diff in diffs:
                         print("  " + diff)
             print(
-                f"\nReplay complete: {len(results) - failed}/{len(results)} turns deterministic"
+                f"\nOffline validation complete: {len(results) - failed}/{len(results)} turns matched"
             )
+            raw_replay_details: Any = getattr(blackbox, "last_replay_details", [])
+            replay_details: list[dict[str, Any]] = (
+                [
+                    cast(dict[str, Any], detail)
+                    for detail in cast(list[Any], raw_replay_details)
+                    if isinstance(detail, dict)
+                ]
+                if isinstance(raw_replay_details, list)
+                else []
+            )
+            trace_checked = sum(
+                1 for detail in replay_details if detail.get("trace_comparable") is True
+            )
+            trace_diff_turns = sum(
+                1 for detail in replay_details if detail.get("trace_diffs")
+            )
+            if trace_checked:
+                print(
+                    "Trace comparison: "
+                    f"{trace_checked}/{len(results)} turns checked, "
+                    f"{trace_diff_turns} turn(s) with trace differences"
+                )
             if benchmark:
                 print("\nReplay benchmark (local, provider-free):")
+                benchmark_summary = getattr(blackbox, "last_benchmark_summary", {})
+                if isinstance(benchmark_summary, dict):
+                    print(
+                        "  total={total_elapsed_ms} ms, average={average_elapsed_ms} ms, "
+                        "slowest={slowest_elapsed_ms} ms".format(**benchmark_summary)
+                    )
                 for row in getattr(blackbox, "last_benchmark", []):
                     print(
                         "  {turn_id}: {elapsed_ms} ms, {messages} messages, "
@@ -521,7 +549,7 @@ def agent(
 
 
 def _build_blackbox(record: str | None, replay: str | None, break_at: int | None) -> Any | None:
-    """Construct the Record & Replay controller from CLI flags (ADR-004)."""
+    """Construct the capture or offline-validation controller from CLI flags."""
     if record is None and replay is None:
         return None
     from pawbot.agent.blackbox import BlackboxController, ReplayController

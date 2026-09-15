@@ -202,6 +202,10 @@ def capability_settings_payload(
             ),
             "base_url": os.environ.get("LANGFUSE_BASE_URL")
             or "https://cloud.langfuse.com",
+            "local_trace_enabled": config.observability.enabled,
+            "local_trace_retention_days": config.observability.retention_days,
+            "local_trace_max_traces": config.observability.max_traces,
+            "local_trace_max_bytes": config.observability.max_bytes,
         },
         "image_generation": {
             "enabled": image_config.enabled,

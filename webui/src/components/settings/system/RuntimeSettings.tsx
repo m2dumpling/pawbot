@@ -323,6 +323,39 @@ export function RuntimeSettings({
         <SettingsSectionTitle>{tx("settings.observability.title", "Observability")}</SettingsSectionTitle>
         <SettingsGroup>
           <SettingsRow
+            title={tx("settings.observability.localTrace", "Local execution trace")}
+            description={tx(
+              "settings.observability.localTraceDescription",
+              "Every new turn records timing, steps, and outcomes locally. Full prompts and tool results are saved only when detailed recording is enabled.",
+            )}
+          >
+            <StatusPill tone={settings.observability?.local_trace_enabled === false ? "neutral" : "success"}>
+              {settings.observability?.local_trace_enabled === false
+                ? tx("settings.observability.localTraceDisabled", "Disabled")
+                : tx("settings.observability.localTraceEnabled", "Enabled")}
+            </StatusPill>
+          </SettingsRow>
+          {settings.observability?.local_trace_enabled !== false ? (
+            <SettingsRow
+              title={tx("settings.rows.logs", "Retention")}
+              description={
+                settings.observability?.local_trace_retention_days != null
+                  ? t("settings.observability.localTraceRetention", {
+                    defaultValue: "Keeps {{days}} days · {{count}} trace files",
+                    days: settings.observability.local_trace_retention_days,
+                    count: settings.observability.local_trace_max_traces ?? "—",
+                  })
+                  : undefined
+              }
+            >
+              <span className="text-[12px] text-muted-foreground">
+                {settings.observability?.local_trace_max_bytes != null
+                  ? `${Math.round(settings.observability.local_trace_max_bytes / 1024 / 1024)} MB`
+                  : "—"}
+              </span>
+            </SettingsRow>
+          ) : null}
+          <SettingsRow
             title="Langfuse"
             description={
               settings.observability?.configured

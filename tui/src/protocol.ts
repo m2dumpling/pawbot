@@ -102,6 +102,18 @@ export interface RecoveryState {
   can_continue?: boolean
 }
 
+export interface ExecutionTraceEvent {
+  event: string
+  trace_id?: string
+  session_key?: string | null
+  turn_id?: string
+  status?: string
+  duration_ms?: number
+  iteration?: number
+  tool_name?: string
+  [key: string]: unknown
+}
+
 export type InboundEvent =
   | { event: "ready"; chat_id: string; client_id: string }
   | {
@@ -140,6 +152,12 @@ export type InboundEvent =
       turn_id?: string
     }
   | { event: "file_edit"; chat_id: string; edits: FileEditEvent[]; turn_id?: string }
+  | {
+      event: "execution_trace"
+      chat_id: string
+      trace: ExecutionTraceEvent
+      turn_id?: string
+    }
   | { event: "delta"; chat_id: string; text: string; stream_id?: string; turn_id?: string }
   | {
       event: "stream_end"

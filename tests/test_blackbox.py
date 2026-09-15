@@ -21,6 +21,7 @@ from pawbot.agent.blackbox.replayer import (
     ReplayController,
     ReplayProvider,
     compare_messages,
+    compare_trace_events,
 )
 from pawbot.agent.hook import AgentHookContext, AgentRunHookContext
 from pawbot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
@@ -330,6 +331,9 @@ async def test_loop_replay_preserves_current_budget_and_capability_policy() -> N
     assert spec.budget.max_tool_calls == 3
     assert spec.budget.max_wall_seconds == 12.0
     assert spec.denied_tool_capabilities == frozenset({"execute"})
+    assert controller.last_benchmark[0]["trace_comparable"] is False
+    assert controller.last_benchmark_summary["turns"] == 1
+    assert controller.last_replay_details[0]["trace_diffs"] == []
 
 
 async def test_replay_consumes_repeated_identical_tool_calls_in_order(
@@ -486,6 +490,33 @@ def test_compare_messages_ignores_provider_reasoning_and_reports_counts_correctl
     diffs = compare_messages(different, recorded)
     assert any("message[0] differs" in diff for diff in diffs)
     assert not any("message count differs: 1 != 1" in diff for diff in diffs)
+
+
+def test_compare_trace_events_ignores_transport_noise_and_detects_flow_changes():
+    recorded = [{
+        "schema_version": 1,
+        "sequence": 4,
+        "trace_id": "trace:old",
+        "timestamp_ms": 100,
+        "duration_ms": 1200,
+        "event": "tool.finished",
+        "iteration": 0,
+        "call_id": "call-1",
+        "tool_name": "exec",
+        "status": "succeeded",
+        "side_effect": "may_have_occurred",
+    }]
+    replayed = [{
+        **recorded[0],
+        "sequence": 99,
+        "trace_id": "trace:new",
+        "timestamp_ms": 200,
+        "duration_ms": 8,
+    }]
+    assert compare_trace_events(replayed, recorded) == []
+    changed = [{**replayed[0], "tool_name": "read_file"}]
+    diffs = compare_trace_events(changed, recorded)
+    assert any("trace event[0] differs" in diff for diff in diffs)
 
 
 @pytest.mark.asyncio

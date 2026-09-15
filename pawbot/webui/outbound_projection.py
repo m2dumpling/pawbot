@@ -14,6 +14,7 @@ from pawbot.bus.outbound_events import (
     RecoveryStateEvent,
     RuntimeModelUpdatedEvent,
     SessionUpdatedEvent,
+    TraceEvent,
     TurnEndEvent,
     TurnModelUpdatedEvent,
     UserInputEvent,
@@ -99,6 +100,8 @@ class WebUIOutboundTransport(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> None: ...
 
+    async def send_trace_event(self, chat_id: str, payload: dict[str, Any]) -> None: ...
+
     async def send_projected_message(
         self,
         msg: OutboundMessage,
@@ -152,6 +155,7 @@ class WebUIOutboundProjector:
                 SessionUpdatedEvent,
                 GoalStatusEvent,
                 GoalStateSyncEvent,
+                TraceEvent,
             )
             log = (
                 logger.debug
@@ -234,6 +238,10 @@ class WebUIOutboundProjector:
         if isinstance(event, SessionUpdatedEvent):
             if conns:
                 await self._transport.send_session_updated(msg.chat_id, scope=event.scope)
+            return
+        if isinstance(event, TraceEvent):
+            if conns:
+                await self._transport.send_trace_event(msg.chat_id, event.payload)
             return
         if progress_event and progress_event.file_edit_events:
             await self._transport.send_file_edit_events(

@@ -10,6 +10,9 @@ node_modules/
 work/
 sessions/
 run/
+/blackbox/
+/traces/
+**/.recording.json
 .bun/
 .venv/
 venv/

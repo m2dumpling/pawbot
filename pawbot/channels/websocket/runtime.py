@@ -1077,6 +1077,21 @@ class WebSocketChannel(BaseChannel):
         for connection in conns:
             await self._safe_send_to(connection, raw, label=" file_edit ")
 
+    async def send_trace_event(self, chat_id: str, payload: dict[str, Any]) -> None:
+        """Push one lightweight execution event without persisting it to chat history."""
+        conns = list(self._subs.get(chat_id, ()))
+        body: dict[str, Any] = {
+            "event": "execution_trace",
+            "chat_id": chat_id,
+            "trace": payload,
+        }
+        turn_id = payload.get("turn_id")
+        if isinstance(turn_id, str) and turn_id:
+            body["turn_id"] = turn_id
+        raw = json.dumps(body, ensure_ascii=False)
+        for connection in conns:
+            await self._safe_send_to(connection, raw, label=" execution_trace ")
+
     async def send_delta(
         self,
         chat_id: str,

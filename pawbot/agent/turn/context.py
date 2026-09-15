@@ -12,7 +12,7 @@ import time
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from pawbot.agent.hook import AgentHook, AgentTurnHookFactory
 from pawbot.agent.tools.context import RequestContext
@@ -24,6 +24,9 @@ from pawbot.runtime_context import RuntimeContextBlock
 from pawbot.session.manager import Session
 from pawbot.session.summary import SessionSummary
 from pawbot.utils.llm_runtime import LLMRuntime
+
+if TYPE_CHECKING:
+    from pawbot.agent.observability import TraceRun
 
 
 class TurnKind(Enum):
@@ -75,6 +78,7 @@ class TurnContext:
     hook_factories: list[AgentTurnHookFactory] = field(default_factory=list)
     turn_scopes: list[AbstractContextManager[Any]] = field(default_factory=list)
     tools: ToolRegistry | None = None
+    trace: TraceRun | None = field(default=None, repr=False)
 
     turn_wall_started_at: float = field(default_factory=time.time)
     visible_run_started_at: float | None = None
