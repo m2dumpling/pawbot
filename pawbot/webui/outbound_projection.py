@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from loguru import logger
 
@@ -123,9 +123,11 @@ class WebUIOutboundProjector:
         self,
         transport: WebUIOutboundTransport,
         session_projection: WebUISessionProjection,
+        pending_tool_approvals: Callable[[str], list[dict[str, Any]]] | None = None,
     ) -> None:
         self._transport = transport
         self._session_projection = session_projection
+        self._pending_tool_approvals = pending_tool_approvals
 
     async def hydrate(self, chat_id: str) -> None:
         """Replay reconnect state through the existing stable wire operations."""
@@ -142,6 +144,9 @@ class WebUIOutboundProjector:
                 started_at=event["started_at"],
                 turn_id=event.get("turn_id"),
             )
+        if self._pending_tool_approvals is not None:
+            for request in self._pending_tool_approvals(chat_id):
+                await self._transport.send_tool_approval(chat_id, request)
 
     async def send(self, msg: OutboundMessage) -> None:
         event = outbound_event_from_message(msg)

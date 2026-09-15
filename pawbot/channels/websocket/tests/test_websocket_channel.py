@@ -133,6 +133,7 @@ def _basic_handler(bus: Any, **kw: Any) -> GatewayServices:
         runtime_model_name=None,
         runtime_surface=kw.get("runtime_surface", "browser"),
         runtime_capabilities_overrides=kw.get("runtime_capabilities_overrides"),
+        tool_approval_pending=kw.get("tool_approval_pending"),
     )
 
 
@@ -3493,6 +3494,42 @@ async def test_hydrate_noop_without_session_manager() -> None:
     channel._attach(mock_ws, "chat-1")
     await channel._outbound.hydrate("chat-1")
     mock_ws.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hydrate_replays_pending_tool_approval() -> None:
+    bus = MagicMock()
+    request = {
+        "request_id": "approval-1",
+        "call_id": "call-1",
+        "name": "write_file",
+        "arguments": {"path": "notes.txt"},
+        "capabilities": ["write"],
+        "session_key": "websocket:chat-1",
+        "iteration": 0,
+        "created_at_ms": 1_700,
+        "channel": "websocket",
+        "chat_id": "chat-1",
+    }
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"]},
+        bus,
+        gateway=_basic_handler(
+            bus,
+            tool_approval_pending=lambda chat_id: [request] if chat_id == "chat-1" else [],
+        ),
+    )
+    mock_ws = AsyncMock()
+    channel._attach(mock_ws, "chat-1")
+
+    await channel._outbound.hydrate("chat-1")
+
+    mock_ws.send.assert_awaited_once()
+    assert json.loads(mock_ws.send.await_args.args[0]) == {
+        "event": "tool_approval",
+        "chat_id": "chat-1",
+        "request": request,
+    }
 
 
 @pytest.mark.asyncio

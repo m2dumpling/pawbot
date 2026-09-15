@@ -372,7 +372,11 @@ class WebSocketChannel(BaseChannel):
         self._webui_request_tasks = self._commands.request_tasks
         self._webui_request_operations = self._commands.request_operations
         self._webui_request_locks = self._commands.request_locks
-        self._outbound = WebUIOutboundProjector(self, self._session_projection)
+        self._outbound = WebUIOutboundProjector(
+            self,
+            self._session_projection,
+            pending_tool_approvals=gateway.tool_approval_pending,
+        )
 
         self._stream_text_buffers: dict[tuple[str, str], list[str]] = {}
         self._reasoning_text_buffers: dict[tuple[str, str], list[str]] = {}
@@ -473,9 +477,6 @@ class WebSocketChannel(BaseChannel):
     async def _hydrate_after_subscribe(self, chat_id: str) -> None:
         """Replay persisted or actively running per-chat state after subscribe."""
         await self._outbound.hydrate(chat_id)
-        if self.gateway.tool_approval_pending is not None:
-            for request in self.gateway.tool_approval_pending(chat_id):
-                await self.send_tool_approval(chat_id, request)
 
     async def _send_event(
         self,
