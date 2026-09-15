@@ -225,5 +225,8 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --all-extras --dev
 
+      - name: Install channel dependencies
+        run: uv run --no-sync python -m scripts.install_channel_dependencies --all-channels
+
       - name: Run Agent quality gate
         run: uv run --no-sync python scripts/quality_gate.py
