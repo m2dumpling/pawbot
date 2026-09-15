@@ -30,6 +30,7 @@ from typing import Any, Callable, Protocol, cast
 
 from loguru import logger
 
+from pawbot.agent.approval import ToolApprovalRequest, ToolApprovalResult
 from pawbot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 
 TRACE_SCHEMA_VERSION = 1
@@ -415,6 +416,38 @@ class TraceHook(AgentHook):
                 tool_name=str(getattr(tool_call, "name", "") or "unknown"),
                 argument_keys=argument_keys,
             )
+
+    async def on_tool_approval_requested(
+        self,
+        context: AgentHookContext,
+        request: ToolApprovalRequest,
+    ) -> None:
+        self._trace.emit(
+            "tool.approval_requested",
+            status="waiting",
+            iteration=context.iteration,
+            call_id=request.call_id or None,
+            tool_name=request.name,
+            approval_id=request.request_id,
+            argument_keys=sorted(request.arguments),
+            tool_capabilities=list(request.capabilities),
+        )
+
+    async def on_tool_approval_resolved(
+        self,
+        context: AgentHookContext,
+        request: ToolApprovalRequest,
+        decision: ToolApprovalResult,
+    ) -> None:
+        self._trace.emit(
+            "tool.approval_resolved",
+            status="approved" if decision.approved else "denied",
+            iteration=context.iteration,
+            call_id=request.call_id or None,
+            tool_name=request.name,
+            approval_id=request.request_id,
+            reason=redact_text(decision.reason) if decision.reason else None,
+        )
 
     async def on_model_response(self, context: AgentHookContext) -> None:
         response = context.response

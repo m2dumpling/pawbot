@@ -208,3 +208,22 @@ jobs:
           uv run --no-sync pytest -q
           tests/test_blackbox.py::test_public_sanitized_fixture_is_loadable
           tests/test_blackbox.py::test_record_then_replay_is_deterministic
+
+  quality-gate:
+    name: AI change quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run Agent quality gate
+        run: uv run --no-sync python scripts/quality_gate.py

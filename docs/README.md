@@ -7,6 +7,7 @@ public technical documents that are useful for users and contributors.
 ## Core documents
 
 - [Record & Replay](record-replay.md)
+- [Agent Harness Benchmark](agent-harness.md)
 - [Model capability registry](model-capabilities.md)
 - [Release notes](release-notes/0.3.7.md)
 - [Changelog](../CHANGELOG.md)

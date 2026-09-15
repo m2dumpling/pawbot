@@ -27,6 +27,12 @@ from typing import Any, cast
 
 from loguru import logger
 
+from pawbot.agent.approval import (
+    DEFAULT_APPROVAL_CAPABILITIES,
+    ToolApprovalCallback,
+    ToolApprovalRequest,
+    ToolApprovalResult,
+)
 from pawbot.agent.hook import AgentHook, AgentHookContext
 from pawbot.agent.tools.registry import ToolRegistry, ToolResult, is_tool_error_result
 from pawbot.providers.base import ToolCallRequest
@@ -195,6 +201,10 @@ class CallExecutor:
         hook: AgentHook,
         context: AgentHookContext,
         denied_tool_capabilities: frozenset[str] = frozenset(),
+        tool_approval_callback: ToolApprovalCallback | None = None,
+        approval_capabilities: frozenset[str] = DEFAULT_APPROVAL_CAPABILITIES,
+        channel: str = "",
+        chat_id: str | None = None,
     ) -> None:
         self._tools = tools
         self._external_lookup_counts = external_lookup_counts
@@ -202,6 +212,10 @@ class CallExecutor:
         self._context = context
         self._classifier = ViolationClassifier(workspace_violation_counts)
         self._denied_tool_capabilities = denied_tool_capabilities
+        self._tool_approval_callback = tool_approval_callback
+        self._approval_capabilities = approval_capabilities
+        self._channel = channel
+        self._chat_id = chat_id
 
     def _state_record(self, tool_call: ToolCallRequest) -> dict[str, Any]:
         record: dict[str, Any] = {
@@ -236,6 +250,14 @@ class CallExecutor:
     @staticmethod
     def _side_effect_class(tool: Any) -> str:
         return "none" if bool(getattr(tool, "read_only", False)) else "may_have_occurred"
+
+    @staticmethod
+    def _needs_approval(tool: Any, approval_capabilities: frozenset[str]) -> bool:
+        if bool(getattr(tool, "read_only", False)):
+            return False
+        raw_capabilities = getattr(tool, "capabilities", frozenset({"write"}))
+        capabilities = frozenset(str(value) for value in raw_capabilities)
+        return bool(capabilities & approval_capabilities) or not capabilities
 
     async def run(self, tool_call: ToolCallRequest) -> tuple[Any, dict[str, str]]:
         lifecycle = self._state_record(tool_call)
@@ -303,6 +325,69 @@ class CallExecutor:
                 f"Error: tool '{tool_call.name}' requires denied capabilities: {', '.join(denied)}"
             ), event
 
+        if (
+            self._tool_approval_callback is not None
+            and self._needs_approval(tool, self._approval_capabilities)
+        ):
+            capabilities = tuple(
+                sorted(str(value) for value in getattr(tool, "capabilities", {"write"}))
+            )
+            request = ToolApprovalRequest.create(
+                call_id=str(tool_call.id or ""),
+                name=tool_call.name,
+                arguments=cast(dict[str, Any], params) if isinstance(params, dict) else {},
+                capabilities=capabilities,
+                session_key=self._context.session_key,
+                iteration=self._context.iteration,
+                channel=self._channel,
+                chat_id=self._chat_id,
+            )
+            await self._hook.on_tool_approval_requested(self._context, request)
+            try:
+                decision = await self._tool_approval_callback(request)
+            except asyncio.CancelledError:
+                cancelled = ToolApprovalResult.deny("turn cancelled")
+                await self._hook.on_tool_approval_resolved(
+                    self._context,
+                    request,
+                    cancelled,
+                )
+                self._finish_state(
+                    lifecycle,
+                    lifecycle="blocked",
+                    side_effect="not_started",
+                    started_at=time.time(),
+                )
+                raise
+            except Exception as exc:
+                decision = ToolApprovalResult.deny(
+                    f"approval callback failed: {type(exc).__name__}"
+                )
+            await self._hook.on_tool_approval_resolved(self._context, request, decision)
+            if not decision.approved:
+                reason = decision.reason or "user denied approval"
+                self._finish_state(
+                    lifecycle,
+                    lifecycle="blocked",
+                    side_effect="not_started",
+                    started_at=time.time(),
+                )
+                denial = ToolResult.error(
+                    f"Error: tool '{tool_call.name}' was not approved: {reason}"
+                )
+                await self._hook.on_execute_tool_error(
+                    self._context,
+                    tool_call,
+                    tool,
+                    params,
+                    denial,
+                )
+                return denial, {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": f"approval denied: {reason}",
+                }
+
         started_at = time.time()
         lifecycle["state"] = "running"
         lifecycle["started_at"] = started_at
@@ -314,7 +399,8 @@ class CallExecutor:
             # isolation).
             from pawbot.agent.blackbox import lookup_replay_result, replay_is_active
 
-            found, replayed = lookup_replay_result(tool_call.name, params)
+            replay_args = cast(dict[str, Any], params) if isinstance(params, dict) else {}
+            found, replayed = lookup_replay_result(tool_call.name, replay_args)
             if found:
                 self._finish_state(
                     lifecycle,
@@ -463,6 +549,10 @@ async def execute_tool_calls(
     hook: AgentHook,
     context: AgentHookContext,
     denied_tool_capabilities: frozenset[str] = frozenset(),
+    tool_approval_callback: ToolApprovalCallback | None = None,
+    approval_capabilities: frozenset[str] = DEFAULT_APPROVAL_CAPABILITIES,
+    channel: str = "",
+    chat_id: str | None = None,
 ) -> tuple[list[Any], list[dict[str, str]]]:
     """Execute one model response's tool calls in stable result order.
 
@@ -476,6 +566,10 @@ async def execute_tool_calls(
         hook=hook,
         context=context,
         denied_tool_capabilities=denied_tool_capabilities,
+        tool_approval_callback=tool_approval_callback,
+        approval_capabilities=approval_capabilities,
+        channel=channel,
+        chat_id=chat_id,
     )
     results: list[Any] = []
     events: list[dict[str, str]] = []

@@ -57,6 +57,7 @@ from pawbot.cli import terminal as cli_terminal  # noqa: E402
 from pawbot.cli.agent import agent  # noqa: E402
 from pawbot.cli.gateway import create_gateway_app  # noqa: E402
 from pawbot.cli.gateway_runtime import _run_gateway  # noqa: E402
+from pawbot.cli.harness import harness_app  # noqa: E402
 from pawbot.cli.log_control import _set_pawbot_logs  # noqa: E402
 from pawbot.cli.process_identity import set_cli_process_identity  # noqa: E402
 from pawbot.cli.provider import provider_app  # noqa: E402
@@ -484,6 +485,14 @@ app.add_typer(
     ),
     name="gateway",
 )
+
+
+# ============================================================================
+# Agent Harness Benchmark
+# ============================================================================
+
+
+app.add_typer(harness_app, name="harness")
 
 
 # ============================================================================

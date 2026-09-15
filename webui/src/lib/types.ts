@@ -59,6 +59,19 @@ export interface RecoveryState {
   can_continue?: boolean;
 }
 
+export interface ToolApprovalRequest {
+  request_id: string;
+  call_id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  capabilities: string[];
+  session_key?: string | null;
+  iteration: number;
+  created_at_ms: number;
+  channel?: string;
+  chat_id?: string | null;
+}
+
 export interface ExecutionTraceEvent {
   event: string;
   trace_id?: string;
@@ -1373,6 +1386,11 @@ export type InboundEvent =
       event: "recovery_state";
       chat_id: string;
     } & RecoveryState)
+  | {
+      event: "tool_approval";
+      chat_id: string;
+      request: ToolApprovalRequest;
+    }
   | ({
       event: "file_edit";
       chat_id: string;

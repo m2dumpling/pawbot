@@ -30,6 +30,7 @@ from pawbot.bus.outbound_events import (
     RecoveryStateEvent,
     RuntimeModelUpdatedEvent,
     SessionUpdatedEvent,
+    ToolApprovalEvent,
     TurnEndEvent,
     TurnModelUpdatedEvent,
     UserInputEvent,
@@ -2824,6 +2825,53 @@ async def test_recovery_state_is_a_structured_event_not_assistant_text() -> None
         "recovery_id": "recovery-1",
         "reason": "tool_state_unknown",
         "attempts": 1,
+    }]
+
+
+@pytest.mark.asyncio
+async def test_tool_approval_is_a_non_persistent_structured_event() -> None:
+    bus = MagicMock()
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"]},
+        bus,
+        gateway=_basic_handler(bus),
+    )
+    mock_ws = AsyncMock()
+    channel._attach(mock_ws, "chat-1")
+
+    await channel.send(OutboundMessage(
+        channel="websocket",
+        chat_id="chat-1",
+        content="",
+        event=ToolApprovalEvent(request={
+            "request_id": "approval-1",
+            "call_id": "call-1",
+            "name": "write_file",
+            "arguments": {"path": "notes.txt"},
+            "capabilities": ["write"],
+            "session_key": "websocket:chat-1",
+            "iteration": 0,
+            "created_at_ms": 1_700,
+            "channel": "websocket",
+            "chat_id": "chat-1",
+        }),
+    ))
+
+    assert _sent_ws_payloads(mock_ws) == [{
+        "event": "tool_approval",
+        "chat_id": "chat-1",
+        "request": {
+            "request_id": "approval-1",
+            "call_id": "call-1",
+            "name": "write_file",
+            "arguments": {"path": "notes.txt"},
+            "capabilities": ["write"],
+            "session_key": "websocket:chat-1",
+            "iteration": 0,
+            "created_at_ms": 1_700,
+            "channel": "websocket",
+            "chat_id": "chat-1",
+        },
     }]
 
 

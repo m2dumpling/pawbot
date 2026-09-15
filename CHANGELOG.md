@@ -5,6 +5,22 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
+### Added
+
+- Added a deterministic Agent Harness Benchmark covering normal Tool use,
+  Tool failure recovery, Provider errors, model timeouts, cancellation, and
+  turn-budget boundaries.
+- Added `pawbot harness list/run` and a local/CI quality gate that combines
+  whitespace, Ruff, basedpyright, Harness, Agent/approval contract, and public
+  Record & Replay fixture checks.
+- Added task-level completion contracts alongside trajectory checks, so a
+  deterministic execution path is no longer presented as a task-quality score.
+- Added fail-closed Tool approval callbacks and `ToolApprovalManager` for
+  human confirmation before write, execute, or network-capable Tools run,
+  including WebUI and native TUI decision surfaces.
+- Added experiment and environment provenance to Harness reports and recorded
+  sample metadata without copying local paths or credentials.
+
 ## 0.3.9 - 2026-09-13
 
 ### Added

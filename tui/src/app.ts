@@ -39,6 +39,7 @@ import {
   type MentionCandidate,
   type MessageOptions,
   type RecoveryState,
+  type ToolApprovalRequest,
   type SkillCandidate,
   type SlashCommand,
   type SessionSummary,
@@ -87,6 +88,7 @@ import {
 import { PromptQueue, type QueuedPrompt } from "./prompt-queue"
 import { QueuePreview, type QueuePreviewTheme } from "./queue-preview"
 import { RecoveryNotice, type RecoveryNoticeTheme } from "./recovery-notice"
+import { ApprovalNotice, type ApprovalNoticeTheme } from "./approval-notice"
 import { RuntimeControls } from "./runtime-controls"
 import {
   contextualFooterHints,
@@ -131,6 +133,11 @@ interface ChatClient {
     chatId: string,
     recoveryId: string,
   ): Promise<RecoveryState>
+  resolveToolApproval?(
+    requestId: string,
+    chatId: string,
+    decision: "approved" | "denied",
+  ): Promise<boolean>
 }
 
 interface Palette {
@@ -344,6 +351,17 @@ function recoveryNoticeTheme(palette: Palette): RecoveryNoticeTheme {
   }
 }
 
+function approvalNoticeTheme(palette: Palette): ApprovalNoticeTheme {
+  return {
+    text: palette.text,
+    muted: palette.muted,
+    border: palette.border,
+    accent: palette.accent,
+    warning: palette.warning,
+    error: palette.error,
+  }
+}
+
 function footerHintTheme(palette: Palette): FooterHintTheme {
   return {
     accent: palette.accent,
@@ -512,6 +530,9 @@ export class PawbotTui {
   private lastFileEdits: FileEditEvent[] = []
   private recoveryState: RecoveryState | null = null
   private recoveryPending = false
+  private readonly approvalNotice: ApprovalNotice
+  private approvalRequest: ToolApprovalRequest | null = null
+  private approvalPending = false
   private readonly apiReauthenticator: ApiReauthenticator | undefined
   private readonly clipboardImageReader: ClipboardImageReader
   private readonly remoteTerminal: boolean
@@ -579,6 +600,13 @@ export class PawbotTui {
       {
         onContinue: () => void this.updateRecovery("continue"),
         onDismiss: () => void this.updateRecovery("dismiss"),
+      },
+    )
+    this.approvalNotice = new ApprovalNotice(
+      renderer,
+      approvalNoticeTheme(this.palette),
+      {
+        onDecision: (decision) => void this.resolveToolApproval(decision),
       },
     )
     this.client = client || new PawbotClient({
@@ -810,6 +838,7 @@ export class PawbotTui {
     this.shell.add(this.title)
     this.shell.add(this.queuePreview.root)
     this.shell.add(this.recoveryNotice.root)
+    this.shell.add(this.approvalNotice.root)
     this.shell.add(this.composerFrame)
     this.shell.add(statusRow)
     this.shell.add(this.diffViewer.root)
@@ -1068,6 +1097,9 @@ export class PawbotTui {
       }
       this.commandTurns.clear()
       this.modelCommandTurns.clear()
+      this.approvalRequest = null
+      this.approvalPending = false
+      this.approvalNotice.hide()
       const restoring = this.attachedOnce
       this.attachedOnce = true
       if (restoring) {
@@ -1166,6 +1198,12 @@ export class PawbotTui {
         }
         return
       }
+      case "tool_approval":
+        this.approvalRequest = event.request
+        this.approvalNotice.show(event.request)
+        this.activeLabel = "Awaiting approval"
+        this.setActive(true)
+        return
       case "reasoning_delta":
         this.activeLabel = "Thinking"
         this.setActive(true)
@@ -1190,6 +1228,9 @@ export class PawbotTui {
         this.transcript.finishActivity()
         if (this.currentFileEdits.length) this.lastFileEdits = this.currentFileEdits
         this.currentFileEdits = []
+        this.approvalRequest = null
+        this.approvalPending = false
+        this.approvalNotice.hide()
         if (this.diffViewer.visible) this.diffViewer.update(this.lastFileEdits)
         this.finalMessage = ""
         this.turnHadAnswer = false
@@ -1359,6 +1400,33 @@ export class PawbotTui {
     this.activeTurnId = null
     this.setActive(false)
     if (this.ready) this.status.content = this.readyStatus()
+  }
+
+  private async resolveToolApproval(decision: "approved" | "denied"): Promise<void> {
+    const request = this.approvalRequest
+    if (!request || this.approvalPending) return
+    this.approvalPending = true
+    this.approvalNotice.setBusy(true)
+    try {
+      const resolveToolApproval = this.client.resolveToolApproval
+      if (!resolveToolApproval) throw new Error("Tool approval is unavailable")
+      const resolved = await resolveToolApproval(
+        request.request_id,
+        this.client.activeChatId,
+        decision,
+      )
+      if (!resolved) throw new Error("Tool approval request is stale or unavailable")
+      this.approvalRequest = null
+      this.approvalNotice.hide()
+      this.activeLabel = "Working"
+      this.status.content = decision === "approved" ? "Approved · continuing" : "Denied · continuing"
+    } catch (error) {
+      this.approvalNotice.setBusy(false)
+      this.status.content = error instanceof Error ? error.message : String(error)
+    } finally {
+      this.approvalPending = false
+      this.composer.focus()
+    }
   }
 
   private async updateRecovery(action: "continue" | "dismiss"): Promise<void> {
@@ -1646,6 +1714,10 @@ export class PawbotTui {
       key.preventDefault()
       return
     }
+    if (this.approvalNotice.visible && !(key.ctrl && key.name === "c")) {
+      this.approvalNotice.handleKey(key)
+      return
+    }
     if (this.contextPanel.visible && key.name === "escape") {
       this.contextPanel.hide()
       this.status.content = this.readyStatus()
@@ -1910,6 +1982,7 @@ export class PawbotTui {
     this.diffViewer.setTheme(diffViewerTheme(this.palette, this.backgroundKnown))
     this.queuePreview.setTheme(queuePreviewTheme(this.palette))
     this.recoveryNotice.setTheme(recoveryNoticeTheme(this.palette))
+    this.approvalNotice.setTheme(approvalNoticeTheme(this.palette))
     this.updateComposerAppearance()
     this.composer.textColor = this.palette.text
     this.composer.focusedTextColor = this.palette.text
@@ -2828,6 +2901,9 @@ export class PawbotTui {
 
   private handleDestroy = (): void => {
     this.quitting = true
+    this.approvalRequest = null
+    this.approvalPending = false
+    this.approvalNotice.hide()
     this.clipboardPasteGeneration += 1
     if (this.shimmerTimer) clearInterval(this.shimmerTimer)
     this.stopSessionRefresh()

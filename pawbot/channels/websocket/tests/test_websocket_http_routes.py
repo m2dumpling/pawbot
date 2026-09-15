@@ -84,6 +84,7 @@ def _make_handler(
     channel_runtime_status: Any | None = None,
     mcp_reload: Any | None = None,
     recovery_action: Any | None = None,
+    tool_approval_action: Any | None = None,
 ) -> GatewayServices:
     config = WebSocketConfig.model_validate(cfg) if isinstance(cfg, dict) else cfg
     workspace = workspace_path or Path.cwd()
@@ -105,6 +106,7 @@ def _make_handler(
         channel_runtime_status=channel_runtime_status,
         mcp_reload=mcp_reload,
         recovery_action=recovery_action,
+        tool_approval_action=tool_approval_action,
     )
 
 
@@ -124,6 +126,7 @@ def _ch(
     channel_runtime_status: Any | None = None,
     mcp_reload: Any | None = None,
     recovery_action: Any | None = None,
+    tool_approval_action: Any | None = None,
     **extra: Any,
 ) -> WebSocketChannel:
     cfg: dict[str, Any] = {
@@ -149,6 +152,7 @@ def _ch(
         channel_runtime_status=channel_runtime_status,
         mcp_reload=mcp_reload,
         recovery_action=recovery_action,
+        tool_approval_action=tool_approval_action,
     )
     return InProcessHttpChannel(cfg, bus, gateway=gateway)
 
@@ -3272,6 +3276,46 @@ async def test_recovery_mutation_uses_authenticated_websocket_action(bus: MagicM
         "continue",
         {"chat_id": "chat-1", "recovery_id": "recovery-1"},
     )
+
+
+@pytest.mark.asyncio
+async def test_tool_approval_mutation_is_chat_bound_and_authenticated(bus: MagicMock) -> None:
+    approval_action = AsyncMock(return_value={
+        "resolved": True,
+        "request_id": "request-1",
+        "decision": "approved",
+    })
+    channel = _ch(bus, tool_approval_action=approval_action)
+
+    response = await _webui_mutate(
+        channel,
+        "tool.approval.resolve",
+        {
+            "chat_id": "chat-1",
+            "request_id": "request-1",
+            "decision": "approved",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["resolved"] is True
+    approval_action.assert_awaited_once_with({
+        "chat_id": "chat-1",
+        "request_id": "request-1",
+        "decision": "approved",
+    })
+
+    approval_action.return_value = {"resolved": False}
+    stale = await _webui_mutate(
+        channel,
+        "tool.approval.resolve",
+        {
+            "chat_id": "chat-1",
+            "request_id": "stale",
+            "decision": "denied",
+        },
+    )
+    assert stale.status_code == 409
 
 
 @pytest.mark.asyncio

@@ -1751,6 +1751,13 @@
     "dismiss": "Dismiss",
     "continue": "Continue"
   },
+  "toolApproval": {
+    "title": "Approval needed before the Agent runs a Tool",
+    "sideEffectNote": "The Tool has not run yet. Approve only if this action and its parameters are expected.",
+    "approve": "Approve",
+    "deny": "Deny",
+    "actionFailed": "Could not submit this decision. Try again."
+  },
   "lightbox": {
     "title": "Image preview",
     "open": "View image",

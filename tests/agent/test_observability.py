@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pawbot.agent.approval import ToolApprovalRequest, ToolApprovalResult
 from pawbot.agent.blackbox.recorder import BlackboxController
 from pawbot.agent.hook import AgentHookContext, AgentRunHookContext
 from pawbot.agent.loop import AgentLoop
@@ -412,3 +413,42 @@ def test_trace_store_enforces_count_and_size_retention(tmp_path: Path) -> None:
         if line.strip()
     ]
     assert len(index_rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_trace_records_approval_decision_without_raw_arguments(tmp_path: Path) -> None:
+    store = TraceStore(tmp_path / "traces")
+    trace = store.start_turn(
+        session_key="websocket:approval",
+        turn_id="turn-approval",
+        channel="websocket",
+        chat_id="approval",
+    )
+    assert trace is not None
+    hook = trace.hook(initial_messages=[], tools_count=1)
+    context = AgentHookContext(iteration=0, messages=[])
+    request = ToolApprovalRequest.create(
+        call_id="call-1",
+        name="write_file",
+        arguments={"value": "secret value"},
+        capabilities=("write",),
+        session_key="websocket:approval",
+        iteration=0,
+    )
+
+    await hook.on_tool_approval_requested(context, request)
+    await hook.on_tool_approval_resolved(
+        context,
+        request,
+        ToolApprovalResult.deny("operator rejected"),
+    )
+    trace.finish(status="completed", stop_reason="completed")
+
+    _, events = store.detail("websocket_approval/turn-approval.jsonl")
+    requested = next(event for event in events if event["event"] == "tool.approval_requested")
+    resolved = next(event for event in events if event["event"] == "tool.approval_resolved")
+    assert requested["status"] == "waiting"
+    assert requested["argument_keys"] == ["value"]
+    assert resolved["status"] == "denied"
+    assert resolved["reason"] == "operator rejected"
+    assert "secret value" not in json.dumps(events, ensure_ascii=False)

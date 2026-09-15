@@ -33,6 +33,7 @@ pawbot 最适合 Agent 开发者的能力是 **Record & Replay（录制与回放
 | 在终端执行一次请求 | [CLI](#cli) |
 | 接入聊天应用 | [通道与集成](#通道与集成) |
 | 了解回放能力 | [Record & Replay](#record--replay录制与回放) |
+| 验证 AI 修改后的代码 | [Agent Harness Benchmark](#agent-harness-benchmark) |
 | 修改 Agent 或增加工具 | [开发](#开发) |
 
 ## pawbot 能做什么？
@@ -308,6 +309,32 @@ uv run pawbot agent \
 工具结果插入、上下文治理、Continuation 和最终消息结构。详见
 [docs/record-replay.md](docs/record-replay.md)。
 
+### Agent Harness Benchmark
+
+Record & Replay 检查一次保存下来的真实执行；Agent Harness 则用固定的成功、失败和
+边界场景，驱动真实的 `AgentRunner` 批量验证行为。它不请求真实 Provider，也不触碰
+用户 Workspace，当前覆盖正常 Tool 调用、Tool 失败恢复、Provider 错误、模型超时、
+用户取消、回合预算边界，以及写入型 Tool 执行前的人工确认。
+
+AI 修改代码后可以运行：
+
+```bash
+uv run --no-sync pawbot harness run
+```
+
+同一项行为检查也包含在本地质量门禁中：
+
+```bash
+uv run --no-sync python scripts/quality_gate.py
+```
+
+Harness 已将执行轨迹检查和简单任务契约（最终内容、要求成功的 Tool）分开；更复杂的
+领域评测器属于下一阶段。因此，回放或 Harness 变绿都不是通用的模型回答质量评分。详见
+[Agent Harness Benchmark 指南](docs/agent-harness.md)。
+
+WebUI 使用“工作区访问”时，写入、执行和网络 Tool 会在真正运行前等待明确批准；
+“完全访问”仍表示用户主动授予这些 Tool 直接执行权限。原生 TUI 使用同一套确认协议。
+
 在 **设置 → 模型** 中选择模型时，pawbot 会优先读取提供商 `/models` 返回的能力信息，
 但对于已知模型 ID，内置能力目录会覆盖提供商返回的过时或通用值；未知模型才使用
 接口提供的信息，并保留手动设置入口。上下文长度和支持的思考档位会在保存前显示。
@@ -352,6 +379,7 @@ Provider + ToolRegistry + MCP
 
 - [文档索引](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
+- [Agent Harness Benchmark](docs/agent-harness.md)
 - [发布说明](docs/release-notes/0.3.9.md)
 - [发布与 PyPI 指南](docs/publishing.md)
 - [变更记录](CHANGELOG.md)
@@ -381,6 +409,7 @@ uv run --no-sync python -m scripts.install_channel_dependencies --all-channels
 uv run ruff check pawbot
 uv run basedpyright
 uv run pytest -q
+uv run --no-sync python scripts/quality_gate.py
 ```
 
 修改 WebUI 时：

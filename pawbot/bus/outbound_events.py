@@ -73,6 +73,13 @@ class RecoveryStateEvent(OutboundEvent):
 
 
 @dataclass(frozen=True)
+class ToolApprovalEvent(OutboundEvent):
+    """A pending high-risk Tool call waiting for a WebUI decision."""
+
+    request: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class GoalStatusEvent(OutboundEvent):
     status: str
     started_at: float | None = None

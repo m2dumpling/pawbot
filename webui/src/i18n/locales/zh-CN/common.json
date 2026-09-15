@@ -1751,6 +1751,13 @@
     "dismiss": "忽略",
     "continue": "继续"
   },
+  "toolApproval": {
+    "title": "执行这个工具前需要你的确认",
+    "sideEffectNote": "工具尚未执行。请确认操作和参数都符合你的预期。",
+    "approve": "批准执行",
+    "deny": "拒绝",
+    "actionFailed": "决定提交失败，请重试。"
+  },
   "lightbox": {
     "title": "图片预览",
     "open": "查看图片",

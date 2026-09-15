@@ -9,6 +9,7 @@ from typing import Any
 
 from loguru import logger
 
+from pawbot.agent.approval import ToolApprovalRequest, ToolApprovalResult
 from pawbot.providers.base import LLMResponse, LLMUsage, ToolCallRequest
 
 
@@ -139,6 +140,23 @@ class AgentHook:
         pass
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
+        pass
+
+    async def on_tool_approval_requested(
+        self,
+        context: AgentHookContext,
+        request: ToolApprovalRequest,
+    ) -> None:
+        """Observe a high-risk Tool call before it can create side effects."""
+        pass
+
+    async def on_tool_approval_resolved(
+        self,
+        context: AgentHookContext,
+        request: ToolApprovalRequest,
+        decision: ToolApprovalResult,
+    ) -> None:
+        """Observe the human/policy decision for a pending Tool call."""
         pass
 
     async def before_execute_tool(
@@ -281,6 +299,26 @@ class CompositeHook(AgentHook):
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
         await self._for_each_hook_safe("before_execute_tools", context)
+
+    async def on_tool_approval_requested(
+        self,
+        context: AgentHookContext,
+        request: ToolApprovalRequest,
+    ) -> None:
+        await self._for_each_hook_safe("on_tool_approval_requested", context, request)
+
+    async def on_tool_approval_resolved(
+        self,
+        context: AgentHookContext,
+        request: ToolApprovalRequest,
+        decision: ToolApprovalResult,
+    ) -> None:
+        await self._for_each_hook_safe(
+            "on_tool_approval_resolved",
+            context,
+            request,
+            decision,
+        )
 
     async def before_execute_tool(
         self,

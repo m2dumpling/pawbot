@@ -354,9 +354,11 @@ def _run_gateway(
     gateway_instance: GatewayInstance | None = None,
 ) -> None:
     """Shared gateway runtime; ``open_browser_url`` opens a tab once channels are up."""
+    from pawbot.agent.approval import ToolApprovalManager
     from pawbot.agent.model_presets import load_model_preset_catalog
     from pawbot.agent.tools.message import MessageTool
     from pawbot.agent.turn_delivery import TurnDeliveryFactory
+    from pawbot.bus.outbound_events import ToolApprovalEvent, outbound_message_for_event
     from pawbot.bus.queue import MessageBus
     from pawbot.bus.runtime_events import RuntimeEventBus
     from pawbot.channels.manager import ChannelManager
@@ -413,6 +415,49 @@ def _run_gateway(
     bus = MessageBus()
     runtime_events = RuntimeEventBus()
     fallback_model_observer = build_webui_fallback_model_observer(bus)
+
+    async def _publish_tool_approval(request: Any) -> None:
+        chat_id = getattr(request, "chat_id", None)
+        if not isinstance(chat_id, str) or not chat_id:
+            return
+        await bus.publish_outbound(
+            outbound_message_for_event(
+                channel="websocket",
+                chat_id=chat_id,
+                event=ToolApprovalEvent(request=request.to_dict()),
+            )
+        )
+
+    approval_manager = ToolApprovalManager(on_request=_publish_tool_approval)
+
+    async def _resolve_tool_approval(payload: dict[str, Any]) -> dict[str, Any]:
+        request_id = payload.get("request_id")
+        chat_id = payload.get("chat_id")
+        decision = payload.get("decision")
+        if (
+            not isinstance(request_id, str)
+            or not isinstance(chat_id, str)
+            or decision not in {"approved", "denied"}
+        ):
+            return {"resolved": False}
+        reason = payload.get("reason")
+        return {
+            "resolved": approval_manager.resolve_for_chat(
+                request_id,
+                chat_id,
+                decision,
+                reason=reason if isinstance(reason, str) and reason else None,
+            ),
+            "request_id": request_id,
+            "decision": decision,
+        }
+
+    def _pending_tool_approvals(chat_id: str) -> list[dict[str, Any]]:
+        return [
+            request.to_dict()
+            for request in approval_manager.pending_requests()
+            if request.chat_id == chat_id
+        ]
 
     def _observe_provider(snapshot: ProviderSnapshot) -> ProviderSnapshot:
         snapshot.provider.set_llm_call_observer(record_llm_call)
@@ -533,6 +578,7 @@ def _run_gateway(
         hook_factories=[create_file_edit_activity_hook],
         tool_registry=tools,
         recovery_admission=recovery,
+        tool_approval_callback=approval_manager.request,
     )
     def _schedule_webui_background(awaitable: Awaitable[None]) -> None:
         agent.schedule_background(cast(Coroutine[Any, Any, None], awaitable))
@@ -782,6 +828,8 @@ def _run_gateway(
         webui_skill_state_action=_webui_skill_state_action,
         webui_recovery_action=recovery.handle_action,
         webui_blackbox_action=_webui_blackbox_action,
+        webui_tool_approval_action=_resolve_tool_approval,
+        webui_tool_approval_pending=_pending_tool_approvals,
         config_path=Path(config_path),
     )
 

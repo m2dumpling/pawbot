@@ -27,6 +27,7 @@ from loguru import logger
 
 from pawbot.agent.blackbox.keys import tool_key
 from pawbot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
+from pawbot.utils.provenance import collect_provenance
 
 if TYPE_CHECKING:
     from pawbot.providers.base import ToolCallRequest
@@ -445,23 +446,16 @@ class BlackboxController:
         if self._meta_written:
             return
         self._meta_written = True
-        try:
-            import subprocess
-
-            rev = subprocess.run(
-                ["git", "rev-parse", "--short", "HEAD"],
-                capture_output=True, text=True, timeout=3,
-            ).stdout.strip()
-        except Exception:
-            rev = "unknown"
+        metadata = collect_provenance(extra={
+            "mode": "record",
+            "schema_version": _BLACKBOX_SCHEMA_VERSION,
+            "session_key": session_key,
+            "model": model,
+        })
+        revision = str(metadata.get("git_revision") or "unknown")
+        metadata["git_rev"] = revision[:12]
         (self.directory / _META_JSON).write_text(
-            json.dumps({
-                "mode": "record",
-                "schema_version": _BLACKBOX_SCHEMA_VERSION,
-                "session_key": session_key,
-                "model": model,
-                "git_rev": rev,
-            }, ensure_ascii=False, indent=2),
+            json.dumps(metadata, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 

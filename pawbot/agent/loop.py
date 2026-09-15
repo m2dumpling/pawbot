@@ -19,6 +19,7 @@ from loguru import logger
 
 from pawbot.agent import context as agent_context
 from pawbot.agent import model_presets as preset_helpers
+from pawbot.agent.approval import DEFAULT_APPROVAL_CAPABILITIES, ToolApprovalCallback
 from pawbot.agent.autocompact import AutoCompact
 from pawbot.agent.automation_turns import publish_next_deferred_turn
 from pawbot.agent.budget import TurnBudget
@@ -237,6 +238,8 @@ class AgentLoop(TurnStagesMixin):
         recovery_admission: RecoveryAdmission | None = None,
         blackbox: Any | None = None,
         trace_store: TraceStore | None = None,
+        tool_approval_callback: ToolApprovalCallback | None = None,
+        approval_capabilities: frozenset[str] | None = None,
     ):
         from pawbot.config.schema import ToolsConfig, _resolve_tool_config_refs
 
@@ -327,6 +330,12 @@ class AgentLoop(TurnStagesMixin):
         self.blackbox = blackbox  # Record & Replay controller (ADR-004)
         self._blackbox_policy_active = False
         self.trace_store = trace_store
+        self.tool_approval_callback = tool_approval_callback
+        self.approval_capabilities = (
+            approval_capabilities
+            if approval_capabilities is not None
+            else DEFAULT_APPROVAL_CAPABILITIES
+        )
         self.restrict_to_workspace = restrict_to_workspace
         self.workspace_scopes = WorkspaceScopeResolver(
             default_workspace=workspace,
@@ -1456,6 +1465,17 @@ class AgentLoop(TurnStagesMixin):
                 ),
                 provider_state=provider_state,
                 denied_tool_capabilities=self.denied_tool_capabilities,
+                tool_approval_callback=(
+                    self.tool_approval_callback
+                    if (
+                        request_ctx.channel == "websocket"
+                        and effective_scope.access_mode != "full"
+                    )
+                    else None
+                ),
+                approval_capabilities=self.approval_capabilities,
+                channel=request_ctx.channel,
+                chat_id=request_ctx.chat_id,
                 llm_usage_source=source_from_request(
                     active_session_key,
                     channel=request_ctx.channel,

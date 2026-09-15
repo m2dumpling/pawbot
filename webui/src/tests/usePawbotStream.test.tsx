@@ -494,6 +494,41 @@ describe("usePawbotStream", () => {
     expect(fake.client.finishRunLocally).not.toHaveBeenCalled();
   });
 
+  it("surfaces a pending Tool approval and resolves it by request id", async () => {
+    const fake = fakeClient();
+    const { result } = renderHook(() => usePawbotStream("chat-approval", EMPTY_MESSAGES), {
+      wrapper: wrap(fake.client),
+    });
+
+    act(() => {
+      fake.emit("chat-approval", {
+        event: "tool_approval",
+        chat_id: "chat-approval",
+        request: {
+          request_id: "approval-1",
+          call_id: "call-1",
+          name: "write_file",
+          arguments: { path: "notes.txt", content: "hello" },
+          capabilities: ["write"],
+          session_key: "websocket:chat-approval",
+          iteration: 0,
+          created_at_ms: 1_700,
+          channel: "websocket",
+          chat_id: "chat-approval",
+        },
+      });
+    });
+
+    expect(result.current.toolApprovalRequests).toHaveLength(1);
+    await act(async () => result.current.resolveToolApproval("approval-1", "approved"));
+    expect(fake.requestMutation).toHaveBeenCalledWith("tool.approval.resolve", {
+      chat_id: "chat-approval",
+      request_id: "approval-1",
+      decision: "approved",
+    });
+    expect(result.current.toolApprovalRequests).toEqual([]);
+  });
+
   it("preserves proactive automation source metadata on complete assistant messages", () => {
     const fake = fakeClient();
     const { result } = renderHook(() => usePawbotStream("chat-cron", EMPTY_MESSAGES), {

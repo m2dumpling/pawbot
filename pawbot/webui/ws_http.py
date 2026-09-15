@@ -149,6 +149,7 @@ _WEBUI_MUTATION_PATHS = {
     "workspace.pick_folder": "/api/workspaces/pick-folder",
     "recovery.continue": "/api/webui/recovery/continue",
     "recovery.dismiss": "/api/webui/recovery/dismiss",
+    "tool.approval.resolve": "/api/webui/tool-approval/resolve",
     "settings.agent.update": "/api/settings/update",
     "settings.model_configuration.create": "/api/settings/model-configurations/create",
     "settings.model_configuration.update": "/api/settings/model-configurations/update",
@@ -343,6 +344,7 @@ class GatewayHTTPHandler:
         blackbox_action: (
             Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None
         ) = None,
+        tool_approval_action: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
         log: Any = logger,
     ) -> None:
         self.config = config
@@ -362,6 +364,7 @@ class GatewayHTTPHandler:
         self.skill_state_action = skill_state_action
         self.recovery_action = recovery_action
         self.blackbox_action = blackbox_action
+        self.tool_approval_action = tool_approval_action
         self._skill_install_lock = asyncio.Lock()
         self._folder_picker_lock = asyncio.Lock()
         self.cron_service = cron_service
@@ -478,6 +481,8 @@ class GatewayHTTPHandler:
             return True
         if path in {"/api/webui/recovery/continue", "/api/webui/recovery/dismiss"}:
             return True
+        if path == "/api/webui/tool-approval/resolve":
+            return True
         if re.match(r"^/api/blackbox/(status|start|stop|list|detail|delete|replay|tokens)$", path):
             return True
         if re.match(r"^/api/trace/(list|detail)$", path):
@@ -537,6 +542,11 @@ class GatewayHTTPHandler:
 
         # Recovery routes
         response = await self._dispatch_recovery_route(request, got)
+        if response is not None:
+            return response
+
+        # Human-in-the-loop Tool approval
+        response = await self._dispatch_tool_approval_route(request, got)
         if response is not None:
             return response
 
@@ -760,6 +770,40 @@ class GatewayHTTPHandler:
             result = await self.recovery_action(match.group(1), payload)
         except RecoveryActionError as exc:
             return _http_error(exc.status, str(exc))
+        return _http_json_response(result)
+
+    async def _dispatch_tool_approval_route(
+        self,
+        request: WsRequest,
+        path: str,
+    ) -> Response | None:
+        if path != "/api/webui/tool-approval/resolve":
+            return None
+        if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
+            return _http_error(405, "Tool approval actions require an authenticated WebSocket")
+        if self.tool_approval_action is None:
+            return _http_error(503, "Tool approval is unavailable")
+        payload = _mutation_payload(request)
+        if payload is None:
+            return _http_error(400, "invalid Tool approval payload")
+        request_id = payload.get("request_id")
+        chat_id = payload.get("chat_id")
+        decision = payload.get("decision")
+        if (
+            not isinstance(request_id, str)
+            or not request_id
+            or not isinstance(chat_id, str)
+            or not chat_id
+            or decision not in {"approved", "denied"}
+        ):
+            return _http_error(400, "invalid Tool approval decision")
+        try:
+            result = await self.tool_approval_action(payload)
+        except Exception as exc:  # approval actions are fail-closed
+            status = getattr(exc, "status", 409)
+            return _http_error(status, str(exc))
+        if result.get("resolved") is not True:
+            return _http_error(409, "Tool approval request is stale or belongs to another chat")
         return _http_json_response(result)
 
     async def _dispatch_blackbox_routes(

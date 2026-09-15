@@ -48,6 +48,7 @@ class GatewayServices:
     local_trigger_store: LocalTriggerStore | None
     cron_pending_job_ids: Callable[[str], set[str]] | None
     local_trigger_pending_ids: Callable[[str], set[str]] | None
+    tool_approval_pending: Callable[[str], list[dict[str, Any]]] | None
 
 
 def build_gateway_services(
@@ -75,6 +76,8 @@ def build_gateway_services(
     skill_state_action: Callable[[set[str]], None] | None = None,
     recovery_action: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
     blackbox_action: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+    tool_approval_action: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+    tool_approval_pending: Callable[[str], list[dict[str, Any]]] | None = None,
     logger: Any = default_logger,
 ) -> GatewayServices:
     settings = WebUISettingsServices.create(
@@ -140,6 +143,7 @@ def build_gateway_services(
         skill_state_action=skill_state_action,
         recovery_action=recovery_action,
         blackbox_action=blackbox_action,
+        tool_approval_action=tool_approval_action,
         log=logger,
     )
     endpoint = WebUIGatewayEndpoint(config=config, http=http, tokens=tokens)
@@ -159,4 +163,5 @@ def build_gateway_services(
         local_trigger_store=local_trigger_store,
         cron_pending_job_ids=cron_pending_job_ids,
         local_trigger_pending_ids=local_trigger_pending_ids,
+        tool_approval_pending=tool_approval_pending,
     )

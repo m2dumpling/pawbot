@@ -1,7 +1,14 @@
 """Agent core module."""
 
+from pawbot.agent.approval import (
+    DEFAULT_APPROVAL_CAPABILITIES,
+    ToolApprovalManager,
+    ToolApprovalRequest,
+    ToolApprovalResult,
+)
 from pawbot.agent.budget import TurnBudget
 from pawbot.agent.context import ContextBuilder
+from pawbot.agent.evaluation import TaskContract, TaskEvaluation, evaluate_task
 from pawbot.agent.hook import (
     AgentHook,
     AgentHookContext,
@@ -16,6 +23,7 @@ from pawbot.agent.skills import SkillsLoader
 from pawbot.agent.subagent import SubagentManager
 
 __all__ = [
+    "DEFAULT_APPROVAL_CAPABILITIES",
     "AgentHook",
     "AgentHookContext",
     "AgentRunHookContext",
@@ -28,4 +36,10 @@ __all__ = [
     "MemoryStore",
     "SkillsLoader",
     "SubagentManager",
+    "TaskContract",
+    "TaskEvaluation",
+    "ToolApprovalManager",
+    "ToolApprovalRequest",
+    "ToolApprovalResult",
+    "evaluate_task",
 ]

@@ -8,6 +8,7 @@ import { FilePreviewPanel } from "@/components/FilePreviewPanel";
 import { SessionHandleLabel } from "@/components/SessionHandleLabel";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
+import { ToolApprovalNotice } from "@/components/thread/ToolApprovalNotice";
 import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
 import {
   ThreadComposer,
@@ -806,6 +807,8 @@ export function ThreadShell({
     runStartedAt,
     goalState,
     recoveryState,
+    toolApprovalRequests,
+    resolveToolApproval,
     continueRecovery,
     dismissRecovery,
     send,
@@ -1580,6 +1583,10 @@ export function ThreadShell({
 
   const composer = (
     <>
+      <ToolApprovalNotice
+        requests={toolApprovalRequests}
+        onResolve={resolveToolApproval}
+      />
       {recoveryState ? (
         <RecoveryNotice
           state={recoveryState}

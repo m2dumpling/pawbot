@@ -96,6 +96,11 @@ and is not required for replay. A turn envelope also carries a budget snapshot
 when resource limits are configured, including iterations, tool calls, elapsed
 time, input/output tokens, and estimated cost when pricing is known.
 
+`meta.json` also records the experiment ID, pawbot version, full Git revision,
+whether tracked source files were dirty, Python/platform information, and the
+model/session used by the sample. This makes a replay result easier to explain
+when code and environment changed between recording and validation.
+
 To enable the optional raw HTTP cassette support, install the recording extra:
 
 ```bash
@@ -135,6 +140,12 @@ configurations keep their previous behavior when these fields are omitted:
 The runner stops before starting the next operation once a configured limit is
 reached. `deniedCapabilities` is a coarse defense-in-depth policy; workspace
 scope, SSRF checks, sandboxing, and per-tool validation still apply.
+
+For high-risk Tool calls, an embedding application can provide
+`AgentRunSpec.tool_approval_callback`. Non-read-only Tools wait for a
+`ToolApprovalResult` before execution. A denial or approval timeout returns a
+model-visible error with `side_effect=not_started`; it never silently falls
+through to the real Tool.
 
 ## Privacy boundary
 

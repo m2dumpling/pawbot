@@ -14,6 +14,7 @@ from typing import Any, cast
 
 from loguru import logger
 
+from pawbot.agent.approval import DEFAULT_APPROVAL_CAPABILITIES, ToolApprovalCallback
 from pawbot.agent.budget import TurnBudget, TurnBudgetReason, budget_limit_message
 from pawbot.agent.context_governance import (
     ContextGovernanceConfig,
@@ -120,6 +121,12 @@ class AgentRunSpec:
     llm_usage_source: LLMUsageSource | None = None
     budget: TurnBudget | None = None
     denied_tool_capabilities: frozenset[str] = field(default_factory=frozenset)
+    tool_approval_callback: ToolApprovalCallback | None = None
+    approval_capabilities: frozenset[str] = field(
+        default_factory=lambda: DEFAULT_APPROVAL_CAPABILITIES
+    )
+    channel: str = ""
+    chat_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -794,6 +801,10 @@ class AgentRunner:
             hook=hook,
             context=context,
             denied_tool_capabilities=spec.denied_tool_capabilities,
+            tool_approval_callback=spec.tool_approval_callback,
+            approval_capabilities=spec.approval_capabilities,
+            channel=spec.channel,
+            chat_id=spec.chat_id,
         )
         state.tool_events.extend(new_events)
         state.tools_used.extend(

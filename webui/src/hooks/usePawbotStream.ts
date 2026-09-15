@@ -38,6 +38,7 @@ import type {
   GoalStateWsPayload,
   MessageDeliveryStatus,
   RecoveryState,
+  ToolApprovalRequest,
   UIMediaAttachment,
   UIMessage,
   WorkspaceScopePayload,
@@ -249,6 +250,11 @@ export function usePawbotStream(
   /** Latest sustained goal for this ``chatId`` (``goal_state`` WS events). */
   goalState: GoalStateWsPayload | undefined;
   recoveryState: RecoveryState | null;
+  toolApprovalRequests: ToolApprovalRequest[];
+  resolveToolApproval: (
+    requestId: string,
+    decision: "approved" | "denied",
+  ) => Promise<void>;
   continueRecovery: () => Promise<void>;
   dismissRecovery: () => Promise<void>;
   send: (
@@ -282,6 +288,7 @@ export function usePawbotStream(
   const [runStartedAt, setRunStartedAt] = useState<number | null>(initialRunStartedAt);
   const [goalState, setGoalState] = useState<GoalStateWsPayload | undefined>(undefined);
   const [recoveryState, setRecoveryState] = useState<RecoveryState | null>(null);
+  const [toolApprovalRequests, setToolApprovalRequests] = useState<ToolApprovalRequest[]>([]);
   const [streamError, setStreamError] = useState<StreamError | null>(null);
   const buffer = useRef<StreamBuffer | null>(null);
   const activeAssistantRef = useRef<ActiveAssistantCursor | null>(null);
@@ -865,6 +872,7 @@ export function usePawbotStream(
           return finalized;
         });
         suppressStreamUntilTurnEndRef.current = false;
+        setToolApprovalRequests([]);
         notifyInBackground(t("recovery.completed", { defaultValue: "Task completed" }));
         onTurnEnd?.();
         return;
@@ -908,6 +916,15 @@ export function usePawbotStream(
             );
           }
         }
+        return;
+      }
+
+      if (ev.event === "tool_approval") {
+        setToolApprovalRequests((previous) => [
+          ...previous.filter((item) => item.request_id !== ev.request.request_id),
+          ev.request,
+        ]);
+        setIsStreaming(true);
         return;
       }
 
@@ -1148,6 +1165,14 @@ export function usePawbotStream(
     t,
   ]);
 
+  useEffect(() => {
+    return () => {
+      setToolApprovalRequests((previous) =>
+        previous.filter((request) => request.chat_id !== chatId),
+      );
+    };
+  }, [chatId]);
+
   const send = useCallback(
     (content: string, images?: SendAttachment[], options?: SendOptions) => {
       if (!chatId) return null;
@@ -1223,6 +1248,7 @@ export function usePawbotStream(
 
   const stop = useCallback(() => {
     if (!chatId) return;
+    setToolApprovalRequests([]);
     flushPendingStreamEvents();
     setIsStreaming(false);
     setMessages((prev) => {
@@ -1272,6 +1298,21 @@ export function usePawbotStream(
     [recoveryAction],
   );
 
+  const resolveToolApproval = useCallback(
+    async (requestId: string, decision: "approved" | "denied") => {
+      if (!chatId) return;
+      await client.requestMutation("tool.approval.resolve", {
+        chat_id: chatId,
+        request_id: requestId,
+        decision,
+      });
+      setToolApprovalRequests((previous) =>
+        previous.filter((request) => request.request_id !== requestId),
+      );
+    },
+    [chatId, client],
+  );
+
   return {
     messages,
     messagesReady: messageOwnerChatId === chatId,
@@ -1279,6 +1320,8 @@ export function usePawbotStream(
     runStartedAt,
     goalState,
     recoveryState,
+    toolApprovalRequests,
+    resolveToolApproval,
     continueRecovery,
     dismissRecovery,
     send,

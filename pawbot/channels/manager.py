@@ -110,6 +110,8 @@ class ChannelManager:
         webui_blackbox_action: (
             Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None
         ) = None,
+        webui_tool_approval_action: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+        webui_tool_approval_pending: Callable[[str], list[dict[str, Any]]] | None = None,
         config_path: Path | None = None,
     ):
         if config_path is None:
@@ -134,6 +136,8 @@ class ChannelManager:
         self._webui_skill_state_action = webui_skill_state_action
         self._webui_recovery_action = webui_recovery_action
         self._webui_blackbox_action = webui_blackbox_action
+        self._webui_tool_approval_action = webui_tool_approval_action
+        self._webui_tool_approval_pending = webui_tool_approval_pending
         self.channels: dict[str, BaseChannel] = {}
         self._channel_owners: dict[str, str] = {}
         self._channel_runtime_specs: dict[str, tuple[str, str]] = {}
@@ -207,6 +211,8 @@ class ChannelManager:
                 skill_state_action=self._webui_skill_state_action,
                 recovery_action=self._webui_recovery_action,
                 blackbox_action=self._webui_blackbox_action,
+                tool_approval_action=self._webui_tool_approval_action,
+                tool_approval_pending=self._webui_tool_approval_pending,
                 logger=logger,
             )
             kwargs["gateway"] = gateway

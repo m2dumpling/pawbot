@@ -14,6 +14,7 @@ from pawbot.bus.outbound_events import (
     RecoveryStateEvent,
     RuntimeModelUpdatedEvent,
     SessionUpdatedEvent,
+    ToolApprovalEvent,
     TraceEvent,
     TurnEndEvent,
     TurnModelUpdatedEvent,
@@ -102,6 +103,12 @@ class WebUIOutboundTransport(Protocol):
 
     async def send_trace_event(self, chat_id: str, payload: dict[str, Any]) -> None: ...
 
+    async def send_tool_approval(
+        self,
+        chat_id: str,
+        request: dict[str, Any],
+    ) -> None: ...
+
     async def send_projected_message(
         self,
         msg: OutboundMessage,
@@ -156,6 +163,7 @@ class WebUIOutboundProjector:
                 GoalStatusEvent,
                 GoalStateSyncEvent,
                 TraceEvent,
+                ToolApprovalEvent,
             )
             log = (
                 logger.debug
@@ -242,6 +250,10 @@ class WebUIOutboundProjector:
         if isinstance(event, TraceEvent):
             if conns:
                 await self._transport.send_trace_event(msg.chat_id, event.payload)
+            return
+        if isinstance(event, ToolApprovalEvent):
+            if conns:
+                await self._transport.send_tool_approval(msg.chat_id, event.request)
             return
         if progress_event and progress_event.file_edit_events:
             await self._transport.send_file_edit_events(

@@ -34,6 +34,7 @@ without another model request, another token bill, or real tool side effects.
 | Run one request from a terminal | [CLI](#cli) |
 | Connect a chat app | [Channels](#channels-and-integrations) |
 | Understand the replay feature | [Record & Replay](#record--replay) |
+| Verify an AI-assisted code change | [Agent Harness Benchmark](#agent-harness-benchmark) |
 | Change the agent or add a tool | [Development](#development) |
 
 ## What can pawbot do?
@@ -333,6 +334,36 @@ governance, continuation, and the final message structure. See
 [docs/record-replay.md](docs/record-replay.md) for the format and privacy
 boundary.
 
+### Agent Harness Benchmark
+
+Record & Replay checks one saved execution. The Agent Harness checks a stable
+catalog of success and failure scenarios against the real `AgentRunner` without
+calling a provider or touching the workspace. It covers normal tool use, tool
+failure and recovery, provider errors, LLM timeouts, user cancellation, and
+turn-budget boundaries, and human approval before a write-capable Tool runs.
+
+Run it after an AI-assisted change:
+
+```bash
+uv run --no-sync pawbot harness run
+```
+
+The same behavioral check is part of the local quality gate:
+
+```bash
+uv run --no-sync python scripts/quality_gate.py
+```
+
+The Harness separates trajectory checks from simple task contracts such as final
+content and required successful tools. Domain-specific evaluators are a separate
+next step; a green replay or Harness result is not a general model-quality score. See the
+[Agent Harness Benchmark guide](docs/agent-harness.md).
+
+When a WebUI chat uses **Workspace access**, write, execute, and network-capable
+Tools pause for an explicit approval. **Full access** remains the opt-in mode
+that runs those Tools directly. The same approval protocol is available to the
+native TUI.
+
 When choosing a model in **Settings → Models**, pawbot also reads capability
 metadata from the provider's `/models` response when available. For known model
 IDs, the curated capability registry wins over stale or generic provider values;
@@ -383,6 +414,7 @@ The core source is organized around:
 
 - [Documentation index](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
+- [Agent Harness Benchmark](docs/agent-harness.md)
 - [Release notes](docs/release-notes/0.3.9.md)
 - [Publishing guide](docs/publishing.md)
 - [Changelog](CHANGELOG.md)
@@ -412,6 +444,7 @@ uv run --no-sync python -m scripts.install_channel_dependencies --all-channels
 uv run ruff check pawbot
 uv run basedpyright
 uv run pytest -q
+uv run --no-sync python scripts/quality_gate.py
 ```
 
 For WebUI changes:

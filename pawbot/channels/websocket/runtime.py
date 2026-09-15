@@ -473,6 +473,9 @@ class WebSocketChannel(BaseChannel):
     async def _hydrate_after_subscribe(self, chat_id: str) -> None:
         """Replay persisted or actively running per-chat state after subscribe."""
         await self._outbound.hydrate(chat_id)
+        if self.gateway.tool_approval_pending is not None:
+            for request in self.gateway.tool_approval_pending(chat_id):
+                await self.send_tool_approval(chat_id, request)
 
     async def _send_event(
         self,
@@ -1091,6 +1094,22 @@ class WebSocketChannel(BaseChannel):
         raw = json.dumps(body, ensure_ascii=False)
         for connection in conns:
             await self._safe_send_to(connection, raw, label=" execution_trace ")
+
+    async def send_tool_approval(
+        self,
+        chat_id: str,
+        request: dict[str, Any],
+    ) -> None:
+        """Push an authenticated, non-persistent approval request to WebUI."""
+        conns = list(self._subs.get(chat_id, ()))
+        body: dict[str, Any] = {
+            "event": "tool_approval",
+            "chat_id": chat_id,
+            "request": request,
+        }
+        raw = json.dumps(body, ensure_ascii=False)
+        for connection in conns:
+            await self._safe_send_to(connection, raw, label=" tool_approval ")
 
     async def send_delta(
         self,

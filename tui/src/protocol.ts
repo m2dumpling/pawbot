@@ -102,6 +102,19 @@ export interface RecoveryState {
   can_continue?: boolean
 }
 
+export interface ToolApprovalRequest {
+  request_id: string
+  call_id: string
+  name: string
+  arguments: Record<string, unknown>
+  capabilities: string[]
+  session_key?: string | null
+  iteration: number
+  created_at_ms: number
+  channel?: string
+  chat_id?: string | null
+}
+
 export interface ExecutionTraceEvent {
   event: string
   trace_id?: string
@@ -188,6 +201,7 @@ export type InboundEvent =
     }
   | { event: "goal_state"; chat_id: string; goal_state: Record<string, unknown> }
   | ({ event: "recovery_state"; chat_id: string } & RecoveryState)
+  | { event: "tool_approval"; chat_id: string; request: ToolApprovalRequest }
   | {
       event: "session_updated"
       chat_id: string
@@ -393,6 +407,7 @@ const CHAT_EVENTS = new Set([
   "goal_status",
   "goal_state",
   "recovery_state",
+  "tool_approval",
   "session_updated",
   "turn_model_updated",
   "error",
@@ -483,6 +498,21 @@ function isRecoveryState(value: unknown): value is RecoveryState {
     && optional(value.reason, "string")
     && optional(value.attempts, "number")
     && optional(value.can_continue, "boolean")
+}
+
+function isToolApprovalRequest(value: unknown): value is ToolApprovalRequest {
+  if (!isRecord(value)) return false
+  return typeof value.request_id === "string"
+    && typeof value.call_id === "string"
+    && typeof value.name === "string"
+    && isRecord(value.arguments)
+    && Array.isArray(value.capabilities)
+    && value.capabilities.every((item) => typeof item === "string")
+    && typeof value.iteration === "number"
+    && typeof value.created_at_ms === "number"
+    && (value.session_key === undefined || value.session_key === null || typeof value.session_key === "string")
+    && optional(value.channel, "string")
+    && (value.chat_id === undefined || value.chat_id === null || typeof value.chat_id === "string")
 }
 
 interface WebUIResponseEvent {
@@ -583,6 +613,7 @@ function decodeInboundEvent(value: unknown): InboundEvent | null | undefined {
   if (name === "goal_status" && record.status !== "running" && record.status !== "idle") return null
   if (name === "goal_state" && !isRecord(record.goal_state)) return null
   if (name === "recovery_state" && !isRecoveryState(record)) return null
+  if (name === "tool_approval" && !isToolApprovalRequest(record.request)) return null
   if (
     name === "session_updated"
     && (!optional(record.scope, "string")
@@ -1344,6 +1375,18 @@ export class PawbotClient {
       if (!isRecoveryState(result)) throw new Error("gateway returned an invalid recovery state")
       return result
     })
+  }
+
+  resolveToolApproval(
+    requestId: string,
+    chatId: string,
+    decision: "approved" | "denied",
+  ): Promise<boolean> {
+    return this.requestMutation<unknown>("tool.approval.resolve", {
+      chat_id: chatId,
+      request_id: requestId,
+      decision,
+    }).then((result) => isRecord(result) && result.resolved === true)
   }
 
   private requestMutation<T>(
