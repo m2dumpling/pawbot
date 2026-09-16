@@ -330,6 +330,32 @@ class HarnessReport:
     def task_not_evaluable_count(self) -> int:
         return sum(result.task_status == "not_evaluable" for result in self.results)
 
+    @property
+    def task_failed_count(self) -> int:
+        return sum(result.task_status == "failed" for result in self.results)
+
+    @property
+    def task_evaluable_count(self) -> int:
+        return self.task_passed_count + self.task_failed_count
+
+    @property
+    def task_pass_rate(self) -> float | None:
+        if self.task_evaluable_count == 0:
+            return None
+        return self.task_passed_count / self.task_evaluable_count
+
+    @property
+    def model_request_count(self) -> int:
+        return sum(result.model_requests for result in self.results)
+
+    @property
+    def tool_attempt_count(self) -> int:
+        return sum(result.tool_attempts for result in self.results)
+
+    @property
+    def tool_failure_count(self) -> int:
+        return sum(result.tool_failures for result in self.results)
+
     def to_dict(self) -> dict[str, Any]:
         categories: dict[str, dict[str, int]] = {}
         for result in self.results:
@@ -351,7 +377,13 @@ class HarnessReport:
                     result.trajectory_status == "passed" for result in self.results
                 ),
                 "task_passed": self.task_passed_count,
+                "task_failed": self.task_failed_count,
+                "task_evaluable": self.task_evaluable_count,
                 "task_not_evaluable": self.task_not_evaluable_count,
+                "task_pass_rate": self.task_pass_rate,
+                "model_requests": self.model_request_count,
+                "tool_attempts": self.tool_attempt_count,
+                "tool_failures": self.tool_failure_count,
                 "categories": categories,
             },
             "results": [result.to_dict() for result in self.results],
@@ -438,6 +470,107 @@ def _tool_failure_recovery() -> HarnessScenario:
         provider=provider,
         tools=_registry(unstable, fallback),
         session_key="harness:tool-failure-recovery",
+    )
+
+
+def _workspace_change_and_verify() -> HarnessScenario:
+    state: dict[str, str] = {}
+
+    def write_note(arguments: dict[str, Any]) -> str:
+        path = str(arguments["path"])
+        content = str(arguments["content"])
+        state[path] = content
+        return f"saved:{path}"
+
+    def read_note(arguments: dict[str, Any]) -> str:
+        path = str(arguments["path"])
+        return state.get(path, "missing")
+
+    write_tool = HarnessTool(
+        "write_note",
+        "Write a note into the in-memory task workspace.",
+        {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+            },
+            "required": ["path", "content"],
+        },
+        write_note,
+        read_only=False,
+        capabilities=("write",),
+    )
+    read_tool = HarnessTool(
+        "read_note",
+        "Read a note from the in-memory task workspace.",
+        {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+        read_note,
+    )
+    return HarnessScenario(
+        initial_messages=[
+            {"role": "user", "content": "Write the note and verify its contents."}
+        ],
+        provider=ScriptedProvider([
+            _tool_response(
+                "write-1",
+                "write_note",
+                {"path": "release-check.txt", "content": "ready"},
+            ),
+            _tool_response("read-1", "read_note", {"path": "release-check.txt"}),
+            _final_response("verified: release-check.txt contains ready"),
+        ]),
+        tools=_registry(write_tool, read_tool),
+        session_key="harness:workspace-change-and-verify",
+    )
+
+
+def _investigate_and_summarize() -> HarnessScenario:
+    incident = {
+        "id": "INC-42",
+        "status": "open",
+        "summary": "provider timeout affects release smoke test",
+    }
+
+    def search_incidents(_arguments: dict[str, Any]) -> str:
+        return incident["id"]
+
+    def inspect_incident(arguments: dict[str, Any]) -> dict[str, str]:
+        if str(arguments["incident_id"]) != incident["id"]:
+            return {"error": "incident not found"}
+        return dict(incident)
+
+    search_tool = HarnessTool(
+        "search_incidents",
+        "Find the relevant incident ID.",
+        {"type": "object", "properties": {}},
+        search_incidents,
+    )
+    inspect_tool = HarnessTool(
+        "inspect_incident",
+        "Read the incident status and impact.",
+        {
+            "type": "object",
+            "properties": {"incident_id": {"type": "string"}},
+            "required": ["incident_id"],
+        },
+        inspect_incident,
+    )
+    return HarnessScenario(
+        initial_messages=[
+            {"role": "user", "content": "Find the release blocker and summarize it."}
+        ],
+        provider=ScriptedProvider([
+            _tool_response("search-1", "search_incidents", {}),
+            _tool_response("inspect-1", "inspect_incident", {"incident_id": "INC-42"}),
+            _final_response("release blocker: INC-42 is open and affects the smoke test"),
+        ]),
+        tools=_registry(search_tool, inspect_tool),
+        session_key="harness:investigate-and-summarize",
     )
 
 
@@ -567,6 +700,40 @@ def builtin_cases() -> tuple[HarnessCase, ...]:
                 task_required_tools=("fallback_lookup",),
             ),
             tags=("react", "tool-error", "recovery"),
+        ),
+        HarnessCase(
+            id="workspace-change-and-verify",
+            title="Task fixture: change and verify",
+            category="task",
+            description="A write is followed by a read-back verification in an in-memory workspace.",
+            factory=_workspace_change_and_verify,
+            expectation=HarnessExpectation(
+                stop_reason="completed",
+                final_content_equals="verified: release-check.txt contains ready",
+                tool_names=("write_note", "read_note"),
+                tool_statuses=("ok", "ok"),
+                model_requests=3,
+                tool_attempts=2,
+                task_required_tools=("write_note", "read_note"),
+            ),
+            tags=("task-fixture", "write", "verification"),
+        ),
+        HarnessCase(
+            id="investigate-and-summarize",
+            title="Task fixture: investigate and summarize",
+            category="task",
+            description="The model searches a deterministic incident and summarizes the inspected result.",
+            factory=_investigate_and_summarize,
+            expectation=HarnessExpectation(
+                stop_reason="completed",
+                final_content_contains=("INC-42", "open"),
+                tool_names=("search_incidents", "inspect_incident"),
+                tool_statuses=("ok", "ok"),
+                model_requests=3,
+                tool_attempts=2,
+                task_required_tools=("search_incidents", "inspect_incident"),
+            ),
+            tags=("task-fixture", "investigation", "summary"),
         ),
         HarnessCase(
             id="approval-gated-tool",

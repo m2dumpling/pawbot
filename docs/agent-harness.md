@@ -3,6 +3,7 @@
 Pawbot 的 Agent Harness 是一组不依赖真实 Provider 的确定性回归场景。
 它不模拟一套新的 Agent，而是用脚本化的模型响应和内存 Tool 驱动真实的
 `AgentRunner`，检查 Agent 在成功、失败和边界条件下是否仍然遵守既定行为。
+其中包含两个模拟真实工作流的任务级 Fixture：写入后回读校验，以及调查记录后总结。
 
 ## 为什么需要 Harness
 
@@ -16,7 +17,7 @@ Pawbot 的 Agent Harness 是一组不依赖真实 Provider 的确定性回归场
 | --- | --- |
 | Trace | 线上或本地某一次执行卡在哪里、耗时多少、哪一步失败 |
 | Record & Replay | 保存真实执行现场，修改代码后离线比较编排轨迹 |
-| Agent Harness | 用固定场景批量检查 Agent 的成功、恢复、错误和预算边界 |
+| Agent Harness | 用固定场景批量检查 Agent 的成功、恢复、错误、任务结果和预算边界 |
 
 Harness 同时输出两类结果：
 
@@ -64,6 +65,8 @@ uv run --no-sync pawbot harness run --json
 | `llm-timeout` | 慢 Provider 被请求超时边界停止，不伪装成成功 |
 | `cancelled-turn` | 用户取消进行中的请求，回合状态为 cancelled |
 | `turn-budget` | Tool 数量超过预算时，在真实 Tool 执行前阻断 |
+| `workspace-change-and-verify` | 模拟写入文件后回读并校验内容的完整任务链 |
+| `investigate-and-summarize` | 模拟检索事件、查看详情并形成结论的完整任务链 |
 | `approval-gated-tool` | 写入型 Tool 在人工批准前不会开始执行 |
 
 每个结果都会给出：
@@ -73,6 +76,10 @@ uv run --no-sync pawbot harness run --json
 - 模型请求次数；
 - Tool 尝试次数、失败次数、名称和状态；
 - 总耗时和可读的失败原因。
+
+报告还会给出汇总指标：轨迹通过数、可评测任务数、任务通过率、模型请求数、Tool
+尝试数和 Tool 失败数。任务通过率只在 `task` 可评测的场景中计算；Provider 错误、
+超时、取消和预算阻断显示为 `not_evaluable`，不会被误算成失败或成功。
 
 ## 人工确认
 
@@ -121,4 +128,5 @@ uv run --no-sync python scripts/quality_gate.py --full
 ```
 
 这套门禁回答的是“这次代码修改还能不能进入主线”，不是“模型回答得好不好”。当前
-Harness 已把简单任务契约纳入门禁；更复杂的领域质量评测仍需要单独建设评测集和评估器。
+Harness 已把简单任务契约和两个任务 Fixture 纳入门禁；更复杂的领域质量评测仍需要
+单独建设评测集和评估器。

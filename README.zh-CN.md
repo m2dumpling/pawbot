@@ -141,19 +141,19 @@ pawbot update
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.1/scripts/install.sh | sh
 ```
 
 如果系统没有 `curl`，也可以使用 `wget`：
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.0/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.1/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.0/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.1/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
@@ -311,10 +311,11 @@ uv run pawbot agent \
 
 ### Agent Harness Benchmark
 
-Record & Replay 检查一次保存下来的真实执行；Agent Harness 则用固定的成功、失败和
-边界场景，驱动真实的 `AgentRunner` 批量验证行为。它不请求真实 Provider，也不触碰
-用户 Workspace，当前覆盖正常 Tool 调用、Tool 失败恢复、Provider 错误、模型超时、
-用户取消、回合预算边界，以及写入型 Tool 执行前的人工确认。
+Record & Replay 检查一次保存下来的真实执行；Agent Harness 则用 9 个固定的成功、
+任务和失败场景，驱动真实的 `AgentRunner` 批量验证行为。它不请求真实 Provider，也不
+触碰用户 Workspace，当前覆盖正常 Tool 调用、写入后回读校验、调查后总结、Tool 失败
+恢复、Provider 错误、模型超时、用户取消、回合预算边界，以及写入型 Tool 执行前的人工
+确认。
 
 AI 修改代码后可以运行：
 
@@ -380,7 +381,7 @@ Provider + ToolRegistry + MCP
 - [文档索引](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
 - [Agent Harness Benchmark](docs/agent-harness.md)
-- [发布说明](docs/release-notes/0.4.0.md)
+- [发布说明](docs/release-notes/0.4.1.md)
 - [发布与 PyPI 指南](docs/publishing.md)
 - [变更记录](CHANGELOG.md)
 - [贡献指南](CONTRIBUTING.md)

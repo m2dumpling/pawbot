@@ -7,6 +7,23 @@ supported surface and known boundaries of each published version.
 
 No unreleased changes.
 
+## 0.4.1 - 2026-09-16
+
+### Added
+
+- Added two deterministic task Fixtures for change-and-verify and
+  investigate-and-summarize workflows, both executed through the real
+  `AgentRunner` with in-memory state.
+- Added Harness aggregate metrics for task evaluability and pass rate, model
+  requests, Tool attempts, and Tool failures.
+- Added a public Agent Harness experiment baseline describing the fixtures,
+  evidence model, reproducibility command, and known limitations.
+
+### Changed
+
+- Added a dedicated CI step that prints the machine-readable Agent Harness
+  report so trajectory and task results are visible in the public workflow.
+
 ## 0.4.0 - 2026-09-16
 
 ### Added

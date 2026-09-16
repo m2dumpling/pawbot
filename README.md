@@ -152,19 +152,19 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.1/scripts/install.sh | sh
 ```
 
 If `curl` is not available, use `wget` instead:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.0/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.1/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.0/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.1/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a
@@ -337,10 +337,12 @@ boundary.
 ### Agent Harness Benchmark
 
 Record & Replay checks one saved execution. The Agent Harness checks a stable
-catalog of success and failure scenarios against the real `AgentRunner` without
-calling a provider or touching the workspace. It covers normal tool use, tool
-failure and recovery, provider errors, LLM timeouts, user cancellation, and
-turn-budget boundaries, and human approval before a write-capable Tool runs.
+catalog of nine success, task, and failure scenarios against the real
+`AgentRunner` without calling a provider or touching the workspace. It covers
+normal tool use, two task workflows (change-and-verify and investigate-and-
+summarize), tool failure and recovery, provider errors, LLM timeouts, user
+cancellation, turn-budget boundaries, and human approval before a write-capable
+Tool runs.
 
 Run it after an AI-assisted change:
 
@@ -415,7 +417,7 @@ The core source is organized around:
 - [Documentation index](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
 - [Agent Harness Benchmark](docs/agent-harness.md)
-- [Release notes](docs/release-notes/0.4.0.md)
+- [Release notes](docs/release-notes/0.4.1.md)
 - [Publishing guide](docs/publishing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)

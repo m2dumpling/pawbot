@@ -23,6 +23,8 @@ async def test_builtin_benchmark_passes_all_failure_boundaries() -> None:
     assert by_id["basic-tool-call"].trajectory_status == "passed"
     assert by_id["basic-tool-call"].task_status == "passed"
     assert by_id["tool-failure-recovery"].task_status == "passed"
+    assert by_id["workspace-change-and-verify"].task_status == "passed"
+    assert by_id["investigate-and-summarize"].task_status == "passed"
     assert by_id["provider-error"].task_status == "not_evaluable"
     assert by_id["cancelled-turn"].task_status == "not_evaluable"
 
@@ -32,6 +34,13 @@ async def test_builtin_benchmark_passes_all_failure_boundaries() -> None:
     assert metadata["network"] == "disabled"
     assert metadata["workspace_io"] is False
     assert isinstance(metadata["git_revision"], str)
+    summary = report.to_dict()["summary"]
+    assert summary["task_evaluable"] == 5
+    assert summary["task_failed"] == 0
+    assert summary["task_not_evaluable"] == 4
+    assert summary["task_pass_rate"] == 1.0
+    assert summary["tool_attempts"] == 10
+    assert summary["tool_failures"] == 3
 
 
 @pytest.mark.asyncio

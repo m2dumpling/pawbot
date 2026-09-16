@@ -228,5 +228,8 @@ jobs:
       - name: Install channel dependencies
         run: uv run --no-sync python -m scripts.install_channel_dependencies --all-channels
 
+      - name: Print Agent Harness report
+        run: uv run --no-sync pawbot harness run --json
+
       - name: Run Agent quality gate
         run: uv run --no-sync python scripts/quality_gate.py
