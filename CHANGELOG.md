@@ -5,6 +5,10 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
+No unreleased changes.
+
+## 0.4.0 - 2026-09-16
+
 ### Added
 
 - Added a deterministic Agent Harness Benchmark covering normal Tool use,
