@@ -162,7 +162,7 @@ def test_update_command_reports_windows_handoff(monkeypatch, tmp_path: Path) -> 
     assert result.exit_code == 0
     assert "后台更新" in result.stdout
     assert "pawbot --version" in result.stdout
-    assert "update.log" in result.stdout
+    assert "更新日志：" in result.stdout
 
 
 def test_update_package_propagates_package_manager_failure(monkeypatch) -> None:
@@ -220,7 +220,10 @@ def test_update_package_hands_off_persistent_windows_uv_update(monkeypatch, tmp_
     assert "WaitForExit" in captured["argv"][-1]
     assert "uv.exe" in captured["argv"][-1]
     assert "tool" in captured["argv"][-1]
-    assert captured["kwargs"]["creationflags"] & update_module.subprocess.CREATE_NO_WINDOW
+    expected_flags = getattr(update_module.subprocess, "CREATE_NO_WINDOW", 0) | getattr(
+        update_module.subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+    )
+    assert captured["kwargs"]["creationflags"] == expected_flags
 
 
 def test_update_package_rejects_a_source_checkout(monkeypatch, tmp_path: Path) -> None:
