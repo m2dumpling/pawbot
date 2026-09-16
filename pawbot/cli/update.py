@@ -8,6 +8,8 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import uuid
 from dataclasses import dataclass
 from importlib.metadata import Distribution, PackageNotFoundError, distribution
 from importlib.util import find_spec
@@ -38,6 +40,8 @@ class UpdateResult:
     manager: str
     before_version: str
     after_version: str | None
+    deferred: bool = False
+    log_path: str | None = None
 
     @property
     def changed(self) -> bool:
@@ -233,6 +237,67 @@ def build_update_plan() -> UpdatePlan:
     )
 
 
+def _powershell_literal(value: str) -> str:
+    """Quote one value for a single-quoted PowerShell expression."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _needs_windows_handoff(plan: UpdatePlan) -> bool:
+    """Return whether the current process would lock its package entrypoint."""
+    if sys.platform != "win32":
+        return False
+    if plan.manager == "uv":
+        return _is_persistent_uv_runtime()
+    if plan.manager == "pipx":
+        return _is_persistent_pipx_runtime()
+    return False
+
+
+def _schedule_windows_update(plan: UpdatePlan) -> str:
+    """Run a persistent-tool update after this Windows process exits."""
+    shell = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if shell is None:
+        raise UpdateError(
+            "Windows 无法找到 PowerShell，不能安全地交接自更新。"
+            f"请关闭 Pawbot 后手动执行：{' '.join(plan.argv)}"
+        )
+
+    package_manager = shutil.which(plan.argv[0]) or plan.argv[0]
+    log_path = Path(tempfile.gettempdir()) / (
+        f"pawbot-update-{os.getpid()}-{uuid.uuid4().hex}.log"
+    )
+    arguments = ",".join(_powershell_literal(value) for value in plan.argv[1:])
+    parent_pid = os.getpid()
+    script = (
+        "$ErrorActionPreference = 'Continue'; "
+        f"$parent = Get-Process -Id {parent_pid} -ErrorAction SilentlyContinue; "
+        "if ($null -ne $parent) { try { $parent.WaitForExit() } catch {} }; "
+        f"& {_powershell_literal(package_manager)} @({arguments}) "
+        f"*> {_powershell_literal(str(log_path))}; "
+        "$code = $LASTEXITCODE; "
+        f"Add-Content -LiteralPath {_powershell_literal(str(log_path))} "
+        "-Value ('exit_code=' + $code)"
+    )
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
+        subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+    )
+    try:
+        subprocess.Popen(
+            [shell, "-NoProfile", "-NonInteractive", "-Command", script],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=creation_flags,
+        )
+    except OSError as exc:
+        raise UpdateError(
+            "Windows 无法启动后台更新助手。"
+            f"请关闭 Pawbot 后手动执行：{' '.join(plan.argv)}"
+        ) from exc
+    return str(log_path)
+
+
 def _run_update(argv: list[str]) -> subprocess.CompletedProcess[str]:
     """Run the package manager with its output attached to the user's terminal."""
     return subprocess.run(argv, check=False, text=True)
@@ -251,6 +316,15 @@ def update_package(*, runner: UpdateRunner | None = None) -> UpdateResult:
 
     before_version = _installed_version()
     plan = build_update_plan()
+    if _needs_windows_handoff(plan):
+        log_path = _schedule_windows_update(plan)
+        return UpdateResult(
+            manager=plan.manager,
+            before_version=before_version,
+            after_version=None,
+            deferred=True,
+            log_path=log_path,
+        )
     process = (runner or _run_update)(list(plan.argv))
     if process.returncode != 0:
         detail = (process.stderr or process.stdout or "").strip()

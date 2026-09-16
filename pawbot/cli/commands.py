@@ -238,6 +238,19 @@ def update():
         console.print(f"[red]✗[/red] {escape(str(exc))}")
         raise typer.Exit(1) from exc
 
+    if result.deferred:
+        console.print(
+            "[yellow]↻[/yellow] Windows 已安排后台更新；当前命令退出后才会替换 Pawbot。"
+        )
+        console.print("请稍候片刻，然后运行 `pawbot --version` 验证更新结果。")
+        if result.log_path:
+            console.print(f"更新日志：{result.log_path}")
+        console.print(
+            "Existing provider settings, API keys, sessions, workspace, and channel "
+            "configuration were not reinitialized."
+        )
+        return
+
     if result.changed:
         if result.after_version:
             console.print(

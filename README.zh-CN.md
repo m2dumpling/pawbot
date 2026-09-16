@@ -36,6 +36,39 @@ pawbot 最适合 Agent 开发者的能力是 **Record & Replay（录制与回放
 | 验证 AI 修改后的代码 | [Agent Harness Benchmark](#agent-harness-benchmark) |
 | 修改 Agent 或增加工具 | [开发](#开发) |
 
+## 从 v0.3.9 升级后怎么用？
+
+当前版本保留了原来的对话、Tool、Provider、Session 和通道用法，主要新增
+的是围绕 Agent 的执行质量闭环：
+
+| 你想做什么 | 用什么 | 在哪里操作 |
+|---|---|---|
+| 在浏览器聊天 | `pawbot` | WebUI |
+| 在终端聊天 | `pawbot agent` | 原生 TUI |
+| 查看刚才这个回合做了什么 | **设置 → 执行与回归 → 实时执行记录** | WebUI，自动生成 |
+| 保存一次完整执行 | **保存为回归样本** → 执行 → **停止保存** | WebUI 或 `pawbot record` |
+| 修改代码后检查原执行是否变化 | **离线验证** | WebUI 或 `pawbot replay` |
+| 工具执行前要求人工确认 | 使用“工作区访问”，再批准或拒绝审批卡片 | WebUI/TUI |
+| 不配置 API Key 检查 Agent 行为 | `pawbot harness run` | CLI |
+| 执行提交前的完整质量检查 | `python scripts/quality_gate.py` | CLI/CI |
+
+前六行是普通用户可以在 WebUI 中完成的操作；Harness、任务契约和质量门禁
+目前属于开发者检查，仍然通过 CLI 或 CI 运行。你不需要一开始学习所有新命令：
+先运行 `pawbot`，只有要排查或保存某次执行时，再进入
+**设置 → 执行与回归**。
+
+三个容易混淆的词分别负责不同事情：
+
+- **实时执行记录**回答“刚才发生了什么”，每个回合自动生成；
+- **回归样本**回答“我要保存哪次完整执行”，从开始保存到停止期间，会记录
+  所有会话中的请求、模型响应、Tool Call 和 Tool 返回值；
+- **离线验证**回答“我改完代码后，这次执行有没有变化”，使用保存下来的响应和
+  工具观测，不重新请求 Provider，也不执行真实 Tool。
+
+`v0.4.0` 增加了 Harness、任务级契约、fail-closed Tool 审批、版本溯源和质量门禁；
+`v0.4.1` 增加了任务样例和汇总评估指标；`v0.4.2` 修复了 Windows 下使用持久
+`uv`/`pipx` 安装时无法自更新的问题，升级会交给辅助进程在当前 Pawbot 退出后完成。
+
 ## pawbot 能做什么？
 
 - 使用文件、Shell、网页搜索、网页抓取、文档、图片等工具；
@@ -132,6 +165,10 @@ pawbot update
 
 更新命令会保留 Provider 凭证、通道配置、会话和工作区。
 
+如果 Windows 上的 v0.4.1 安装在更新时报告 `os error 32`，请先关闭 Pawbot，
+手动执行一次 `uv tool upgrade pawbot-ai`。从 v0.4.2 开始，`pawbot update`
+会把升级交给辅助进程，等当前启动器释放后再替换，因此不需要再手动处理文件锁。
+
 仓库还提供隔离安装脚本。全新桌面环境会自动打开 WebUI；如果需要终端/TUI，
 请显式运行 `pawbot agent`：
 
@@ -141,19 +178,19 @@ pawbot update
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.2/scripts/install.sh | sh
 ```
 
 如果系统没有 `curl`，也可以使用 `wget`：
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.1/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.2/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.1/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.2/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
@@ -381,7 +418,7 @@ Provider + ToolRegistry + MCP
 - [文档索引](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
 - [Agent Harness Benchmark](docs/agent-harness.md)
-- [发布说明](docs/release-notes/0.4.1.md)
+- [发布说明](docs/release-notes/0.4.2.md)
 - [发布与 PyPI 指南](docs/publishing.md)
 - [变更记录](CHANGELOG.md)
 - [贡献指南](CONTRIBUTING.md)

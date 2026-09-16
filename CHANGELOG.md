@@ -7,6 +7,19 @@ supported surface and known boundaries of each published version.
 
 No unreleased changes.
 
+## 0.4.2 - 2026-09-16
+
+### Fixed
+
+- Fixed `pawbot update` on Windows when Pawbot is installed as a persistent
+  uv or pipx tool. The update is handed off to a detached PowerShell helper so
+  the running launcher is released before it is replaced.
+
+### Changed
+
+- Expanded the README usage guide to explain the v0.3.9-to-current workflow
+  and which capabilities belong in WebUI, CLI, or CI.
+
 ## 0.4.1 - 2026-09-16
 
 ### Added

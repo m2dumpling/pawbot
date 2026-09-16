@@ -144,6 +144,27 @@ def test_update_command_does_not_run_onboarding(monkeypatch, tmp_path: Path) -> 
     assert "not reinitialized" in result.stdout
 
 
+def test_update_command_reports_windows_handoff(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        update_module,
+        "update_package",
+        lambda: update_module.UpdateResult(
+            "uv",
+            "0.4.1",
+            None,
+            deferred=True,
+            log_path=str(tmp_path / "update.log"),
+        ),
+    )
+
+    result = runner.invoke(app, ["update"])
+
+    assert result.exit_code == 0
+    assert "后台更新" in result.stdout
+    assert "pawbot --version" in result.stdout
+    assert "update.log" in result.stdout
+
+
 def test_update_package_propagates_package_manager_failure(monkeypatch) -> None:
     monkeypatch.setattr(update_module, "_source_checkout", lambda: None)
     monkeypatch.setattr(update_module, "_distribution_or_none", lambda: None)
@@ -163,6 +184,43 @@ def test_update_package_propagates_package_manager_failure(monkeypatch) -> None:
         assert "network unavailable" in str(exc)
     else:  # pragma: no cover - assertion guard
         raise AssertionError("update_package should fail")
+
+
+def test_update_package_hands_off_persistent_windows_uv_update(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(update_module, "_source_checkout", lambda: None)
+    monkeypatch.setattr(update_module, "_distribution_or_none", lambda: None)
+    monkeypatch.setattr(update_module, "_installed_version", lambda: "0.4.1")
+    monkeypatch.setattr(update_module.sys, "platform", "win32")
+    monkeypatch.setattr(update_module, "_is_persistent_uv_runtime", lambda: True)
+    plan = update_module.UpdatePlan("uv", ("uv", "tool", "upgrade", "pawbot-ai"))
+    monkeypatch.setattr(update_module, "build_update_plan", lambda: plan)
+    monkeypatch.setattr(update_module.shutil, "which", lambda name: {
+        "powershell.exe": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+        "uv": "C:/Users/test/.local/bin/uv.exe",
+    }.get(name))
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        pass
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr(update_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(update_module.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    result = update_module.update_package()
+
+    assert result.deferred is True
+    assert result.before_version == "0.4.1"
+    assert result.log_path is not None
+    assert captured["argv"][0].endswith("powershell.exe")
+    assert "WaitForExit" in captured["argv"][-1]
+    assert "uv.exe" in captured["argv"][-1]
+    assert "tool" in captured["argv"][-1]
+    assert captured["kwargs"]["creationflags"] & update_module.subprocess.CREATE_NO_WINDOW
 
 
 def test_update_package_rejects_a_source_checkout(monkeypatch, tmp_path: Path) -> None:

@@ -37,6 +37,45 @@ without another model request, another token bill, or real tool side effects.
 | Verify an AI-assisted code change | [Agent Harness Benchmark](#agent-harness-benchmark) |
 | Change the agent or add a tool | [Development](#development) |
 
+## If you are upgrading from v0.3.9
+
+The current release keeps the same chat, Tool, Provider, Session, and channel
+workflow. The main addition is an execution-quality loop around the Agent:
+
+| What you want to do | Use | Where |
+|---|---|---|
+| Chat in a browser | `pawbot` | WebUI |
+| Chat in a terminal | `pawbot agent` | Native TUI |
+| See what a real turn did | **Settings → Execution & regression → Live execution records** | WebUI, automatic |
+| Preserve one complete run | **Save as regression sample** → work → **Stop saving** | WebUI or `pawbot record` |
+| Check a saved run after changing code | **Offline validation** | WebUI or `pawbot replay` |
+| Approve a risky Tool before it runs | Use **Workspace access**, then approve or deny the card | WebUI/TUI |
+| Check Agent behavior without an API key | `pawbot harness run` | CLI |
+| Run the pre-commit quality checks | `python scripts/quality_gate.py` | CLI/CI |
+
+Only the first six rows are normal WebUI work. Harness, task contracts, and
+the quality gate are developer checks and currently run from the CLI or CI.
+You do not need to use every new command: start with `pawbot`, and open
+**Settings → Execution & regression** only when you need to inspect or preserve
+an execution.
+
+The three execution terms have different jobs:
+
+- **Live execution record** answers “what happened just now?” and is created
+  automatically for every turn.
+- **Regression sample** answers “which complete run do I want to keep?” and
+  stores the full request, model responses, Tool Calls, and Tool results across
+  sessions until capture is stopped.
+- **Offline validation** answers “did my code change alter that run?” and uses
+  the saved responses and observations without calling the Provider or running
+  real Tools.
+
+The v0.4.0 line added the Harness, task-level contracts, fail-closed Tool
+approval, provenance, and the quality gate. v0.4.1 added task fixtures and
+aggregate evaluation metrics. v0.4.2 fixes Windows self-update for persistent
+uv/pipx installations by handing the upgrade to a helper after the current
+Pawbot process exits.
+
 ## What can pawbot do?
 
 - Work with files, shell commands, web search, web fetching, documents, images,
@@ -135,6 +174,11 @@ The update command upgrades the package through its detected installation
 manager and leaves provider credentials, channel settings, sessions, and the
 workspace untouched.
 
+If a Windows installation from v0.4.1 reports `os error 32`, close Pawbot and
+run `uv tool upgrade pawbot-ai` once. Starting with v0.4.2, `pawbot update`
+hands the upgrade to a helper process so the running launcher can be released
+before it is replaced.
+
 Windows PowerShell:
 
 ```powershell
@@ -152,19 +196,19 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.2/scripts/install.sh | sh
 ```
 
 If `curl` is not available, use `wget` instead:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.1/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.2/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.1/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.4.2/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a
@@ -417,7 +461,7 @@ The core source is organized around:
 - [Documentation index](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
 - [Agent Harness Benchmark](docs/agent-harness.md)
-- [Release notes](docs/release-notes/0.4.1.md)
+- [Release notes](docs/release-notes/0.4.2.md)
 - [Publishing guide](docs/publishing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
