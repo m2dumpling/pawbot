@@ -25,6 +25,7 @@ interface ThreadHeaderProps {
   hideThemeButton?: boolean;
   hideTitle?: boolean;
   actions?: ReactNode;
+  executionTraceAction?: ReactNode;
   minimal?: boolean;
   promptNavigatorAction?: ReactNode;
   sessionInfoAction?: ReactNode;
@@ -45,6 +46,7 @@ export function ThreadHeader({
   hideThemeButton = false,
   hideTitle = false,
   actions,
+  executionTraceAction,
   minimal = false,
   promptNavigatorAction,
   sessionInfoAction,
@@ -103,6 +105,7 @@ export function ThreadHeader({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-0.5 rounded-[0.85rem] border border-border/60 bg-muted/25 p-0.5">
+        {executionTraceAction}
         {sessionInfoAction}
         {promptNavigatorAction}
         {actions}

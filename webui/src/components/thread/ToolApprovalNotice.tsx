@@ -66,6 +66,14 @@ function ApprovalRow({
             <span className="font-mono text-foreground">{request.name}</span>
             {request.capabilities.length > 0 ? ` · ${request.capabilities.join(", ")}` : ""}
           </p>
+          {request.recovery_required ? (
+            <p className="mt-1 rounded-md border border-amber-300/70 bg-amber-100/55 px-2 py-1 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/25 dark:text-amber-200">
+              {t("toolApproval.recoveryWarning", {
+                defaultValue: "This operation was interrupted. It may already have taken effect; confirm before retrying.",
+              })}
+              {request.recovery_reason ? request.recovery_reason : ""}
+            </p>
+          ) : null}
           <pre className="mt-2 max-h-32 overflow-auto rounded-md bg-background/80 p-2 font-mono text-[11px] leading-4 text-foreground">
             {parameters}
           </pre>

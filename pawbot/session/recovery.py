@@ -27,6 +27,10 @@ from pawbot.bus.queue import MessageBus
 from pawbot.session import turn_continuation
 from pawbot.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
 from pawbot.session.manager import Session, SessionManager
+from pawbot.utils.tool_operation import (
+    TOOL_EXECUTION_METADATA_KEY,
+    operation_id_for_tool_call,
+)
 from pawbot.webui.metadata import WEBUI_TURN_METADATA_KEY
 from pawbot.webui.session_identity import webui_chat_id, webui_session_key
 
@@ -38,12 +42,36 @@ PENDING_FOLLOWUPS_KEY = "pending_user_followups"
 PENDING_FOLLOWUP_ID_KEY = "_recovery_followup_id"
 PROVIDER_STATE_CHECKPOINT_VERSION_KEY = "provider_state_checkpoint_version"
 PROVIDER_STATE_CHECKPOINT_VERSION = "v1"
+_TASK_CONTRACT_METADATA_KEY = "_task_contract"
 
 _RECOVERY_STATUSES = frozenset({"resuming", "awaiting_user", "recovered", "failed"})
 _UNCERTAIN_TOOL_PHASES = frozenset({"awaiting_tools"})
 _KNOWN_CHECKPOINT_PHASES = frozenset(
-    {"final_response", "tools_completed", "awaiting_tools", "error"}
+    {
+        "final_response",
+        "tools_completed",
+        "awaiting_tools",
+        "task_verification_retry",
+        "error",
+    }
 )
+
+
+def _safe_tool_execution_metadata(value: Any) -> dict[str, Any]:
+    """Keep only bounded recovery fields from a locally persisted checkpoint."""
+    if not isinstance(value, dict):
+        return {}
+    raw = cast(dict[str, Any], value)
+    safe: dict[str, Any] = {}
+    for key in ("call_id", "name", "operation_id", "side_effect_class", "idempotency", "recovery_strategy"):
+        field = raw.get(key)
+        if isinstance(field, str) and field:
+            safe[key] = field[:160]
+    for key in ("reversible", "receipt_supported"):
+        field = raw.get(key)
+        if isinstance(field, bool):
+            safe[key] = field
+    return safe
 
 
 class RecoveryActionError(ValueError):
@@ -253,6 +281,19 @@ def _runtime_checkpoint_is_well_formed(checkpoint: Mapping[str, Any]) -> bool:
             and not completed_ids
             and not pending_ids
         )
+    if phase == "task_verification_retry":
+        feedback_value = cast(object, checkpoint.get("verification_feedback"))
+        feedback = cast(dict[str, Any], feedback_value) if isinstance(feedback_value, dict) else {}
+        return (
+            isinstance(assistant.get("content"), str)
+            and bool(cast(str, assistant.get("content")).strip())
+            and not assistant_call_ids
+            and not completed_ids
+            and not pending_ids
+            and feedback.get("role") == "user"
+            and isinstance(feedback.get("content"), str)
+            and isinstance(feedback.get("_hidden_history"), dict)
+        )
     if phase == "awaiting_tools":
         return (
             bool(assistant_call_ids)
@@ -284,6 +325,9 @@ def restore_runtime_checkpoint(session: Session) -> bool:
     if not isinstance(checkpoint, dict):
         return False
     data = cast(dict[str, Any], checkpoint)
+    contract_value = data.get(_TASK_CONTRACT_METADATA_KEY)
+    if isinstance(contract_value, dict):
+        session.metadata[_TASK_CONTRACT_METADATA_KEY] = contract_value
     assistant = cast(object, data.get("assistant_message"))
     completed_value = cast(object, data.get("completed_tool_results"))
     pending_value = cast(object, data.get("pending_tool_calls"))
@@ -299,6 +343,12 @@ def restore_runtime_checkpoint(session: Session) -> bool:
         row = dict(assistant_row)
         row.setdefault("timestamp", datetime.now().isoformat())
         restored.append(row)
+    if data.get("phase") == "task_verification_retry":
+        feedback_value = data.get("verification_feedback")
+        if isinstance(feedback_value, dict):
+            feedback = cast(dict[str, Any], feedback_value)
+            if feedback.get("role") == "user" and isinstance(feedback.get("content"), str):
+                restored.append(dict(feedback))
     for value in completed:
         if not isinstance(value, dict):
             continue
@@ -322,15 +372,28 @@ def restore_runtime_checkpoint(session: Session) -> bool:
             else {}
         )
         name = function.get("name")
+        execution_metadata_value = tool_call.get(TOOL_EXECUTION_METADATA_KEY)
+        execution_metadata = _safe_tool_execution_metadata(execution_metadata_value)
+        operation_id = operation_id_for_tool_call(
+            session.key,
+            name if isinstance(name, str) else "tool",
+            function.get("arguments", {}),
+        )
+        execution_metadata["operation_id"] = operation_id
+        tool_row: dict[str, Any] = {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "name": name if isinstance(name, str) and name else "tool",
+            "content": "Error: Task interrupted before this tool finished.",
+            "timestamp": datetime.now().isoformat(),
+            "_recovery_interrupted": True,
+        }
+        if operation_id:
+            tool_row["operation_id"] = operation_id
+        if execution_metadata:
+            tool_row[TOOL_EXECUTION_METADATA_KEY] = execution_metadata
         restored.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "name": name if isinstance(name, str) and name else "tool",
-                "content": "Error: Task interrupted before this tool finished.",
-                "timestamp": datetime.now().isoformat(),
-                "_recovery_interrupted": True,
-            }
+            tool_row
         )
 
     overlap = 0
@@ -376,6 +439,7 @@ def _discard_runtime_checkpoint(session: Session) -> bool:
     if RUNTIME_CHECKPOINT_KEY not in session.metadata:
         return False
     session.metadata.pop(RUNTIME_CHECKPOINT_KEY, None)
+    session.metadata.pop(_TASK_CONTRACT_METADATA_KEY, None)
     session.provider_state = None
     session.updated_at = datetime.now()
     return True
@@ -402,6 +466,7 @@ def restore_pending_interruption(session: Session, *, superseded: bool = False) 
         session.provider_state = None
         session.updated_at = datetime.now()
     session.metadata.pop(PENDING_USER_TURN_KEY, None)
+    session.metadata.pop(_TASK_CONTRACT_METADATA_KEY, None)
     return True
 
 

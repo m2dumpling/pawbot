@@ -31,6 +31,8 @@ if TYPE_CHECKING:
         SessionSnapshot,
         StreamEvent,
         StreamEventType,
+        TaskContract,
+        TaskEvaluation,
     )
     from .runtime_context import RuntimeContextBlock, RuntimeContextProvider
 
@@ -49,7 +51,7 @@ def _resolve_version() -> str:
         return _pkg_version("pawbot-ai")
     except PackageNotFoundError:
         # Source checkouts often import pawbot without installed dist-info.
-        return _read_pyproject_version() or "0.3.9"
+        return _read_pyproject_version() or "0.5.0"
 
 
 __version__ = _resolve_version()
@@ -57,6 +59,8 @@ __logo__ = "🐕"
 
 _LAZY_EXPORTS = {
     "Pawbot": ".pawbot",
+    "TaskContract": ".pawbot",
+    "TaskEvaluation": ".pawbot",
     "LLMUsage": ".pawbot",
     "RunStream": ".pawbot",
     "RunResult": ".pawbot",
@@ -95,6 +99,8 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "Pawbot",
+    "TaskContract",
+    "TaskEvaluation",
     "LLMUsage",
     "RunResult",
     "RequestContext",

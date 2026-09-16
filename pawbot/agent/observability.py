@@ -4,11 +4,11 @@ The trace layer is deliberately smaller than a remote observability platform.
 It gives every turn a durable, queryable execution timeline while keeping the
 existing Record & Replay rails backward compatible:
 
-* ``trace_only`` writes bounded metadata to one JSONL file per turn;
+* ``trace_only`` writes bounded metadata and redacted previews to one JSONL file per turn;
 * an active ``BlackboxController`` can direct the same events to the recording
   directory's ``events.jsonl`` file;
-* raw prompts, model responses, tool arguments, and tool results remain in the
-  existing blackbox files and are never copied into the default trace.
+* unbounded prompts, model responses, tool arguments, and tool results remain in
+  the existing blackbox files; the default trace only carries bounded previews.
 
 This module is synchronous at the write boundary on purpose. Agent lifecycle
 callbacks must not create another awaitable failure path, and each event is a
@@ -32,6 +32,7 @@ from loguru import logger
 
 from pawbot.agent.approval import ToolApprovalRequest, ToolApprovalResult
 from pawbot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
+from pawbot.agent.tools.execution import execution_policy_for_tool, operation_id_for_tool_call
 
 TRACE_SCHEMA_VERSION = 1
 TRACE_EVENTS_FILENAME = "events.jsonl"
@@ -43,7 +44,15 @@ _CLEANUP_INTERVAL_SECONDS = 300.0
 _DEFAULT_SLOW_THRESHOLD_MS = 2_000
 _INDEX_COMPACT_MIN_ROWS = 100
 
-_FAILURE_STATUSES = frozenset({"error", "failed", "unknown_side_effect", "cancelled", "incomplete"})
+_FAILURE_STATUSES = frozenset({
+    "error",
+    "failed",
+    "blocked",
+    "denied",
+    "unknown_side_effect",
+    "cancelled",
+    "incomplete",
+})
 
 TraceEventCallback = Callable[[dict[str, Any]], None]
 TraceFinishCallback = Callable[[dict[str, Any]], None]
@@ -103,6 +112,25 @@ def _redact_payload(value: Any, *, depth: int = 0) -> Any:
     return value
 
 
+def trace_value_preview(value: Any, *, limit: int = 720) -> str | None:
+    """Return a redacted, bounded preview for the live inspection surface."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = redact_text(value, limit=limit)
+    else:
+        try:
+            text = json.dumps(
+                _redact_payload(value),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=repr,
+            )
+        except (TypeError, ValueError):
+            text = redact_text(value, limit=limit)
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
 def _safe_component(value: str | None, fallback: str) -> str:
     raw = (value or fallback).strip()
     safe = "".join(character if character.isalnum() or character in "-_." else "_" for character in raw)
@@ -137,6 +165,37 @@ def _is_unknown_side_effect(event: dict[str, Any]) -> bool:
         "tool.cancelled",
         "tool.unknown_side_effect",
     }
+
+
+def _trace_tool_call_key(event: dict[str, Any]) -> str | None:
+    """Return a stable in-memory key for one local or hosted tool call."""
+    name = str(event.get("event") or "")
+    if name not in {
+        "tool.planned",
+        "tool.started",
+        "tool.finished",
+        "tool.cancelled",
+        "provider_tool.started",
+        "provider_tool.completed",
+        "provider_tool.error",
+    }:
+        return None
+    call_id = event.get("call_id")
+    prefix = "provider" if name.startswith("provider_tool.") else "local"
+    if isinstance(call_id, str) and call_id:
+        return f"{prefix}:call:{call_id}"
+    return (
+        f"{prefix}:fallback:{event.get('iteration', '?')}:"
+        f"{event.get('tool_name', '?')}"
+    )
+
+
+def _count_trace_tool_calls(events: list[dict[str, Any]]) -> int:
+    return len({
+        key
+        for event in events
+        if (key := _trace_tool_call_key(event)) is not None
+    })
 
 
 def _trace_timestamp(row: dict[str, Any]) -> int:
@@ -200,11 +259,14 @@ class TraceRun:
     _sequence: int = 0
     _event_count: int = 0
     _tool_count: int = 0
+    _tool_call_keys: set[str] = field(default_factory=set, repr=False)
     _failure_count: int = 0
     _tool_failure_count: int = 0
     _provider_error_count: int = 0
     _unknown_side_effect_count: int = 0
     _max_step_duration_ms: int = 0
+    _verification_status: str | None = None
+    _verification_completed: bool | None = None
     _closed: bool = False
 
     def set_runtime(self, *, provider: str | None, model: str | None) -> None:
@@ -257,7 +319,9 @@ class TraceRun:
         safe_row = cast(dict[str, Any], _redact_payload(row))
         self.writer.append(safe_row)
         self._event_count += 1
-        if event in {"tool.finished", "tool.cancelled"}:
+        tool_call_key = _trace_tool_call_key(row)
+        if tool_call_key is not None and tool_call_key not in self._tool_call_keys:
+            self._tool_call_keys.add(tool_call_key)
             self._tool_count += 1
         normalized_status = str(status or "").lower()
         if normalized_status in _FAILURE_STATUSES:
@@ -268,6 +332,15 @@ class TraceRun:
             self._provider_error_count += 1
         if _is_unknown_side_effect(row):
             self._unknown_side_effect_count += 1
+        if event == "task.verification":
+            verification_status = row.get("verification_status")
+            self._verification_status = (
+                str(verification_status)
+                if verification_status is not None
+                else None
+            )
+            completed = row.get("verification_completed")
+            self._verification_completed = completed if isinstance(completed, bool) else None
         if isinstance(row.get("duration_ms"), int):
             self._max_step_duration_ms = max(self._max_step_duration_ms, row["duration_ms"])
         if self.on_event is not None:
@@ -304,6 +377,8 @@ class TraceRun:
             "tool_failure_count": self._tool_failure_count,
             "provider_error_count": self._provider_error_count,
             "unknown_side_effect_count": self._unknown_side_effect_count,
+            "verification_status": self._verification_status,
+            "verification_completed": self._verification_completed,
             "max_step_duration_ms": self._max_step_duration_ms,
             "timestamp_ms": int(time.time() * 1000),
         }
@@ -414,7 +489,13 @@ class TraceHook(AgentHook):
                 iteration=context.iteration,
                 call_id=str(getattr(tool_call, "id", "") or "") or None,
                 tool_name=str(getattr(tool_call, "name", "") or "unknown"),
+                operation_id=operation_id_for_tool_call(
+                    context.session_key,
+                    str(getattr(tool_call, "name", "") or "unknown"),
+                    getattr(tool_call, "arguments", None),
+                ),
                 argument_keys=argument_keys,
+                arguments_preview=trace_value_preview(argument_mapping, limit=480),
             )
 
     async def on_tool_approval_requested(
@@ -431,6 +512,11 @@ class TraceHook(AgentHook):
             approval_id=request.request_id,
             argument_keys=sorted(request.arguments),
             tool_capabilities=list(request.capabilities),
+            operation_id=request.operation_id,
+            recovery_required=request.recovery_required,
+            recovery_reason=redact_text(request.recovery_reason, limit=300)
+            if request.recovery_reason
+            else None,
         )
 
     async def on_tool_approval_resolved(
@@ -447,6 +533,13 @@ class TraceHook(AgentHook):
             tool_name=request.name,
             approval_id=request.request_id,
             reason=redact_text(decision.reason) if decision.reason else None,
+            operation_id=request.operation_id,
+            recovery_required=request.recovery_required,
+            recovery_resolution=(
+                "approved" if decision.approved else "denied"
+            )
+            if request.recovery_required
+            else None,
         )
 
     async def on_model_response(self, context: AgentHookContext) -> None:
@@ -468,19 +561,27 @@ class TraceHook(AgentHook):
             tool_names=tool_names,
             content_chars=len(response.content or ""),
             reasoning_chars=len(response.reasoning_content or ""),
+            content_preview=trace_value_preview(response.content, limit=720),
+            reasoning_preview=trace_value_preview(response.reasoning_content, limit=720),
             usage=usage,
+            generation_ms=getattr(response, "generation_ms", None),
+            ttft_ms=getattr(response, "ttft_ms", None),
             error=_response_error(response),
         )
 
     async def on_model_request_started(self, context: AgentHookContext) -> None:
         attempt = self._model_attempts.get(context.iteration, 0) + 1
         self._model_attempts[context.iteration] = attempt
+        self._model_started_ns[context.iteration] = time.monotonic_ns()
         self._trace.emit(
             "llm.request_started",
             status="running",
             iteration=context.iteration,
             call_id=f"llm-{context.iteration}-attempt-{attempt}",
+            attempt=attempt,
             message_count=context.model_message_count,
+            context_window_tokens=context.context_window_tokens,
+            tools_available=self._tools_count,
         )
 
     async def on_model_retry(self, context: AgentHookContext, reason: str) -> None:
@@ -521,6 +622,44 @@ class TraceHook(AgentHook):
             budget=context.budget,
         )
 
+    async def on_task_verification(
+        self,
+        context: AgentRunHookContext,
+        evaluation: dict[str, Any],
+        *,
+        attempt: int,
+    ) -> None:
+        del context
+        status = str(evaluation.get("status") or "not_evaluable")
+        trace_status = (
+            "completed"
+            if status == "passed"
+            else "failed"
+            if status == "failed"
+            else "blocked"
+        )
+        raw_failures = evaluation.get("failures")
+        failures = (
+            [
+                redact_text(item, limit=300)
+                for item in cast(list[Any], raw_failures)
+                if isinstance(item, str)
+            ]
+            if isinstance(raw_failures, list)
+            else []
+        )
+        self._trace.emit(
+            "task.verification",
+            status=trace_status,
+            verification_status=status,
+            verification_completed=evaluation.get("completed") is True,
+            verification_attempt=attempt,
+            verification_reason=redact_text(evaluation.get("reason"), limit=300)
+            if evaluation.get("reason")
+            else None,
+            verification_failures=failures,
+        )
+
     async def before_execute_tool(
         self,
         context: AgentHookContext,
@@ -535,11 +674,19 @@ class TraceHook(AgentHook):
         raw_capabilities: Any = getattr(tool, "capabilities", ())
         capabilities = sorted(str(value) for value in raw_capabilities) if raw_capabilities else []
         call_id = str(getattr(tool_call, "id", "") or "")
+        policy = execution_policy_for_tool(tool)
+        operation_id = operation_id_for_tool_call(
+            context.session_key,
+            str(getattr(tool_call, "name", "") or "unknown"),
+            getattr(tool_call, "arguments", None),
+        )
         tool_metadata = {
             "tool_capabilities": capabilities,
             "read_only": bool(getattr(tool, "read_only", False)),
             "concurrency_safe": bool(getattr(tool, "concurrency_safe", False)),
             "exclusive": bool(getattr(tool, "exclusive", False)),
+            "operation_id": operation_id,
+            **policy.to_dict(),
         }
         if call_id:
             self._tool_metadata[call_id] = tool_metadata
@@ -550,10 +697,13 @@ class TraceHook(AgentHook):
             call_id=call_id or None,
             tool_name=str(getattr(tool_call, "name", "") or "unknown"),
             argument_keys=argument_keys,
+            arguments_preview=trace_value_preview(argument_mapping, limit=480),
             tool_capabilities=capabilities,
             read_only=tool_metadata["read_only"],
             concurrency_safe=tool_metadata["concurrency_safe"],
             exclusive=tool_metadata["exclusive"],
+            operation_id=operation_id,
+            **policy.to_dict(),
         )
 
     async def on_execute_tool_cancelled(
@@ -563,14 +713,23 @@ class TraceHook(AgentHook):
         tool: Any,
         params: Any,
     ) -> None:
-        del tool, params
+        del params
+        policy = execution_policy_for_tool(tool)
+        call_id = str(getattr(tool_call, "id", "") or "")
+        operation_id = operation_id_for_tool_call(
+            context.session_key,
+            str(getattr(tool_call, "name", "") or "unknown"),
+            getattr(tool_call, "arguments", None),
+        )
         self._trace.emit(
             "tool.cancelled",
             status="unknown_side_effect",
             iteration=context.iteration,
-            call_id=str(getattr(tool_call, "id", "") or "") or None,
+            call_id=call_id or None,
             tool_name=str(getattr(tool_call, "name", "") or "unknown"),
+            operation_id=operation_id,
             side_effect="may_have_occurred",
+            **policy.to_dict(),
             error={
                 "type": "tool_cancelled",
                 "code": "UNKNOWN_SIDE_EFFECT",
@@ -593,6 +752,13 @@ class TraceHook(AgentHook):
             iteration=context.iteration,
             call_id=str(event.get("call_id") or "") or None,
             tool_name=str(event.get("name") or "unknown"),
+            arguments_preview=trace_value_preview(event.get("arguments"), limit=480),
+            result_preview=trace_value_preview(event.get("result"), limit=720),
+            result_type=(
+                type(event.get("result")).__name__
+                if event.get("result") is not None
+                else None
+            ),
             error=redact_text(event.get("error")) if event.get("error") else None,
         )
 
@@ -608,11 +774,14 @@ class TraceHook(AgentHook):
             state = states_by_call_id.get(call_id, {})
             tool_metadata = self._tool_metadata.pop(call_id, {})
             result = context.tool_results[index] if index < len(context.tool_results) else None
-            status = str(event.get("status") or state.get("state") or "unknown")
-            if status == "ok":
-                normalized_status = "succeeded"
-            elif status in {"cancelled", "canceled", "unknown"}:
+            lifecycle_state = str(state.get("state") or "")
+            status = str(event.get("status") or lifecycle_state or "unknown")
+            if lifecycle_state == "blocked" or status in {"blocked", "denied"}:
+                normalized_status = "blocked"
+            elif lifecycle_state == "unknown" or status in {"cancelled", "canceled", "unknown"}:
                 normalized_status = "unknown_side_effect"
+            elif status == "ok":
+                normalized_status = "succeeded"
             else:
                 normalized_status = "failed"
             self._trace.emit(
@@ -624,8 +793,26 @@ class TraceHook(AgentHook):
                 duration_ms=state.get("duration_ms"),
                 lifecycle_state=state.get("state"),
                 side_effect=state.get("side_effect"),
+                operation_id=state.get("operation_id") or tool_metadata.get("operation_id"),
+                recovery_required=state.get("recovery_required", False),
+                recovery_resolution=state.get("recovery_resolution"),
+                receipt=state.get("receipt"),
+                side_effect_class=state.get("side_effect_class")
+                or tool_metadata.get("side_effect_class"),
+                idempotency=state.get("idempotency") or tool_metadata.get("idempotency"),
+                recovery_strategy=state.get("recovery_strategy")
+                or tool_metadata.get("recovery_strategy"),
+                reversible=state.get("reversible", tool_metadata.get("reversible", False)),
+                receipt_supported=state.get(
+                    "receipt_supported", tool_metadata.get("receipt_supported", False)
+                ),
                 detail=redact_text(event.get("detail")) if event.get("detail") else None,
                 error=_tool_error_payload(event, state),
+                arguments_preview=trace_value_preview(
+                    getattr(tool_call, "arguments", None),
+                    limit=480,
+                ),
+                result_preview=trace_value_preview(result, limit=720),
                 result_type=type(result).__name__ if result is not None else None,
                 result_chars=len(str(result)) if result is not None else 0,
                 tool_capabilities=tool_metadata.get("tool_capabilities", []),
@@ -656,12 +843,17 @@ class TraceHook(AgentHook):
 
     async def after_run(self, context: AgentRunHookContext) -> None:
         self._agent_finished = True
+        task_evaluation = context.task_evaluation or {}
         self._trace.emit(
             "agent.completed",
             status="error" if context.error else "completed",
             stop_reason=context.stop_reason,
             error=redact_text(context.error) if context.error else None,
             message_count=len(context.messages),
+            final_content_chars=len(context.final_content or ""),
+            final_content_preview=trace_value_preview(context.final_content, limit=720),
+            verification_status=task_evaluation.get("status"),
+            verification_completed=task_evaluation.get("completed"),
             tools_used=list(context.tools_used),
             usage=context.usage.to_dict() if context.usage is not None else None,
             budget=context.budget,
@@ -740,6 +932,9 @@ def _tool_error_payload(
     elif "capability" in lowered or "permission" in lowered:
         code = "CAPABILITY_DENIED"
         error_type = "tool_permission_error"
+    elif "recovery" in lowered or "interrupted" in lowered:
+        code = "RECOVERY_CONFIRMATION_REQUIRED"
+        error_type = "recovery_error"
     elif status in {"cancelled", "canceled", "unknown"}:
         code = "UNKNOWN_SIDE_EFFECT"
         error_type = "unknown_side_effect"
@@ -903,15 +1098,21 @@ class TraceStore:
             for event in events
             if str(event.get("status") or "").lower() in _FAILURE_STATUSES
         )
-        tools = sum(
-            1 for event in events if event.get("event") in {"tool.finished", "tool.cancelled"}
-        )
-        duration_value = last.get("duration_ms")
+        tools = _count_trace_tool_calls(events)
+        terminal = last.get("event") in {
+            "turn.completed",
+            "turn.failed",
+            "turn.cancelled",
+            "turn.incomplete",
+        }
+        duration_value = last.get("duration_ms") if terminal else None
         if not isinstance(duration_value, int):
             first_timestamp = first.get("timestamp_ms")
             last_timestamp = last.get("timestamp_ms")
             if isinstance(first_timestamp, int) and isinstance(last_timestamp, int):
                 duration_value = max(0, last_timestamp - first_timestamp)
+            elif isinstance(last.get("duration_ms"), int):
+                duration_value = last["duration_ms"]
         try:
             identifier = path.relative_to(root).as_posix()
         except ValueError:
@@ -927,8 +1128,12 @@ class TraceStore:
             "model": last.get("model") or first.get("model"),
             "provider": last.get("provider") or first.get("provider"),
             "owner_pid": last.get("owner_pid") or first.get("owner_pid"),
-            "status": last.get("status") or "unknown",
-            "stop_reason": last.get("stop_reason"),
+            "status": (
+                last.get("status") or "unknown"
+                if terminal or last.get("event") == "turn.accepted"
+                else "running"
+            ),
+            "stop_reason": last.get("stop_reason") if terminal else None,
             "duration_ms": duration_value,
             "event_count": len(events),
             "tool_count": tools,
@@ -937,6 +1142,22 @@ class TraceStore:
             "provider_error_count": sum(1 for event in events if _is_provider_error(event)),
             "unknown_side_effect_count": sum(
                 1 for event in events if _is_unknown_side_effect(event)
+            ),
+            "verification_status": next(
+                (
+                    event.get("verification_status")
+                    for event in reversed(events)
+                    if event.get("event") == "task.verification"
+                ),
+                None,
+            ),
+            "verification_completed": next(
+                (
+                    event.get("verification_completed")
+                    for event in reversed(events)
+                    if event.get("event") == "task.verification"
+                ),
+                None,
             ),
             "max_step_duration_ms": max(
                 (
@@ -997,6 +1218,7 @@ class TraceStore:
         *,
         limit: int = 50,
         session_key: str | None = None,
+        chat_id: str | None = None,
         issues_only: bool = False,
         slow_only: bool = False,
         slow_threshold_ms: int = _DEFAULT_SLOW_THRESHOLD_MS,
@@ -1044,6 +1266,8 @@ class TraceStore:
         rows = sorted(latest_by_id.values(), key=_trace_timestamp, reverse=True)
         if session_key is not None:
             rows = [row for row in rows if row.get("session_key") == session_key]
+        if chat_id is not None:
+            rows = [row for row in rows if row.get("chat_id") == chat_id]
         if issues_only:
             rows = [row for row in rows if int(row.get("failure_count") or 0) > 0]
         if slow_only:

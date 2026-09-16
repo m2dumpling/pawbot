@@ -170,6 +170,7 @@ describe("Record & Replay inspection", () => {
             id: "cli_direct/trace.jsonl",
             trace_id: "trace:trace",
             session_key: "cli:trace",
+            session_name: "洛杉矶天气与本地新闻",
             turn_id: "trace",
             channel: "cli",
             chat_id: "direct",
@@ -263,8 +264,8 @@ describe("Record & Replay inspection", () => {
     expect(screen.getByText("3. Validate offline")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "View live records" })).toBeInTheDocument();
 
-    await user.click(await screen.findByRole("button", { name: /cli:trace/ }));
-    expect(await screen.findByText(/build/)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: /洛杉矶天气与本地新闻/ }));
+    expect((await screen.findAllByText(/build/)).length).toBeGreaterThan(0);
 
     await user.click(await screen.findByRole("button", { name: "Validate offline" }));
     const turnButton = await screen.findByRole("button", { name: /Turn 1/ });

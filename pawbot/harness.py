@@ -182,6 +182,7 @@ class HarnessScenario:
     cancel_after_s: float | None = None
     tool_approval_callback: ToolApprovalCallback | None = None
     approval_capabilities: frozenset[str] = DEFAULT_APPROVAL_CAPABILITIES
+    task_contract: TaskContract | None = None
 
     def build_spec(self) -> AgentRunSpec:
         """Build a real runner spec with explicit resource accounting."""
@@ -206,6 +207,7 @@ class HarnessScenario:
             llm_timeout_s=self.llm_timeout_s,
             tool_approval_callback=self.tool_approval_callback,
             approval_capabilities=self.approval_capabilities,
+            task_contract=self.task_contract,
             channel="harness",
             chat_id=self.session_key,
         )
@@ -903,6 +905,13 @@ def _assert_case(
 async def run_case(case: HarnessCase) -> HarnessResult:
     """Run one case through the real AgentRunner and evaluate its contract."""
     scenario = case.factory()
+    scenario.task_contract = TaskContract(
+        id=case.id,
+        description=case.description,
+        final_content_equals=case.expectation.final_content_equals,
+        final_content_contains=case.expectation.final_content_contains,
+        required_tools=case.expectation.task_required_tools,
+    )
     started_at = time.perf_counter()
     task = asyncio.create_task(AgentRunner().run(scenario.build_spec()))
     execution_status: HarnessExecutionStatus = "completed"
@@ -948,16 +957,14 @@ async def run_case(case: HarnessCase) -> HarnessResult:
         tool_statuses=tool_statuses,
         model_requests=model_requests,
     )
-    task_evaluation = evaluate_task(
-        TaskContract(
-            id=case.id,
-            description=case.description,
-            final_content_equals=case.expectation.final_content_equals,
-            final_content_contains=case.expectation.final_content_contains,
-            required_tools=case.expectation.task_required_tools,
-        ),
-        run_result,
-        execution_status=execution_status,
+    task_evaluation = (
+        run_result.task_evaluation
+        if run_result is not None and run_result.task_evaluation is not None
+        else evaluate_task(
+            scenario.task_contract,
+            run_result,
+            execution_status=execution_status,
+        )
     )
     task_failures = list(task_evaluation.failures)
     if case.expectation.task_completed and task_evaluation.status != "passed":

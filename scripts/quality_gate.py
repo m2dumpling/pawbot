@@ -120,6 +120,7 @@ def _build_checks(*, full: bool) -> list[CheckResult]:
                 "-q",
                 "tests/harness",
                 "tests/agent/test_evaluation.py",
+                "tests/agent/test_tool_execution_policy.py",
                 "tests/agent/test_tool_approval.py",
                 "tests/agent/test_provenance.py",
                 "tests/agent/test_observability.py",
@@ -132,6 +133,7 @@ def _build_checks(*, full: bool) -> list[CheckResult]:
                 "-q",
                 "tests/test_blackbox.py::test_public_sanitized_fixture_is_loadable",
                 "tests/test_blackbox.py::test_record_then_replay_is_deterministic",
+                "tests/test_blackbox.py::test_record_then_replay_preserves_task_evaluation",
             ),
         ),
     ]

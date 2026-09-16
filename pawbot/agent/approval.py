@@ -32,6 +32,9 @@ class ToolApprovalRequest:
     created_at_ms: int
     channel: str = ""
     chat_id: str | None = None
+    operation_id: str | None = None
+    recovery_required: bool = False
+    recovery_reason: str | None = None
 
     @classmethod
     def create(
@@ -45,6 +48,9 @@ class ToolApprovalRequest:
         iteration: int,
         channel: str = "",
         chat_id: str | None = None,
+        operation_id: str | None = None,
+        recovery_required: bool = False,
+        recovery_reason: str | None = None,
     ) -> ToolApprovalRequest:
         return cls(
             request_id=uuid4().hex,
@@ -57,6 +63,9 @@ class ToolApprovalRequest:
             created_at_ms=int(time.time() * 1000),
             channel=channel,
             chat_id=chat_id,
+            operation_id=operation_id,
+            recovery_required=recovery_required,
+            recovery_reason=recovery_reason,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -72,6 +81,9 @@ class ToolApprovalRequest:
             "created_at_ms": self.created_at_ms,
             "channel": self.channel,
             "chat_id": self.chat_id,
+            "operation_id": self.operation_id,
+            "recovery_required": self.recovery_required,
+            "recovery_reason": self.recovery_reason,
         }
 
 

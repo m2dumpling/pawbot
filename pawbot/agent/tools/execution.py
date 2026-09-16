@@ -22,6 +22,7 @@ stage is called through its static interface.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import Any, cast
 
@@ -34,11 +35,16 @@ from pawbot.agent.approval import (
     ToolApprovalResult,
 )
 from pawbot.agent.hook import AgentHook, AgentHookContext
+from pawbot.agent.tools.base import ToolExecutionPolicy
 from pawbot.agent.tools.registry import ToolRegistry, ToolResult, is_tool_error_result
 from pawbot.providers.base import ToolCallRequest
 from pawbot.utils.runtime import (
     repeated_external_lookup_error,
     repeated_workspace_violation_error,
+)
+from pawbot.utils.tool_operation import (
+    TOOL_EXECUTION_METADATA_KEY,
+    operation_id_for_tool_call,
 )
 
 _RETRY_HINT = "\n\n[Analyze the error above and try a different approach.]"
@@ -103,6 +109,85 @@ def _ok_detail(result: Any) -> str:
     if len(detail) > 120:
         return detail[:120] + "..."
     return detail
+
+
+def execution_policy_for_tool(tool: Any) -> ToolExecutionPolicy:
+    """Normalize the optional policy exposed by built-in or plugin Tools."""
+    candidate = getattr(tool, "execution_policy", None)
+    if isinstance(candidate, ToolExecutionPolicy):
+        return candidate
+    return ToolExecutionPolicy(
+        side_effect="none" if bool(getattr(tool, "read_only", False)) else "unknown",
+        idempotency="not_applicable" if bool(getattr(tool, "read_only", False)) else "unknown",
+        recovery_strategy="none" if bool(getattr(tool, "read_only", False)) else "manual_confirmation",
+    )
+
+
+def _lookup_tool(tools: Any, name: str) -> Any | None:
+    """Resolve a tool while keeping compatibility with lightweight embedders."""
+    getter = getattr(tools, "get", None)
+    if not callable(getter):
+        return None
+    try:
+        return getter(name)
+    except Exception:
+        return None
+
+
+def recovery_confirmation_required(policy: ToolExecutionPolicy) -> bool:
+    """Return whether an operation cannot be retried blindly after uncertainty."""
+    return (
+        policy.side_effect != "none"
+        and policy.idempotency != "idempotent"
+        and policy.recovery_strategy not in {"none", "safe_retry"}
+    )
+
+
+def tool_execution_metadata(
+    tools: ToolRegistry,
+    session_key: str | None,
+    tool_call: ToolCallRequest,
+) -> dict[str, Any]:
+    """Return safe policy metadata for a pending checkpoint entry."""
+    tool = _lookup_tool(tools, tool_call.name)
+    policy = execution_policy_for_tool(tool) if tool is not None else ToolExecutionPolicy(
+        side_effect="unknown",
+        idempotency="unknown",
+        recovery_strategy="manual_confirmation",
+    )
+    return {
+        "call_id": tool_call.id,
+        "name": tool_call.name,
+        "operation_id": operation_id_for_tool_call(
+            session_key,
+            tool_call.name,
+            tool_call.arguments,
+        ),
+        **policy.to_dict(),
+    }
+
+
+def _recovered_operation(messages: list[dict[str, Any]], operation_id: str) -> dict[str, Any] | None:
+    """Find an interrupted operation marker, if it is still unresolved."""
+    for message in reversed(messages):
+        message_data = message
+        message_operation_id = message_data.get("operation_id")
+        if not isinstance(message_operation_id, str):
+            execution_metadata = message_data.get(TOOL_EXECUTION_METADATA_KEY)
+            if isinstance(execution_metadata, dict):
+                message_operation_id = cast(dict[str, Any], execution_metadata).get(
+                    "operation_id"
+                )
+        if message_operation_id != operation_id:
+            continue
+        # A later normal tool result resolves the earlier interruption marker.
+        if (
+            message_data.get("_recovery_interrupted") is True
+            or message_data.get("_recovery_pending") is True
+        ):
+            return message
+        return None
+    return None
 
 
 class ViolationClassifier:
@@ -170,7 +255,7 @@ class BatchPlanner:
         batches: list[list[ToolCallRequest]] = []
         current: list[ToolCallRequest] = []
         for tool_call in tool_calls:
-            tool = tools.get(tool_call.name)
+            tool = _lookup_tool(tools, tool_call.name)
             if tool is not None and tool.concurrency_safe:
                 current.append(tool_call)
                 continue
@@ -202,6 +287,7 @@ class CallExecutor:
         context: AgentHookContext,
         denied_tool_capabilities: frozenset[str] = frozenset(),
         tool_approval_callback: ToolApprovalCallback | None = None,
+        recovery_approval_callback: ToolApprovalCallback | None = None,
         approval_capabilities: frozenset[str] = DEFAULT_APPROVAL_CAPABILITIES,
         channel: str = "",
         chat_id: str | None = None,
@@ -213,16 +299,31 @@ class CallExecutor:
         self._classifier = ViolationClassifier(workspace_violation_counts)
         self._denied_tool_capabilities = denied_tool_capabilities
         self._tool_approval_callback = tool_approval_callback
+        self._recovery_approval_callback = recovery_approval_callback
         self._approval_capabilities = approval_capabilities
         self._channel = channel
         self._chat_id = chat_id
+        self._recovery_operation_ids_seen: set[str] = set()
 
     def _state_record(self, tool_call: ToolCallRequest) -> dict[str, Any]:
+        tool = _lookup_tool(self._tools, tool_call.name)
+        policy = execution_policy_for_tool(tool) if tool is not None else ToolExecutionPolicy(
+            side_effect="unknown",
+            idempotency="unknown",
+            recovery_strategy="manual_confirmation",
+        )
         record: dict[str, Any] = {
             "call_id": tool_call.id,
             "name": tool_call.name,
+            "operation_id": operation_id_for_tool_call(
+                self._context.session_key,
+                tool_call.name,
+                tool_call.arguments,
+            ),
             "state": "planned",
-            "side_effect": "unknown",
+            "side_effect": policy.side_effect,
+            **policy.to_dict(),
+            "recovery_resolution": None,
             "started_at": None,
             "finished_at": None,
             "duration_ms": None,
@@ -249,7 +350,59 @@ class CallExecutor:
 
     @staticmethod
     def _side_effect_class(tool: Any) -> str:
-        return "none" if bool(getattr(tool, "read_only", False)) else "may_have_occurred"
+        policy = execution_policy_for_tool(tool)
+        return "none" if policy.side_effect == "none" else "may_have_occurred"
+
+    @staticmethod
+    def _receipt_from_result(result: Any) -> Any:
+        if isinstance(result, dict):
+            return cast(dict[str, Any], result).get("receipt")
+        return getattr(result, "receipt", None)
+
+    @classmethod
+    def _receipt_from_tool(cls, tool: Any, result: Any) -> Any:
+        receipt_reader = getattr(tool, "execution_receipt", None)
+        if callable(receipt_reader):
+            try:
+                return receipt_reader(result)
+            except Exception:
+                logger.debug(
+                    "Tool {} returned an invalid execution receipt",
+                    getattr(tool, "name", "unknown"),
+                    exc_info=True,
+                )
+        return cls._receipt_from_result(result)
+
+    @staticmethod
+    def _bounded_receipt(value: Any) -> str | None:
+        """Keep only a small receipt snapshot in session state and traces."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+        else:
+            try:
+                text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+            except (TypeError, ValueError):
+                text = str(value)
+        if not text:
+            return None
+        return text[:512] + ("..." if len(text) > 512 else "")
+
+    @staticmethod
+    def _recovery_error(
+        tool_name: str,
+        operation_id: str,
+        *,
+        reason: str = (
+            "A human must confirm before retrying because the previous side effect "
+            "could not be confirmed."
+        ),
+    ) -> ToolResult:
+        return ToolResult.error(
+            f"Error: tool '{tool_name}' was interrupted and may already have caused "
+            f"side effects (operation {operation_id}). {reason}"
+        )
 
     @staticmethod
     def _needs_approval(tool: Any, approval_capabilities: frozenset[str]) -> bool:
@@ -260,6 +413,8 @@ class CallExecutor:
         return bool(capabilities & approval_capabilities) or not capabilities
 
     async def run(self, tool_call: ToolCallRequest) -> tuple[Any, dict[str, str]]:
+        from pawbot.agent.blackbox import replay_is_active
+
         lifecycle = self._state_record(tool_call)
         lookup_error = repeated_external_lookup_error(
             tool_call.name,
@@ -306,6 +461,10 @@ class CallExecutor:
                 return handled
             return prep_error + _RETRY_HINT, event
 
+        policy = execution_policy_for_tool(tool)
+        operation_id = cast(str, lifecycle["operation_id"])
+        lifecycle.update(policy.to_dict())
+        recovery_approved = False
         default_capabilities: frozenset[str] = frozenset()
         raw_capabilities = cast(Any, getattr(tool, "capabilities", default_capabilities))
         tool_capabilities: frozenset[str] = frozenset(
@@ -325,8 +484,110 @@ class CallExecutor:
                 f"Error: tool '{tool_call.name}' requires denied capabilities: {', '.join(denied)}"
             ), event
 
+        recovered = _recovered_operation(self._context.messages, operation_id)
+        if recovered is not None and policy.side_effect != "none" and not replay_is_active():
+            lifecycle["recovery_required"] = True
+            if operation_id in self._recovery_operation_ids_seen:
+                lifecycle["recovery_resolution"] = "duplicate_blocked"
+                self._finish_state(
+                    lifecycle,
+                    lifecycle="blocked",
+                    side_effect="may_have_occurred",
+                    started_at=time.time(),
+                )
+                return ToolResult.error(
+                    f"Error: duplicate retry for interrupted operation {operation_id} "
+                    "was blocked; inspect the first retry result before trying again."
+                ), {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": "duplicate interrupted operation blocked",
+                }
+            self._recovery_operation_ids_seen.add(operation_id)
+            if policy.recovery_strategy == "never_retry":
+                lifecycle["recovery_resolution"] = "never_retry"
+                self._finish_state(
+                    lifecycle,
+                    lifecycle="blocked",
+                    side_effect="may_have_occurred",
+                    started_at=time.time(),
+                )
+                return self._recovery_error(
+                    tool_call.name,
+                    operation_id,
+                    reason="The Tool policy forbids retrying this operation.",
+                ), {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": "recovery blocked by tool policy: never_retry",
+                }
+            if not recovery_confirmation_required(policy):
+                lifecycle["recovery_resolution"] = "auto_retry"
+            else:
+                recovery_callback = self._recovery_approval_callback or self._tool_approval_callback
+                request = ToolApprovalRequest.create(
+                    call_id=str(tool_call.id or ""),
+                    name=tool_call.name,
+                    arguments=cast(dict[str, Any], params) if isinstance(params, dict) else {},
+                    capabilities=tuple(sorted(tool_capabilities)) or ("write",),
+                    session_key=self._context.session_key,
+                    iteration=self._context.iteration,
+                    channel=self._channel,
+                    chat_id=self._chat_id,
+                    operation_id=operation_id,
+                    recovery_required=True,
+                    recovery_reason=(
+                        "The previous attempt was interrupted and its external side effect "
+                        "could not be confirmed; review the operation before retrying."
+                    ),
+                )
+                await self._hook.on_tool_approval_requested(self._context, request)
+                if recovery_callback is None:
+                    decision = ToolApprovalResult.deny(
+                        "recovery confirmation is unavailable"
+                    )
+                else:
+                    try:
+                        decision = await recovery_callback(request)
+                    except asyncio.CancelledError:
+                        decision = ToolApprovalResult.deny("turn cancelled")
+                        await self._hook.on_tool_approval_resolved(
+                            self._context,
+                            request,
+                            decision,
+                        )
+                        self._finish_state(
+                            lifecycle,
+                            lifecycle="blocked",
+                            side_effect="may_have_occurred",
+                            started_at=time.time(),
+                        )
+                        raise
+                    except Exception as exc:
+                        decision = ToolApprovalResult.deny(
+                            f"recovery approval failed: {type(exc).__name__}"
+                        )
+                await self._hook.on_tool_approval_resolved(self._context, request, decision)
+                if not decision.approved:
+                    reason = decision.reason or "recovery retry was not approved"
+                    lifecycle["recovery_resolution"] = "denied"
+                    self._finish_state(
+                        lifecycle,
+                        lifecycle="blocked",
+                        side_effect="may_have_occurred",
+                        started_at=time.time(),
+                    )
+                    return self._recovery_error(tool_call.name, operation_id), {
+                        "name": tool_call.name,
+                        "status": "error",
+                        "detail": f"recovery confirmation denied: {reason}",
+                    }
+                lifecycle["recovery_resolution"] = "approved"
+                recovery_approved = True
+
         if (
             self._tool_approval_callback is not None
+            and not recovery_approved
             and self._needs_approval(tool, self._approval_capabilities)
         ):
             capabilities = tuple(
@@ -397,11 +658,14 @@ class CallExecutor:
             # offline, every tool call is served from the JSONL snapshot by
             # stable key instead of touching the real system (side-effect
             # isolation).
-            from pawbot.agent.blackbox import lookup_replay_result, replay_is_active
+            from pawbot.agent.blackbox import lookup_replay_result
 
             replay_args = cast(dict[str, Any], params) if isinstance(params, dict) else {}
             found, replayed = lookup_replay_result(tool_call.name, replay_args)
             if found:
+                if is_tool_error_result(replayed) and recovery_confirmation_required(policy):
+                    lifecycle["recovery_required"] = True
+                    lifecycle["recovery_resolution"] = "pending_confirmation"
                 self._finish_state(
                     lifecycle,
                     lifecycle="failed" if is_tool_error_result(replayed) else "succeeded",
@@ -464,6 +728,11 @@ class CallExecutor:
             else:
                 result = await self._tools.execute(tool_call.name, params)
         except asyncio.CancelledError:
+            policy = execution_policy_for_tool(tool)
+            lifecycle["recovery_required"] = policy.side_effect != "none"
+            lifecycle["recovery_resolution"] = (
+                "pending_confirmation" if policy.side_effect != "none" else "not_required"
+            )
             self._finish_state(
                 lifecycle,
                 lifecycle="unknown",
@@ -478,6 +747,10 @@ class CallExecutor:
             )
             raise
         except Exception as exc:
+            policy = execution_policy_for_tool(tool)
+            if recovery_confirmation_required(policy):
+                lifecycle["recovery_required"] = True
+                lifecycle["recovery_resolution"] = "pending_confirmation"
             self._finish_state(
                 lifecycle,
                 lifecycle="failed",
@@ -505,6 +778,10 @@ class CallExecutor:
             return payload, event
 
         if is_tool_error_result(result):
+            policy = execution_policy_for_tool(tool)
+            if recovery_confirmation_required(policy):
+                lifecycle["recovery_required"] = True
+                lifecycle["recovery_resolution"] = "pending_confirmation"
             self._finish_state(
                 lifecycle,
                 lifecycle="failed",
@@ -530,6 +807,9 @@ class CallExecutor:
             return result + _RETRY_HINT, event
 
         await self._hook.after_execute_tool(self._context, tool_call, tool, params, result)
+        receipt = self._receipt_from_tool(tool, result)
+        if receipt is not None:
+            lifecycle["receipt"] = self._bounded_receipt(receipt)
         self._finish_state(
             lifecycle,
             lifecycle="succeeded",
@@ -550,6 +830,7 @@ async def execute_tool_calls(
     context: AgentHookContext,
     denied_tool_capabilities: frozenset[str] = frozenset(),
     tool_approval_callback: ToolApprovalCallback | None = None,
+    recovery_approval_callback: ToolApprovalCallback | None = None,
     approval_capabilities: frozenset[str] = DEFAULT_APPROVAL_CAPABILITIES,
     channel: str = "",
     chat_id: str | None = None,
@@ -567,6 +848,7 @@ async def execute_tool_calls(
         context=context,
         denied_tool_capabilities=denied_tool_capabilities,
         tool_approval_callback=tool_approval_callback,
+        recovery_approval_callback=recovery_approval_callback,
         approval_capabilities=approval_capabilities,
         channel=channel,
         chat_id=chat_id,

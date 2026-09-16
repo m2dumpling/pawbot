@@ -29,6 +29,8 @@ from pawbot.agent.hook import AgentHook, AgentHookContext
 if TYPE_CHECKING:
     from contextvars import ContextVar, Token
 
+    from pawbot.agent.evaluation import TaskContract
+
 _TOOLS_JSONL = "tools.jsonl"
 _TURNS_JSONL = "turns.jsonl"
 _TRACE_EVENTS_JSONL = "events.jsonl"
@@ -263,6 +265,7 @@ class RecordedTurn:
     stop_reason: str
     cassette: str
     index: int = 0
+    task_contract: TaskContract | None = None
 
 
 class ReplayBreakpointError(Exception):
@@ -335,6 +338,8 @@ class ReplayController:
         self.last_replay_details: list[dict[str, Any]] = []
 
     def _load_turns(self) -> list[RecordedTurn]:
+        from pawbot.agent.evaluation import TaskContract
+
         turns: list[RecordedTurn] = []
         with open(self.directory / _TURNS_JSONL, encoding="utf-8") as fh:
             for index, line in enumerate(fh):
@@ -353,6 +358,7 @@ class ReplayController:
                     stop_reason=record.get("stop_reason", ""),
                     cassette=f"{''.join(c if c.isalnum() or c in '-_.' else '_' for c in record.get('turn_id', f'turn_{index}'))}.yaml",
                     index=index,
+                    task_contract=TaskContract.from_dict(record.get("task_contract")),
                 ))
         return turns
 

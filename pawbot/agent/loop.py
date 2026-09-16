@@ -25,6 +25,11 @@ from pawbot.agent.automation_turns import publish_next_deferred_turn
 from pawbot.agent.budget import TurnBudget
 from pawbot.agent.context import ContextBuilder, PersistedPromptContextResolver
 from pawbot.agent.cron_turns import CronTurnCoordinator
+from pawbot.agent.evaluation import (
+    TASK_CONTRACT_METADATA_KEY,
+    TaskContract,
+    task_contract_from_metadata,
+)
 from pawbot.agent.hook import AgentHook, AgentTurnHookFactory, CompositeHook
 from pawbot.agent.memory import Consolidator
 from pawbot.agent.model_runtime import ModelRuntimeResolver
@@ -907,6 +912,12 @@ class AgentLoop(TurnStagesMixin):
         if has_text or media_paths or runtime_context_blocks:
             extra: dict[str, Any] = ({"media": list(media_paths)} if media_paths else {}) | agent_context.session_extra(msg.metadata)
             extra.update(kwargs)
+            contract = task_contract_from_metadata(msg.metadata)
+            if contract is not None:
+                # Keep the contract beside the in-flight session checkpoint so a
+                # gateway restart can resume verification without trusting a new
+                # inbound message to reconstruct it.
+                session.metadata[TASK_CONTRACT_METADATA_KEY] = contract.to_dict()
             text = content_value if isinstance(content_value, str) else ""
             text_override, automation_extra = automation_history_overrides(msg.metadata)
             if text_override is not None:
@@ -1161,6 +1172,7 @@ class AgentLoop(TurnStagesMixin):
         request_context: RequestContext | None = None,
         provider_state: ProviderConversationState | None = None,
         trace: TraceRun | None = None,
+        task_contract: TaskContract | None = None,
     ) -> AgentRunResult:
         """Run the agent iteration loop.
 
@@ -1177,6 +1189,8 @@ class AgentLoop(TurnStagesMixin):
             if session is None:
                 return
             public_payload = dict(payload)
+            if task_contract is not None:
+                public_payload[TASK_CONTRACT_METADATA_KEY] = task_contract.to_dict()
             private_state = public_payload.pop("provider_state", None)
             public_payload.pop(self._PROVIDER_STATE_CHECKPOINT_VERSION_KEY, None)
             if "provider_state" in payload and (
@@ -1375,6 +1389,7 @@ class AgentLoop(TurnStagesMixin):
                 session_key=active_session_key,
                 model=runtime.model,
                 tools_definitions=effective_tools.get_definitions(),
+                task_contract=task_contract,
             )
             if self.blackbox is not None
             else None
@@ -1464,6 +1479,7 @@ class AgentLoop(TurnStagesMixin):
                     message_metadata=request_metadata,
                 ),
                 provider_state=provider_state,
+                task_contract=task_contract,
                 denied_tool_capabilities=self.denied_tool_capabilities,
                 tool_approval_callback=(
                     self.tool_approval_callback
@@ -1471,6 +1487,11 @@ class AgentLoop(TurnStagesMixin):
                         request_ctx.channel == "websocket"
                         and effective_scope.access_mode != "full"
                     )
+                    else None
+                ),
+                recovery_approval_callback=(
+                    self.tool_approval_callback
+                    if request_ctx.channel == "websocket"
                     else None
                 ),
                 approval_capabilities=self.approval_capabilities,
@@ -1489,6 +1510,7 @@ class AgentLoop(TurnStagesMixin):
             reset_file_states(file_state_token)
         if session is not None and not ephemeral:
             session.provider_state = result.provider_state
+            session.metadata.pop(TASK_CONTRACT_METADATA_KEY, None)
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
             should_stream = turn_continuation.should_stream_budget_response(
@@ -1923,6 +1945,7 @@ class AgentLoop(TurnStagesMixin):
         delivery: TurnDelivery | None = None,
         on_runtime_admitted: Callable[[LLMRuntime], Awaitable[None]] | None = None,
         attributes: Mapping[str, Any] | None = None,
+        task_contract: TaskContract | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
         self.sync_recording_policy()
@@ -1971,6 +1994,7 @@ class AgentLoop(TurnStagesMixin):
             hooks=list(hooks or []),
             hook_factories=list(hook_factories or []),
             tools=tools,
+            task_contract=task_contract or task_contract_from_metadata(msg.metadata),
             attributes=dict(attributes or {}),
         )
         if self.trace_store is not None:
@@ -2120,11 +2144,56 @@ class AgentLoop(TurnStagesMixin):
             duration_ms,
         )
         if ctx.trace is not None:
+            stage_fields: dict[str, Any] = {}
+            if name == "restore":
+                stage_fields = {
+                    "session_ready": ctx.session is not None,
+                    "ephemeral": ctx.ephemeral,
+                }
+            elif name == "compact":
+                stage_fields = {
+                    "summary_created": ctx.pending_summary is not None,
+                }
+            elif name == "command":
+                stage_fields = {
+                    "command_handled": bool(result),
+                    "session_persisted": ctx.input_persisted_early,
+                }
+            elif name == "build":
+                stage_fields = {
+                    "initial_message_count": len(ctx.initial_messages),
+                    "history_message_count": len(ctx.history),
+                    "runtime_context_block_count": len(ctx.runtime_context_blocks),
+                    "provider_state_resumable": ctx.provider_state is not None,
+                    "tool_count": len((ctx.tools or self.tools).get_definitions()),
+                }
+            elif name == "run":
+                stage_fields = {
+                    "message_count": len(ctx.all_messages),
+                    "tool_count": sum(
+                        1 for message in ctx.all_messages if message.get("role") == "tool"
+                    ),
+                    "final_content_chars": len(ctx.final_content or ""),
+                    "stop_reason": ctx.stop_reason or None,
+                }
+            elif name == "save":
+                stage_fields = {
+                    "persisted": True,
+                    "message_count": len(ctx.all_messages),
+                    "latency_ms": ctx.turn_latency_ms,
+                    "usage": ctx.usage.to_dict() if ctx.usage is not None else None,
+                }
+            elif name == "respond":
+                stage_fields = {
+                    "response_prepared": ctx.outbound is not None or ctx.suppress_response,
+                    "response_chars": len(ctx.outbound.content) if ctx.outbound is not None else 0,
+                }
             ctx.trace.emit(
                 "stage.completed",
                 status="completed",
                 stage=name,
                 duration_ms=duration_ms,
+                **stage_fields,
             )
         return result
 
@@ -2428,6 +2497,7 @@ class AgentLoop(TurnStagesMixin):
                         provider_retry_mode=self.provider_retry_mode,
                         denied_tool_capabilities=self.denied_tool_capabilities,
                         finalize_on_max_iterations=True,
+                        task_contract=turn.task_contract,
                     ))
             except ReplayBreakpoint as bp:
                 replay_trace.finish(status="cancelled", stop_reason="breakpoint")
@@ -2485,6 +2555,16 @@ class AgentLoop(TurnStagesMixin):
                 "message_diffs": list(message_diffs),
                 "trace_diffs": list(trace_diffs),
                 "trace_comparable": trace_comparable,
+                "task_status": (
+                    result.task_evaluation.status
+                    if result.task_evaluation is not None
+                    else None
+                ),
+                "task_completed": (
+                    result.task_evaluation.completed
+                    if result.task_evaluation is not None
+                    else None
+                ),
             })
         if hasattr(controller, "last_benchmark"):
             controller.last_benchmark = benchmark_rows
@@ -2530,11 +2610,14 @@ class AgentLoop(TurnStagesMixin):
         runtime: LLMRuntime | None = None,
         on_runtime_admitted: Callable[[LLMRuntime], Awaitable[None]] | None = None,
         attributes: Mapping[str, Any] | None = None,
+        task_contract: TaskContract | None = None,
     ) -> OutboundMessage | None:
         """Process an external message directly and return the outbound payload."""
         if channel == "system":
             raise ValueError("channel 'system' is reserved for internal messages")
         metadata: dict[str, Any] = {}
+        if task_contract is not None:
+            metadata[TASK_CONTRACT_METADATA_KEY] = task_contract.to_dict()
         if not persist_user_message:
             metadata[turn_continuation.SKIP_USER_PERSIST_META] = True
         msg = InboundMessage(
@@ -2552,6 +2635,8 @@ class AgentLoop(TurnStagesMixin):
                     "on_stream_end": on_stream_end,
                     "ephemeral": ephemeral,
                 }
+                if task_contract is not None:
+                    kwargs["task_contract"] = task_contract
                 if _run_extra_hooks_for_ephemeral:
                     kwargs["run_extra_hooks_for_ephemeral"] = True
                 if hooks is not None:

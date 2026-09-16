@@ -10,6 +10,7 @@ import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
 import { ToolApprovalNotice } from "@/components/thread/ToolApprovalNotice";
 import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
+import { ExecutionTracePanel } from "@/components/thread/ExecutionTracePanel";
 import {
   ThreadComposer,
   type ComposerContextUsage,
@@ -1720,6 +1721,10 @@ export function ThreadShell({
   const sessionInfoAction = historyKey ? (
     <SessionInfoPopover sessionKey={historyKey} token={token} title={title} />
   ) : undefined;
+  const traceSessionKey = session?.key ?? historyKey ?? (chatId ? `websocket:${chatId}` : null);
+  const executionTraceAction = chatId && traceSessionKey ? (
+    <ExecutionTracePanel chatId={chatId} sessionKey={traceSessionKey} title={title} />
+  ) : undefined;
   const promptNavigatorAction = historyKey ? (
     <PromptNavigator
       messages={displayMessages}
@@ -1740,6 +1745,7 @@ export function ThreadShell({
       hideThemeButton={hideThemeButton}
       hideTitle={hideHeaderTitle}
       actions={headerActions}
+      executionTraceAction={executionTraceAction}
       minimal={!session && !loading}
       promptNavigatorAction={promptNavigatorAction}
       sessionInfoAction={sessionInfoAction}

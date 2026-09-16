@@ -70,6 +70,9 @@ export interface ToolApprovalRequest {
   created_at_ms: number;
   channel?: string;
   chat_id?: string | null;
+  operation_id?: string | null;
+  recovery_required?: boolean;
+  recovery_reason?: string | null;
 }
 
 export interface ExecutionTraceEvent {

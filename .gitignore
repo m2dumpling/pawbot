@@ -70,6 +70,7 @@ htmlcov/
 # Personal interview and analysis materials. Keep these files on the local
 # machine; they are not part of the public source distribution.
 docs/interview/
+docs/courses/
 interview-prep/
 
 # Local analysis/design workspaces and generated notes.

@@ -28,6 +28,26 @@ During offline validation:
 It does not make a live model deterministic and does not replace live provider,
 network, or integration tests.
 
+## Task completion checks
+
+Record & Replay can carry an optional TaskContract alongside a captured turn.
+During replay, the current AgentRunner applies the same declarative checks to
+the replayed result. A contract can assert final text, successful tools,
+tool-result content, workspace files, file content, or a caller-owned
+synchronous validator.
+
+The result has three independent dimensions:
+
+| Dimension | Question it answers |
+| --- | --- |
+| Replay consistency | Did the current orchestration reproduce the recorded messages and tool flow? |
+| Original execution | Did the recorded run encounter a model, tool, cancellation, or side-effect issue? |
+| Task verification | Did the declared completion conditions actually pass? |
+
+Replay consistency must not be read as task success. A recorded task may be
+replayed consistently while its original task check failed, or while the
+current process cannot evaluate a custom validator.
+
 The WebUI marks a directory as **ready for offline validation** only when `turns.jsonl` contains valid
 turn envelopes. A partially created or malformed directory remains visible so
 that it can be diagnosed or deleted; it is not presented as a replayable sample.
@@ -146,6 +166,14 @@ For high-risk Tool calls, an embedding application can provide
 `ToolApprovalResult` before execution. A denial or approval timeout returns a
 model-visible error with `side_effect=not_started`; it never silently falls
 through to the real Tool.
+
+Tool implementations can also declare an execution policy with side-effect
+class, idempotency, reversibility, recovery strategy, and receipt support.
+When cancellation, timeout, or an uncertain error leaves an operation unresolved,
+the checkpoint keeps a stable operation fingerprint. An explicitly idempotent
+operation may retry; an unknown, non-idempotent, or irreversible operation
+requires a human confirmation before the same operation is attempted again.
+Replay remains side-effect-free and never asks for live recovery approval.
 
 ## Privacy boundary
 

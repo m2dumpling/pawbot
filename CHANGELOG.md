@@ -7,6 +7,38 @@ supported surface and known boundaries of each published version.
 
 No unreleased changes.
 
+## 0.5.0 - 2026-09-16
+
+### Added
+
+- Added runtime task completion checks through `TaskContract`, with explicit
+  `passed`, `failed`, and `not_evaluable` results.
+- Added final-answer, successful-tool, tool-result, workspace-file, and custom
+  validator assertions for SDK and one-shot CLI runs.
+- Added task-verification feedback so a failed completion check can return the
+  missing conditions to the Agent within its existing turn budget.
+- Added Tool execution policies for side-effect class, idempotency,
+  reversibility, recovery strategy, and bounded execution receipts.
+- Added stable operation fingerprints and recovery confirmation for interrupted,
+  timed-out, or uncertain side-effecting operations.
+
+### Changed
+
+- Record & Replay now stores task contracts and re-evaluates them during offline
+  replay.
+- Trace and WebUI now show task verification separately from replay consistency
+  and original execution errors.
+- Agent Harness scenarios use the same runtime task evaluator as normal Agent
+  runs; the quality gate covers the new evaluator and recovery policy tests.
+- Added `pawbot agent --task-contract <file>` for one-shot declarative checks.
+
+### Safety
+
+- Read-only and explicitly idempotent operations can be retried after an
+  interruption; unknown, non-idempotent, and irreversible operations fail closed
+  until a human confirms the retry.
+- Provider-native conversation state excludes Pawbot's local recovery metadata.
+
 ## 0.4.2 - 2026-09-16
 
 ### Fixed
@@ -17,8 +49,8 @@ No unreleased changes.
 
 ### Changed
 
-- Expanded the README usage guide to explain the v0.3.9-to-current workflow
-  and which capabilities belong in WebUI, CLI, or CI.
+- Expanded the README usage guide to explain which capabilities belong in
+  WebUI, CLI, or CI.
 
 ## 0.4.1 - 2026-09-16
 

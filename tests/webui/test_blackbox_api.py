@@ -8,6 +8,7 @@ from typing import Any, cast
 import pytest
 
 from pawbot.agent.observability import TraceStore
+from pawbot.webui import blackbox_api
 from pawbot.webui.blackbox_api import (
     BlackboxActionError,
     _delete,
@@ -223,6 +224,60 @@ async def test_trace_list_and_detail_read_default_lightweight_traces(tmp_path: P
 
     with pytest.raises(BlackboxActionError, match="traces"):
         await _trace_detail(agent, {"id": "../outside.jsonl"})
+
+
+@pytest.mark.asyncio
+async def test_trace_surfaces_the_webui_conversation_name(monkeypatch, tmp_path: Path) -> None:
+    trace_root = tmp_path / "traces"
+    trace_file = trace_root / "websocket_chat-1" / "turn-1.jsonl"
+    trace_file.parent.mkdir(parents=True)
+    trace_file.write_text(
+        json.dumps({
+            "event": "turn.completed",
+            "trace_id": "trace:turn-1",
+            "session_key": "websocket:chat-1",
+            "turn_id": "turn-1",
+            "status": "completed",
+            "duration_ms": 25,
+            "timestamp_ms": 2,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    sessions = SimpleNamespace(
+        list_sessions=lambda: [{
+            "key": "websocket:chat-1",
+            "title": "",
+            "preview": "洛杉矶天气与本地新闻",
+        }],
+    )
+    monkeypatch.setattr(blackbox_api, "list_webui_sessions", lambda _sessions: [])
+    monkeypatch.setattr(blackbox_api, "read_webui_sidebar_state", lambda: {"title_overrides": {}})
+    agent = SimpleNamespace(
+        workspace=tmp_path,
+        blackbox=None,
+        sessions=sessions,
+        trace_store=TraceStore(trace_root),
+    )
+
+    listed = await _trace_list(agent, {})
+
+    assert listed["traces"][0]["session_name"] == "洛杉矶天气与本地新闻"
+    trace_detail = await _trace_detail(agent, {"id": "websocket_chat-1/turn-1.jsonl"})
+    assert trace_detail["summary"]["session_name"] == "洛杉矶天气与本地新闻"
+
+    recording = tmp_path / "blackbox" / "sample-1788960000000"
+    recording.mkdir(parents=True)
+    (recording / "turns.jsonl").write_text(
+        json.dumps({
+            "kind": "turn",
+            "complete": True,
+            "turn_id": "turn-1",
+            "session_key": "websocket:chat-1",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    recordings = await _list(agent)
+    assert recordings["recordings"][0]["session_names"] == ["洛杉矶天气与本地新闻"]
 
 
 def test_turn_diagnostics_separates_replay_health_from_original_errors() -> None:

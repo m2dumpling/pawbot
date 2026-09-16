@@ -2,9 +2,11 @@
 
 import asyncio
 import importlib
+import json
 import signal
 import sys
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from types import FrameType
 from typing import Any, cast
 
@@ -13,6 +15,7 @@ from rich.console import Console
 from typer.models import OptionInfo
 
 from pawbot import __logo__
+from pawbot.agent.evaluation import TaskContract
 from pawbot.cli.log_control import _set_pawbot_logs
 from pawbot.cli.runtime_config import (
     _load_runtime_config,
@@ -63,6 +66,30 @@ def _classic_dependency(name: str) -> Any:
     return __getattr__(name)
 
 
+def _load_task_contract(path_value: str) -> TaskContract:
+    """Load a declarative task contract for one non-interactive CLI run."""
+    path = Path(path_value).expanduser()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise typer.BadParameter(
+            f"could not read task contract: {exc}",
+            param_hint="--task-contract",
+        ) from exc
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            f"task contract must be valid UTF-8 JSON: {exc}",
+            param_hint="--task-contract",
+        ) from exc
+    contract = TaskContract.from_dict(raw)
+    if contract is None:
+        raise typer.BadParameter(
+            "task contract must contain a non-empty id and declarative checks",
+            param_hint="--task-contract",
+        )
+    return contract
+
+
 def agent(
     message: str | None = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
     session_id: str | None = typer.Option(None, "--session", "-s", help="Session ID"),
@@ -92,6 +119,11 @@ def agent(
     record: str | None = typer.Option(
         None, "--record", help="Save this session as a regression sample",
     ),
+    task_contract: str | None = typer.Option(
+        None,
+        "--task-contract",
+        help="JSON task contract for one --message run",
+    ),
     replay: str | None = typer.Option(
         None, "--replay", help="Validate a saved regression sample offline (zero-token)",
     ),
@@ -114,6 +146,7 @@ def agent(
     classic = _option_value(classic, False)
     theme = _option_value(theme, "auto")
     record = _option_value(record, None)
+    task_contract = _option_value(task_contract, None)
     replay = _option_value(replay, None)
     break_at = _option_value(break_at, None)
     benchmark = _option_value(benchmark, False)
@@ -121,6 +154,16 @@ def agent(
         raise typer.BadParameter("--record and --replay are mutually exclusive", param_hint="--record")
     if benchmark and replay is None:
         raise typer.BadParameter("--benchmark requires --replay", param_hint="--benchmark")
+    if task_contract is not None and (message is None or replay is not None):
+        raise typer.BadParameter(
+            "--task-contract requires one --message run and cannot be used with --replay",
+            param_hint="--task-contract",
+        )
+    loaded_task_contract = (
+        _load_task_contract(task_contract)
+        if task_contract is not None
+        else None
+    )
     runtime_config = _load_runtime_config(config, workspace)
     theme = theme.strip().lower()
     if theme not in {"auto", "dark", "light"}:
@@ -351,6 +394,7 @@ def agent(
                 response = await agent_loop.process_direct(
                     message,
                     session_id,
+                    task_contract=loaded_task_contract,
                     on_progress=_make_progress(renderer),
                     on_stream=renderer.on_delta,
                     on_stream_end=renderer.on_end,

@@ -57,6 +57,7 @@ class RunResult:
     usage: LLMUsage | None = None
     stop_reason: str | None = None
     error: str | None = None
+    task_evaluation: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -171,5 +172,6 @@ def result_from_response(response: Any, capture: Any) -> RunResult:
         usage=capture.usage,
         stop_reason=capture.stop_reason,
         error=capture.error,
+        task_evaluation=deepcopy(getattr(capture, "task_evaluation", None)),
         metadata=metadata,
     )

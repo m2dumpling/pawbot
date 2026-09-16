@@ -14,6 +14,20 @@ from pawbot.providers.base import (
 
 _PROVIDER_STATE_OUTPUT_META = "provider_state_output"
 _PROVIDER_STATE_BOUNDARY_META = "provider_state_boundary"
+_EXECUTION_METADATA_KEYS = frozenset({
+    "operation_id",
+    "_tool_execution",
+    "_recovery_pending",
+    "_recovery_interrupted",
+})
+
+
+def _provider_state_message(message: dict[str, Any]) -> dict[str, Any]:
+    """Remove local recovery bookkeeping before storing provider state."""
+    projected = deepcopy(message)
+    for key in _EXECUTION_METADATA_KEYS:
+        projected.pop(key, None)
+    return projected
 
 
 def allows_conversation_message_merge(message: dict[str, Any]) -> bool:
@@ -223,7 +237,7 @@ class ProviderConversationStateController:
                 ) is True
             ):
                 continue
-            pending.append(deepcopy(message))
+            pending.append(_provider_state_message(message))
         return pending
 
     @staticmethod
@@ -255,7 +269,7 @@ class ProviderConversationStateController:
                 ) is True
             ):
                 continue
-            pending.append(deepcopy(message))
+            pending.append(_provider_state_message(message))
         return pending
 
     @staticmethod

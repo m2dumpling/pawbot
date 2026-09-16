@@ -6,7 +6,8 @@ import typing
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from copy import deepcopy
-from typing import Any, TypeVar, cast
+from dataclasses import dataclass
+from typing import Any, Literal, TypeVar, cast
 
 if typing.TYPE_CHECKING:
     from pydantic import BaseModel
@@ -156,6 +157,37 @@ class ToolResult(str):
         return cls(content, is_error=True)
 
 
+ToolSideEffect = Literal["none", "reversible", "irreversible", "unknown"]
+ToolIdempotency = Literal["not_applicable", "idempotent", "non_idempotent", "unknown"]
+ToolRecoveryStrategy = Literal[
+    "none",
+    "safe_retry",
+    "retry_with_receipt",
+    "manual_confirmation",
+    "never_retry",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolExecutionPolicy:
+    """Side-effect and recovery contract declared by a Tool implementation."""
+
+    side_effect: ToolSideEffect
+    idempotency: ToolIdempotency
+    recovery_strategy: ToolRecoveryStrategy
+    reversible: bool = False
+    receipt_supported: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "side_effect_class": self.side_effect,
+            "idempotency": self.idempotency,
+            "recovery_strategy": self.recovery_strategy,
+            "reversible": self.reversible,
+            "receipt_supported": self.receipt_supported,
+        }
+
+
 class Tool(ABC):
     """Agent capability: read files, run commands, etc."""
 
@@ -206,6 +238,38 @@ class Tool(ABC):
         other tools are treated as potentially mutating ``write`` tools.
         """
         return frozenset({"read" if self.read_only else "write"})
+
+    @property
+    def execution_policy(self) -> ToolExecutionPolicy:
+        """Return the retry/recovery contract for this Tool.
+
+        Read-only tools are safe to repeat. Third-party write-capable tools
+        default to conservative manual confirmation until they explicitly
+        declare stronger semantics.
+        """
+        if self.read_only:
+            return ToolExecutionPolicy(
+                side_effect="none",
+                idempotency="not_applicable",
+                recovery_strategy="none",
+            )
+        return ToolExecutionPolicy(
+            side_effect="unknown",
+            idempotency="unknown",
+            recovery_strategy="manual_confirmation",
+        )
+
+    def execution_receipt(self, result: Any) -> Any | None:
+        """Return a small provider/tool receipt for an accepted side effect.
+
+        Tools may return a receipt ID (or a small receipt object) when an
+        external system accepts an operation. The executor records a bounded
+        snapshot for diagnostics; it never assumes a receipt makes an
+        operation safe to repeat.
+        """
+        if isinstance(result, dict):
+            return cast(dict[str, Any], result).get("receipt")
+        return getattr(result, "receipt", None)
 
     @property
     def exclusive(self) -> bool:

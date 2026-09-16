@@ -30,6 +30,7 @@ from pawbot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from pawbot.utils.provenance import collect_provenance
 
 if TYPE_CHECKING:
+    from pawbot.agent.evaluation import TaskContract
     from pawbot.providers.base import ToolCallRequest
 
 _TOOL_JSONL = "tools.jsonl"
@@ -182,6 +183,7 @@ class TurnRecorder(AgentHook):
         model: str,
         initial_messages: list[dict[str, Any]],
         tools_definitions: list[dict[str, Any]] | None = None,
+        task_contract: TaskContract | None = None,
     ) -> None:
         self._dir = directory
         self._turn_id = turn_id
@@ -189,6 +191,7 @@ class TurnRecorder(AgentHook):
         self._model = model
         self._initial_messages = initial_messages
         self._tools_definitions = tools_definitions or []
+        self._task_contract = task_contract
         self._response_index = 0
         self._turn_written = False
 
@@ -355,6 +358,12 @@ class TurnRecorder(AgentHook):
                 ),
                 "tool_states": _json_safe(context.tool_states),
                 "budget": _json_safe(context.budget),
+                "task_contract": (
+                    _json_safe(self._task_contract.to_dict())
+                    if self._task_contract is not None
+                    else None
+                ),
+                "task_evaluation": _json_safe(context.task_evaluation),
             }, ensure_ascii=False, default=repr) + "\n")
         self._turn_written = True
 
@@ -378,6 +387,12 @@ class TurnRecorder(AgentHook):
                 "tools": _json_safe(self._tools_definitions),
                 "tool_states": _json_safe(context.tool_states),
                 "budget": _json_safe(context.budget),
+                "task_contract": (
+                    _json_safe(self._task_contract.to_dict())
+                    if self._task_contract is not None
+                    else None
+                ),
+                "task_evaluation": _json_safe(context.task_evaluation),
             }, ensure_ascii=False, default=repr) + "\n")
         self._turn_written = True
 
@@ -432,6 +447,7 @@ class BlackboxController:
         session_key: str | None = None,
         model: str = "",
         tools_definitions: list[dict[str, Any]] | None = None,
+        task_contract: TaskContract | None = None,
     ) -> AgentHook | None:
         return TurnRecorder(
             self.directory,
@@ -440,6 +456,7 @@ class BlackboxController:
             model=model,
             initial_messages=initial_messages,
             tools_definitions=tools_definitions,
+            task_contract=task_contract,
         )
 
     def write_meta(self, *, session_key: str | None, model: str) -> None:

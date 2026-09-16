@@ -16,6 +16,11 @@ from typing import Any, Protocol, cast
 
 from loguru import logger
 
+from pawbot.agent.evaluation import (
+    TASK_CONTRACT_METADATA_KEY,
+    TaskContract,
+    task_contract_from_metadata,
+)
 from pawbot.agent.tools.message import capture_message_deliveries
 from pawbot.agent.tools.registry import ToolRegistry
 from pawbot.agent.turn.context import TurnContext, TurnKind
@@ -100,6 +105,20 @@ class TurnStagesMixin:
                     restricted.register(tool)
             tools = restricted
         ctx.tools = tools
+
+        checkpoint_value = session.metadata.get("runtime_checkpoint")
+        recovery_continuation = RECOVERY_INBOUND_METADATA_KEY in msg.metadata
+        if ctx.task_contract is None and recovery_continuation:
+            ctx.task_contract = task_contract_from_metadata(session.metadata)
+        if ctx.task_contract is None and isinstance(checkpoint_value, dict):
+            checkpoint = cast(dict[str, Any], checkpoint_value)
+            ctx.task_contract = TaskContract.from_dict(
+                checkpoint.get(TASK_CONTRACT_METADATA_KEY)
+            )
+        if ctx.task_contract is None and not recovery_continuation:
+            # A new ordinary user message supersedes a contract left behind by
+            # an explicitly cancelled turn; it must not validate unrelated work.
+            session.metadata.pop(TASK_CONTRACT_METADATA_KEY, None)
 
         if ctx.kind is TurnKind.SYSTEM:
             logger.info("Processing system message from {}", msg.sender_id)
@@ -364,6 +383,7 @@ class TurnStagesMixin:
                 hook_factories=ctx.hook_factories,
                 turn_scopes=ctx.turn_scopes,
                 tools=ctx.tools,
+                task_contract=ctx.task_contract,
                 request_context=ctx.request_context,
                 provider_state=ctx.provider_state,
                 trace=ctx.trace,
@@ -371,6 +391,11 @@ class TurnStagesMixin:
         ctx.final_content = result.final_content
         ctx.all_messages = result.messages
         ctx.stop_reason = result.stop_reason
+        ctx.task_evaluation = (
+            result.task_evaluation.to_dict()
+            if result.task_evaluation is not None
+            else None
+        )
         if (
             ctx.kind is TurnKind.USER
             and (ctx.delivery.route.channel, ctx.delivery.route.chat_id) in message_sends
@@ -420,6 +445,7 @@ class TurnStagesMixin:
             )
         self._clear_pending_user_turn(session)
         self._clear_runtime_checkpoint(session)
+        session.metadata.pop(TASK_CONTRACT_METADATA_KEY, None)
         self.sessions.save(session)
         if not ctx.ephemeral:
             await self.runtime_event_publisher.session_turn_persisted(
@@ -449,6 +475,8 @@ class TurnStagesMixin:
             log_content=ctx.require_session().policy.log_content,
             turn_latency_ms=ctx.turn_latency_ms,
         )
+        if ctx.outbound is not None and ctx.task_evaluation is not None:
+            ctx.outbound.metadata["task_evaluation"] = dict(ctx.task_evaluation)
         if ctx.ephemeral and ctx.outbound is not None:
             ctx.outbound.metadata["_stop_reason"] = ctx.stop_reason
 

@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ExecutionTraceTimeline } from "@/components/thread/ExecutionTraceTimeline";
 import {
   Dialog,
   DialogContent,
@@ -98,6 +99,33 @@ function recordingStatusLabel(recording: BlackboxRecording, t: Translate): strin
   return recording.status === "ready"
     ? tx(t, "settings.enhancements.status.ready", "Ready for offline validation")
     : tx(t, "settings.enhancements.status.incomplete", "Sample incomplete");
+}
+
+function generatedRecordingDisplayName(name: string, t: Translate): string {
+  const match = /^(?:session|sample)-(\d{10,})$/.exec(name.trim());
+  if (!match) return name;
+  const timestamp = Number(match[1]);
+  const formatted = Number.isFinite(timestamp)
+    ? new Date(timestamp).toLocaleString()
+    : "";
+  return `${tx(t, "settings.enhancements.recording.generatedSample", "Regression sample")}${formatted ? ` · ${formatted}` : ""}`;
+}
+
+function recordingDisplayName(recording: BlackboxRecording, t: Translate): string {
+  return generatedRecordingDisplayName(recording.name, t);
+}
+
+function recordingSessionLabel(recording: BlackboxRecording, t: Translate): string | null {
+  const names = (recording.session_names ?? []).filter(Boolean);
+  if (names.length === 0) return null;
+  if (names.length === 1) {
+    return `${tx(t, "settings.enhancements.recording.session", "Conversation")}: ${names[0]}`;
+  }
+  const visible = names.slice(0, 2).join(" · ");
+  const suffix = names.length > 2
+    ? ` · ${tx(t, "settings.enhancements.recording.moreSessions", "{{count}} more", { count: names.length - 2 })}`
+    : "";
+  return `${tx(t, "settings.enhancements.recording.sessions", "Conversations")}: ${visible}${suffix}`;
 }
 
 function recordingStatusMessage(recording: BlackboxRecording, t: Translate): string {
@@ -305,6 +333,27 @@ function originalExecutionTone(execution: unknown): string {
   return originalExecutionHasIssue(execution)
     ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200"
     : "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-200";
+}
+
+function taskEvaluationLabel(evaluation: unknown, t: Translate): string {
+  const status = isRecord(evaluation) ? String(evaluation.status ?? "") : "";
+  switch (status) {
+    case "passed":
+      return tx(t, "settings.enhancements.task.passed", "Task checks passed");
+    case "failed":
+      return tx(t, "settings.enhancements.task.failed", "Task checks failed");
+    case "not_evaluable":
+      return tx(t, "settings.enhancements.task.notEvaluable", "Task could not be evaluated");
+    default:
+      return tx(t, "settings.enhancements.task.notRecorded", "Task checks not recorded");
+  }
+}
+
+function taskEvaluationTone(evaluation: unknown): string {
+  const status = isRecord(evaluation) ? String(evaluation.status ?? "") : "";
+  return status === "passed"
+    ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-200"
+    : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200";
 }
 
 function responseErrorDetails(response: Record<string, unknown>): {
@@ -618,6 +667,8 @@ function structuredTraceLabel(event: Record<string, unknown>, t: Translate): str
   switch (name) {
     case "stage.completed":
       return tx(t, "settings.enhancements.trace.stageCompleted", "Stage · {{stage}}", { stage: stageName });
+    case "stage.started":
+      return tx(t, "settings.enhancements.trace.stageStarted", "Stage started · {{stage}}", { stage: stageName });
     case "stage.failed":
       return tx(t, "settings.enhancements.trace.stageFailed", "Stage failed · {{stage}}", { stage: stageName });
     case "stage.cancelled":
@@ -640,6 +691,14 @@ function structuredTraceLabel(event: Record<string, unknown>, t: Translate): str
       return tx(t, "settings.enhancements.trace.interruptionRestored", "Recovered interrupted work");
     case "budget.exhausted":
       return tx(t, "settings.enhancements.trace.budgetExhausted", "Execution budget reached");
+    case "task.verification":
+      return tx(t, "settings.enhancements.trace.taskVerificationEvent", "Task completion check · {{status}}", {
+        status: event.verification_status === "passed"
+          ? tx(t, "settings.enhancements.trace.taskPassed", "Passed")
+          : event.verification_status === "failed"
+            ? tx(t, "settings.enhancements.trace.taskFailed", "Failed")
+            : tx(t, "settings.enhancements.trace.taskNotEvaluable", "Not evaluable"),
+      });
     case "tool.planned":
       return tx(t, "settings.enhancements.trace.toolPlanned", "Tool planned · {{tool}}", { tool: String(event.tool_name ?? "unknown") });
     case "tool.started":
@@ -648,6 +707,16 @@ function structuredTraceLabel(event: Record<string, unknown>, t: Translate): str
       return tx(t, "settings.enhancements.trace.toolFinished", "Tool result · {{tool}}", { tool: String(event.tool_name ?? "unknown") });
     case "tool.cancelled":
       return tx(t, "settings.enhancements.trace.toolCancelled", "Tool cancelled · {{tool}}", { tool: String(event.tool_name ?? "unknown") });
+    case "tool.approval_requested":
+      return tx(t, "settings.enhancements.trace.approvalRequested", "Approval requested · {{tool}}", { tool: String(event.tool_name ?? "unknown") });
+    case "tool.approval_resolved":
+      return tx(t, "settings.enhancements.trace.approvalResolved", "Approval resolved · {{tool}}", { tool: String(event.tool_name ?? "unknown") });
+    case "provider_tool.started":
+      return tx(t, "settings.enhancements.trace.providerToolStarted", "Provider tool started · {{tool}}", { tool: String(event.tool_name ?? "unknown") });
+    case "provider_tool.completed":
+      return tx(t, "settings.enhancements.trace.providerToolCompleted", "Provider tool completed · {{tool}}", { tool: String(event.tool_name ?? "unknown") });
+    case "provider_tool.error":
+      return tx(t, "settings.enhancements.trace.providerToolError", "Provider tool failed · {{tool}}", { tool: String(event.tool_name ?? "unknown") });
     case "iteration.completed":
       return tx(t, "settings.enhancements.trace.iterationCompleted", "Round completed · {{round}}", { round: iterationLabel });
     case "agent.completed":
@@ -676,6 +745,8 @@ function structuredTraceStatus(event: Record<string, unknown>, t: Translate): st
     case "received":
     case "succeeded":
     case "accepted":
+    case "done":
+    case "success":
       return tx(t, "settings.enhancements.trace.status.completed", "Completed");
     case "error":
     case "failed":
@@ -686,11 +757,20 @@ function structuredTraceStatus(event: Record<string, unknown>, t: Translate): st
     case "incomplete":
       return tx(t, "settings.enhancements.trace.status.uncertain", "Needs attention");
     case "running":
+    case "started":
+    case "pending":
+    case "in_progress":
       return tx(t, "settings.enhancements.trace.status.running", "Running");
     case "planned":
       return tx(t, "settings.enhancements.trace.status.planned", "Planned");
     case "retrying":
       return tx(t, "settings.enhancements.trace.status.retrying", "Retrying");
+    case "waiting":
+      return tx(t, "settings.enhancements.trace.status.waiting", "Waiting");
+    case "approved":
+      return tx(t, "settings.enhancements.trace.status.approved", "Approved");
+    case "denied":
+      return tx(t, "settings.enhancements.trace.status.denied", "Denied");
     default:
       return status || tx(t, "settings.enhancements.trace.status.notReported", "Not reported");
   }
@@ -701,10 +781,10 @@ function structuredTraceTone(event: Record<string, unknown>): string {
   if (["error", "failed"].includes(status)) {
     return "border-red-200 bg-red-50/70 dark:border-red-900 dark:bg-red-950/20";
   }
-  if (["cancelled", "unknown_side_effect", "blocked", "incomplete"].includes(status)) {
+  if (["cancelled", "unknown_side_effect", "blocked", "denied", "incomplete"].includes(status)) {
     return "border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20";
   }
-  if (String(event.event ?? "").startsWith("tool.")) {
+  if (String(event.event ?? "").startsWith("tool.") || String(event.event ?? "").startsWith("provider_tool.")) {
     return "border-orange-200 bg-orange-50/45 dark:border-orange-900 dark:bg-orange-950/15";
   }
   return "border-settings-border bg-background/70";
@@ -714,9 +794,9 @@ function structuredTraceIcon(event: Record<string, unknown>) {
   const name = String(event.event ?? "");
   const status = String(event.status ?? "").toLowerCase();
   if (["error", "failed"].includes(status)) return <XCircle className="h-4 w-4 text-red-600" />;
-  if (["cancelled", "unknown_side_effect", "blocked", "incomplete"].includes(status)) return <AlertTriangle className="h-4 w-4 text-amber-600" />;
+  if (["cancelled", "unknown_side_effect", "blocked", "denied", "incomplete"].includes(status)) return <AlertTriangle className="h-4 w-4 text-amber-600" />;
   if (["running", "planned", "retrying"].includes(status)) return <CircleDashed className="h-4 w-4 text-blue-600" />;
-  if (name.startsWith("tool.")) return <Wrench className="h-4 w-4 text-orange-600" />;
+  if (name.startsWith("tool.") || name.startsWith("provider_tool.")) return <Wrench className="h-4 w-4 text-orange-600" />;
   if (name.startsWith("llm.")) return <Bot className="h-4 w-4 text-blue-600" />;
   return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
 }
@@ -731,6 +811,20 @@ function structuredTraceDetails(event: Record<string, unknown>, t: Translate): R
     message_count: tx(t, "settings.enhancements.trace.fields.messageCount", "Message count"),
     stop_reason: tx(t, "settings.enhancements.trace.fields.stopReason", "Stop reason"),
     side_effect: tx(t, "settings.enhancements.trace.fields.sideEffect", "Side effect"),
+    side_effect_class: tx(t, "settings.enhancements.trace.fields.sideEffectClass", "Side-effect class"),
+    operation_id: tx(t, "settings.enhancements.trace.fields.operationId", "Operation ID"),
+    idempotency: tx(t, "settings.enhancements.trace.fields.idempotency", "Idempotency"),
+    recovery_strategy: tx(t, "settings.enhancements.trace.fields.recoveryStrategy", "Recovery strategy"),
+    recovery_required: tx(t, "settings.enhancements.trace.fields.recoveryRequired", "Recovery confirmation required"),
+    recovery_resolution: tx(t, "settings.enhancements.trace.fields.recoveryResolution", "Recovery decision"),
+    reversible: tx(t, "settings.enhancements.trace.fields.reversible", "Reversible"),
+    receipt_supported: tx(t, "settings.enhancements.trace.fields.receiptSupported", "Receipt supported"),
+    receipt: tx(t, "settings.enhancements.trace.fields.receipt", "Execution receipt"),
+    verification_status: tx(t, "settings.enhancements.trace.fields.verificationStatus", "Task check status"),
+    verification_completed: tx(t, "settings.enhancements.trace.fields.verificationCompleted", "Task completed"),
+    verification_attempt: tx(t, "settings.enhancements.trace.fields.verificationAttempt", "Task check attempt"),
+    verification_reason: tx(t, "settings.enhancements.trace.fields.verificationReason", "Task check reason"),
+    verification_failures: tx(t, "settings.enhancements.trace.fields.verificationFailures", "Failed checks"),
     lifecycle_state: tx(t, "settings.enhancements.trace.fields.lifecycleState", "Tool state"),
     tools_used: tx(t, "settings.enhancements.trace.fields.toolsUsed", "Tools used"),
     usage: tx(t, "settings.enhancements.trace.fields.usage", "Token usage"),
@@ -742,17 +836,102 @@ function structuredTraceDetails(event: Record<string, unknown>, t: Translate): R
     retry_attempt: tx(t, "settings.enhancements.trace.fields.retryAttempt", "Retry attempt"),
     pending_tool_count: tx(t, "settings.enhancements.trace.fields.pendingToolCount", "Pending tools"),
     completed_tool_count: tx(t, "settings.enhancements.trace.fields.completedToolCount", "Completed tools"),
+    model: tx(t, "settings.enhancements.trace.fields.model", "Model"),
+    provider: tx(t, "settings.enhancements.trace.fields.provider", "Provider"),
+    stage: tx(t, "settings.enhancements.trace.fields.stage", "Stage"),
+    iteration: tx(t, "settings.enhancements.trace.fields.agentRound", "Agent round"),
+    call_id: tx(t, "settings.enhancements.trace.fields.callId", "Call ID"),
+    approval_id: tx(t, "settings.enhancements.trace.fields.approvalId", "Approval ID"),
+    attempt: tx(t, "settings.enhancements.trace.fields.attempt", "Attempt"),
+    status: tx(t, "settings.enhancements.trace.fields.status", "Status"),
+    duration_ms: tx(t, "settings.enhancements.trace.fields.duration", "Duration"),
+    generation_ms: tx(t, "settings.enhancements.trace.fields.generationTime", "Generation time"),
+    ttft_ms: tx(t, "settings.enhancements.trace.fields.timeToFirstToken", "Time to first token"),
+    initial_message_count: tx(t, "settings.enhancements.trace.fields.initialMessages", "Initial messages"),
+    history_message_count: tx(t, "settings.enhancements.trace.fields.historyMessages", "History messages"),
+    runtime_context_block_count: tx(t, "settings.enhancements.trace.fields.runtimeContextBlocks", "Runtime context blocks"),
+    provider_state_resumable: tx(t, "settings.enhancements.trace.fields.providerStateResumable", "Provider state resumable"),
+    tools_available: tx(t, "settings.enhancements.trace.fields.toolsAvailable", "Tools available"),
+    session_ready: tx(t, "settings.enhancements.trace.fields.sessionReady", "Session ready"),
+    ephemeral: tx(t, "settings.enhancements.trace.fields.ephemeral", "Ephemeral turn"),
+    summary_created: tx(t, "settings.enhancements.trace.fields.summaryCreated", "Summary created"),
+    command_handled: tx(t, "settings.enhancements.trace.fields.commandHandled", "Command handled"),
+    session_persisted: tx(t, "settings.enhancements.trace.fields.sessionPersisted", "Session persisted"),
+    persisted: tx(t, "settings.enhancements.trace.fields.persisted", "Persisted"),
+    latency_ms: tx(t, "settings.enhancements.trace.fields.turnLatency", "Turn latency"),
+    response_prepared: tx(t, "settings.enhancements.trace.fields.responsePrepared", "Response prepared"),
+    response_chars: tx(t, "settings.enhancements.trace.fields.responseChars", "Response characters"),
+    final_content_chars: tx(t, "settings.enhancements.trace.fields.finalContentChars", "Final output characters"),
+    final_content_preview: tx(t, "settings.enhancements.trace.fields.finalContentPreview", "Final output preview"),
+    tool_name: tx(t, "settings.enhancements.trace.fields.tool", "Tool"),
+    argument_keys: tx(t, "settings.enhancements.trace.fields.argumentKeys", "Argument keys"),
+    arguments_preview: tx(t, "settings.enhancements.trace.fields.argumentsPreview", "Arguments preview"),
+    content_chars: tx(t, "settings.enhancements.trace.fields.contentChars", "Visible output characters"),
+    content_preview: tx(t, "settings.enhancements.trace.fields.contentPreview", "Visible output preview"),
+    reasoning_chars: tx(t, "settings.enhancements.trace.fields.reasoningChars", "Reasoning characters"),
+    reasoning_preview: tx(t, "settings.enhancements.trace.fields.reasoningPreview", "Reasoning preview"),
+    result_type: tx(t, "settings.enhancements.trace.fields.resultType", "Result type"),
+    result_chars: tx(t, "settings.enhancements.trace.fields.resultChars", "Result characters"),
+    result_preview: tx(t, "settings.enhancements.trace.fields.resultPreview", "Result preview"),
+    budget: tx(t, "settings.enhancements.trace.fields.budget", "Budget snapshot"),
   };
   const details: Array<[string, unknown]> = [];
   for (const key of [
     "finish_reason",
+    "model",
+    "provider",
+    "stage",
+    "iteration",
+    "call_id",
+    "approval_id",
+    "attempt",
+    "status",
+    "duration_ms",
+    "generation_ms",
+    "ttft_ms",
+    "initial_message_count",
     "tool_names",
     "tool_count",
     "context_window_tokens",
     "model_message_count",
     "message_count",
+    "history_message_count",
+    "runtime_context_block_count",
+    "provider_state_resumable",
+    "tools_available",
+    "session_ready",
+    "ephemeral",
+    "summary_created",
+    "command_handled",
+    "session_persisted",
+    "persisted",
+    "latency_ms",
+    "response_prepared",
+    "response_chars",
+    "final_content_chars",
+    "final_content_preview",
+    "tool_name",
+    "argument_keys",
+    "arguments_preview",
+    "content_chars",
+    "content_preview",
+    "reasoning_chars",
+    "reasoning_preview",
+    "result_type",
+    "result_chars",
+    "result_preview",
+    "budget",
     "stop_reason",
     "side_effect",
+    "side_effect_class",
+    "operation_id",
+    "idempotency",
+    "recovery_strategy",
+    "recovery_required",
+    "recovery_resolution",
+    "reversible",
+    "receipt_supported",
+    "receipt",
     "lifecycle_state",
     "tools_used",
     "usage",
@@ -760,6 +939,11 @@ function structuredTraceDetails(event: Record<string, unknown>, t: Translate): R
     "read_only",
     "concurrency_safe",
     "exclusive",
+    "verification_status",
+    "verification_completed",
+    "verification_attempt",
+    "verification_reason",
+    "verification_failures",
   ]) {
     if (event[key] !== undefined && event[key] !== null && event[key] !== "") {
        details.push([labels[key] ?? key, event[key]]);
@@ -850,6 +1034,11 @@ function ReplayTurnSummary({
       provider_error_count: providerErrors.length,
       unknown_side_effect_count: unknownSideEffects.length,
     };
+  const taskEvaluation = isRecord(diagnostics.task_evaluation)
+    ? diagnostics.task_evaluation
+    : null;
+  const taskHasIssue = taskEvaluation
+    && ["failed", "not_evaluable"].includes(String(taskEvaluation.status ?? ""));
   const userRequest = lastMessageText(turn.initial_messages, "user");
   const finalAnswer = typeof turn.final_content === "string" && turn.final_content.trim()
     ? turn.final_content
@@ -859,7 +1048,8 @@ function ReplayTurnSummary({
   const hasProblems = originalExecutionHasIssue(originalExecution)
     || failedTools.length > 0
     || providerErrors.length > 0
-    || unknownSideEffects.length > 0;
+    || unknownSideEffects.length > 0
+    || Boolean(taskHasIssue);
   const issueParts = [
     originalCounts.failedTools > 0
       ? tx(t, "settings.enhancements.turn.failedToolCount", "{{count}} tool call(s) failed", { count: originalCounts.failedTools })
@@ -869,6 +1059,9 @@ function ReplayTurnSummary({
       : "",
     originalCounts.unknownSideEffects > 0
       ? tx(t, "settings.enhancements.turn.unknownSideEffectCount", "{{count}} tool result(s) are uncertain", { count: originalCounts.unknownSideEffects })
+      : "",
+    taskHasIssue
+      ? taskEvaluationLabel(taskEvaluation, t)
       : "",
   ].filter(Boolean).join(" · ");
   const statusDescription = hasProblems
@@ -889,6 +1082,11 @@ function ReplayTurnSummary({
           <div className="text-sm font-semibold text-settings-foreground">
             {tx(t, "settings.enhancements.turn.processTitle", "Turn execution")}
           </div>
+          {detail.session_name ? (
+            <div className="mt-0.5 truncate text-xs text-settings-muted">
+              {tx(t, "settings.enhancements.turn.session", "Conversation")}: {detail.session_name}
+            </div>
+          ) : null}
           <div className="mt-0.5 font-mono text-[11px] text-settings-muted">{detail.turn_id}</div>
         </div>
         {onFullscreen ? (
@@ -945,6 +1143,20 @@ function ReplayTurnSummary({
           {tx(t, "settings.enhancements.result.originalLabel", "Original execution")} · {originalExecutionLabel(originalExecution, t)}
         </span>
       </div>
+
+      {taskEvaluation ? (
+        <div className={"rounded-xl border px-3 py-3 text-xs " + taskEvaluationTone(taskEvaluation)}>
+          <div className="font-medium">
+            {tx(t, "settings.enhancements.result.taskLabel", "Task verification")}
+          </div>
+          <div className="mt-1">
+            {taskEvaluationLabel(taskEvaluation, t)}
+            {isRecord(taskEvaluation) && Array.isArray(taskEvaluation.failures) && taskEvaluation.failures.length > 0
+              ? " · " + taskEvaluation.failures.join(" · ")
+              : ""}
+          </div>
+        </div>
+      ) : null}
 
       <ToolPolicySummary events={traceEvents} t={t} />
 
@@ -1132,7 +1344,7 @@ export function EnhancementsSettings() {
     setBusy("start");
     setError(null);
     try {
-      await blackboxStart(client, `session-${Date.now()}`);
+      await blackboxStart(client, `sample-${Date.now()}`);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1202,7 +1414,7 @@ export function EnhancementsSettings() {
         t,
         "settings.enhancements.recording.deleteConfirm",
         "Delete recording “{{name}}”? This removes its prompts, model responses, and tool results permanently.",
-        { name: recording.name },
+        { name: recordingDisplayName(recording, t) },
       ),
     );
     if (!confirmed) return;
@@ -1241,6 +1453,8 @@ export function EnhancementsSettings() {
       ? Math.round(tokens.usage_ratio * 1000) / 10
       : null;
   const originalIssueTurns = replay?.original_issue_turns ?? 0;
+  const originalTaskFailures = replay?.original_task_failures ?? 0;
+  const replayTaskFailures = replay?.replay_task_failures ?? 0;
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -1380,7 +1594,9 @@ export function EnhancementsSettings() {
         {status?.recording && status.directory ? (
           <div className="mb-4 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-300">
             {tx(t, "settings.enhancements.recording.currentSample", "Current regression sample:")} {" "}
-            <span className="font-mono">{status.directory.split(/[\\/]/).pop()}</span>
+            <span className="font-medium">
+              {generatedRecordingDisplayName(status.directory.split(/[\\/]/).pop() || "", t)}
+            </span>
           </div>
         ) : null}
 
@@ -1441,14 +1657,21 @@ export function EnhancementsSettings() {
                     )}
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-sm text-settings-foreground">{recording.name}</span>
+                        <span className="text-sm text-settings-foreground">
+                          {recording.session_names?.length === 1
+                            ? recording.session_names[0]
+                            : recordingDisplayName(recording, t)}
+                        </span>
                         <span className={`rounded-full border px-2 py-0.5 text-[11px] ${recordingStatusClass(recording)}`}>
                           {recordingStatusLabel(recording, t)}
                         </span>
                       </div>
                       <div className="mt-1 text-xs text-settings-muted">
                           {isReady
-                            ? tx(t, "settings.enhancements.recording.savedTurns", "{{count}} turn(s) saved", { count: recording.turns })
+                            ? [
+                              tx(t, "settings.enhancements.recording.savedTurns", "{{count}} turn(s) saved", { count: recording.turns }),
+                              recordingSessionLabel(recording, t),
+                            ].filter(Boolean).join(" · ")
                             : recordingStatusMessage(recording, t)}
                       </div>
                     </div>
@@ -1470,8 +1693,8 @@ export function EnhancementsSettings() {
                       size="sm"
                       onClick={() => void deleteRecording(recording)}
                       disabled={busy !== null}
-                      title={tx(t, "settings.enhancements.recording.deleteConfirm", "Delete recording “{{name}}”?", { name: recording.name })}
-                      aria-label={tx(t, "settings.enhancements.recording.deleteConfirm", "Delete recording “{{name}}”?", { name: recording.name })}
+                      title={tx(t, "settings.enhancements.recording.deleteConfirm", "Delete recording “{{name}}”?", { name: recordingDisplayName(recording, t) })}
+                      aria-label={tx(t, "settings.enhancements.recording.deleteConfirm", "Delete recording “{{name}}”?", { name: recordingDisplayName(recording, t) })}
                     >
                       {deleteBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                     </Button>
@@ -1557,7 +1780,9 @@ export function EnhancementsSettings() {
                   >
                     {hasFailure ? <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" /> : isActive ? <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-blue-600" /> : <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />}
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-mono text-xs text-settings-foreground">{trace.session_key ?? trace.id}</span>
+                      <span className="block truncate text-xs font-medium text-settings-foreground">
+                        {trace.session_name || tx(t, "settings.enhancements.trace.unnamedSession", "Unnamed conversation")}
+                      </span>
                       <span className="mt-1 block text-[11px] text-settings-muted">
                         {trace.event_count} {tx(t, "settings.enhancements.trace.events", "events")} · {trace.tool_count} {tx(t, "settings.enhancements.trace.tools", "tools")} {trace.duration_ms != null ? ` · ${formatDuration(trace.duration_ms)}` : ""}
                         {issueSummary ? ` · ${issueSummary}` : ""}
@@ -1574,7 +1799,7 @@ export function EnhancementsSettings() {
                   </button>
                   {selectedTrace?.summary.id === trace.id ? (
                     <div className="border-t border-settings-border bg-settings-hover/25 p-3">
-                      <StructuredTraceTimeline events={selectedTrace.events} />
+                      <ExecutionTraceTimeline events={selectedTrace.events} />
                     </div>
                   ) : null}
                 </div>
@@ -1606,7 +1831,7 @@ export function EnhancementsSettings() {
               </p>
             </div>
           </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
             <div className={`rounded-xl border p-4 ${replay.all_deterministic
               ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-900 dark:bg-emerald-950/20"
               : "border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20"}`}>
@@ -1644,6 +1869,24 @@ export function EnhancementsSettings() {
                   models: replay.original_provider_errors,
                   unknown: replay.original_unknown_side_effects,
                 })}
+              </div>
+            </div>
+            <div className={"rounded-xl border p-4 " + (originalTaskFailures === 0 && replayTaskFailures === 0
+              ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-900 dark:bg-emerald-950/20"
+              : "border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20")}>
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-settings-muted">
+                {originalTaskFailures === 0 && replayTaskFailures === 0
+                  ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  : <AlertTriangle className="h-4 w-4 text-amber-600" />}
+                {tx(t, "settings.enhancements.result.taskLabel", "Task verification")}
+              </div>
+              <div className="mt-2 text-lg font-semibold text-settings-foreground">
+                {originalTaskFailures === 0
+                  ? tx(t, "settings.enhancements.result.taskHealthy", "Original tasks passed")
+                  : tx(t, "settings.enhancements.result.taskIssues", "{{count}} original task(s) did not pass", { count: originalTaskFailures })}
+              </div>
+              <div className="mt-1 text-xs text-settings-muted">
+                {tx(t, "settings.enhancements.result.taskReplayBreakdown", "{{count}} replay task check(s) did not pass", { count: replayTaskFailures })}
               </div>
             </div>
           </div>
@@ -1695,7 +1938,9 @@ export function EnhancementsSettings() {
                       <span className="whitespace-nowrap text-sm font-medium text-settings-foreground">
                         {tx(t, "settings.enhancements.result.turn", "Turn {{number}}", { number: index + 1 })}
                       </span>
-                      <span className="min-w-0 truncate font-mono text-xs text-settings-muted">{row.turn_id}</span>
+                      <span className="min-w-0 truncate text-xs text-settings-muted">
+                        {row.session_name || tx(t, "settings.enhancements.trace.unnamedSession", "Unnamed conversation")}
+                      </span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <span className={`rounded-full border px-2 py-0.5 text-[11px] ${row.ok

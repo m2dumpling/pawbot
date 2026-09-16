@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from pawbot.agent.tools.base import Tool, ToolResult
+from pawbot.agent.tools.base import Tool, ToolExecutionPolicy, ToolResult
 from pawbot.agent.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
@@ -158,6 +158,13 @@ class _LegacyErrorPrefixTool(Tool):
     @property
     def concurrency_safe(self) -> bool:
         return self._wrapped.concurrency_safe
+
+    @property
+    def execution_policy(self) -> ToolExecutionPolicy:
+        return self._wrapped.execution_policy
+
+    def execution_receipt(self, result: Any) -> Any | None:
+        return self._wrapped.execution_receipt(result)
 
     @property
     def config_key(self) -> str:

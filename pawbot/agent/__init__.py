@@ -8,7 +8,13 @@ from pawbot.agent.approval import (
 )
 from pawbot.agent.budget import TurnBudget
 from pawbot.agent.context import ContextBuilder
-from pawbot.agent.evaluation import TaskContract, TaskEvaluation, evaluate_task
+from pawbot.agent.evaluation import (
+    TASK_CONTRACT_METADATA_KEY,
+    TaskContract,
+    TaskEvaluation,
+    TaskValidator,
+    evaluate_task,
+)
 from pawbot.agent.hook import (
     AgentHook,
     AgentHookContext,
@@ -38,6 +44,8 @@ __all__ = [
     "SubagentManager",
     "TaskContract",
     "TaskEvaluation",
+    "TaskValidator",
+    "TASK_CONTRACT_METADATA_KEY",
     "ToolApprovalManager",
     "ToolApprovalRequest",
     "ToolApprovalResult",

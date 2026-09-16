@@ -1,6 +1,15 @@
 """Agent tools module."""
 
-from pawbot.agent.tools.base import Schema, Tool, ToolResult, tool_parameters
+from pawbot.agent.tools.base import (
+    Schema,
+    Tool,
+    ToolExecutionPolicy,
+    ToolIdempotency,
+    ToolRecoveryStrategy,
+    ToolResult,
+    ToolSideEffect,
+    tool_parameters,
+)
 from pawbot.agent.tools.context import ToolContext
 from pawbot.agent.tools.loader import ToolLoader
 from pawbot.agent.tools.registry import ToolRegistry
@@ -23,7 +32,11 @@ __all__ = [
     "ObjectSchema",
     "StringSchema",
     "Tool",
+    "ToolIdempotency",
+    "ToolExecutionPolicy",
+    "ToolRecoveryStrategy",
     "ToolContext",
+    "ToolSideEffect",
     "ToolLoader",
     "ToolResult",
     "ToolRegistry",

@@ -23,6 +23,7 @@ from pawbot.agent.blackbox.replayer import (
     compare_messages,
     compare_trace_events,
 )
+from pawbot.agent.evaluation import TaskContract
 from pawbot.agent.hook import AgentHookContext, AgentRunHookContext
 from pawbot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
 from pawbot.agent.tools import ToolResult
@@ -123,7 +124,14 @@ def _usage(prompt: int, completion: int) -> LLMUsage:
     )
 
 
-def _build_spec(tools: ToolRegistry, runtime: LLMRuntime, hook, initial):
+def _build_spec(
+    tools: ToolRegistry,
+    runtime: LLMRuntime,
+    hook,
+    initial,
+    *,
+    task_contract: TaskContract | None = None,
+):
     return AgentRunSpec(
         initial_messages=initial,
         tools=tools,
@@ -135,6 +143,7 @@ def _build_spec(tools: ToolRegistry, runtime: LLMRuntime, hook, initial):
         workspace=Path("."),
         session_key="test",
         context_block_limit=80_000,
+        task_contract=task_contract,
     )
 
 
@@ -193,6 +202,58 @@ async def test_record_then_replay_is_deterministic(tmp_path: Path, scripted_turn
     assert not compare_messages(replayed.messages, turn.final_messages), (
         "replayed message sequence must match the recorded one structurally"
     )
+
+
+async def test_record_then_replay_preserves_task_evaluation(tmp_path: Path, scripted_turn):
+    provider = FakeProvider(scripted_turn)
+    runtime = LLMRuntime.capture(provider, "fake-model", context_window_tokens=100_000)
+    tools = ToolRegistry()
+    tools.register(FakeTool())
+    initial = [{"role": "user", "content": "hello"}]
+    contract = TaskContract(
+        id="echo-task",
+        final_content_equals="done",
+        required_tools=("echo",),
+    )
+    bb_dir = tmp_path / "task-contract"
+    controller = BlackboxController(str(bb_dir))
+    recorder = controller.turn_hook(
+        "turn-task-contract",
+        initial,
+        session_key="test",
+        model="fake-model",
+        task_contract=contract,
+    )
+
+    with controller.turn_scope("turn-task-contract"):
+        recorded = await AgentRunner().run(
+            _build_spec(tools, runtime, recorder, initial, task_contract=contract)
+        )
+
+    assert recorded.task_evaluation is not None
+    assert recorded.task_evaluation.status == "passed"
+    replay = ReplayController(str(bb_dir))
+    turn = replay.turns[0]
+    assert turn.task_contract is not None
+    replay_provider = ReplayProvider(runtime.provider, replay.store, turn.turn_id)
+    replay_runtime = LLMRuntime.capture(
+        replay_provider,
+        "fake-model",
+        context_window_tokens=100_000,
+    )
+    with replay.turn_scope(turn):
+        replayed = await AgentRunner().run(
+            _build_spec(
+                tools,
+                replay_runtime,
+                replay.probe_hook(turn),
+                turn.initial_messages,
+                task_contract=turn.task_contract,
+            )
+        )
+
+    assert replayed.task_evaluation is not None
+    assert replayed.task_evaluation.status == "passed"
 
 
 async def test_replay_missing_tool_observation_fails_closed(tmp_path: Path, scripted_turn):

@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
+from pawbot.agent.evaluation import TaskContract, TaskEvaluation
 from pawbot.agent.hook import AgentHook, SDKCaptureHook
 from pawbot.agent.hooks import create_file_edit_activity_hook
 from pawbot.agent.loop import AgentLoop
@@ -45,6 +46,8 @@ from pawbot.utils.llm_runtime import LLMRuntime
 __all__ = [
     "Pawbot",
     "LLMUsage",
+    "TaskContract",
+    "TaskEvaluation",
     "RunResult",
     "RunStream",
     "SessionInfo",
@@ -155,6 +158,7 @@ class Pawbot:
         hooks: list[AgentHook] | None = None,
         model: str | None = None,
         model_preset: str | None = None,
+        task_contract: TaskContract | None = None,
     ) -> RunResult:
         """Run the agent once and return the result.
 
@@ -189,6 +193,7 @@ class Pawbot:
             media=media,
             ephemeral=ephemeral,
             attributes=attributes,
+            task_contract=task_contract,
         )
         if runtime is not None:
             kwargs["runtime"] = runtime
@@ -216,6 +221,7 @@ class Pawbot:
         hooks: list[AgentHook] | None = None,
         model: str | None = None,
         model_preset: str | None = None,
+        task_contract: TaskContract | None = None,
     ) -> RunStream:
         """Start a streamed run and return a handle for events and final result."""
         override_runtime = self._loop.runtime_resolver.resolve_override(
@@ -268,6 +274,7 @@ class Pawbot:
                 media=media,
                 ephemeral=ephemeral,
                 attributes=attributes,
+                task_contract=task_contract,
                 on_stream=_on_stream,
                 on_stream_end=_on_stream_end,
             )
@@ -321,6 +328,7 @@ class Pawbot:
         hooks: list[AgentHook] | None = None,
         model: str | None = None,
         model_preset: str | None = None,
+        task_contract: TaskContract | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream events for one agent turn."""
         run = await self.run_streamed(
@@ -332,6 +340,7 @@ class Pawbot:
             media=media,
             ephemeral=ephemeral,
             attributes=attributes,
+            task_contract=task_contract,
             hooks=hooks,
             model=model,
             model_preset=model_preset,

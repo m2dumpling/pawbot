@@ -28,6 +28,32 @@ Harness 同时输出两类结果：
 显示为 `task: not_evaluable`；执行完成但结果断言不满足时会显示为 `task: failed`。
 这为后续接入领域评测器保留了清晰边界。
 
+## 运行时任务验收
+
+Harness 使用的 TaskContract 已经是 AgentRunner 的公共运行时能力。SDK 调用方可以
+把完成条件随一次运行传入；Runner 会在模型准备结束时检查最终文本、成功 Tool、
+Tool 返回内容、Workspace 文件或自定义同步校验器。验收失败会回填具体失败项，
+让模型在剩余预算内继续修正：
+
+~~~python
+from pawbot import TaskContract
+
+result = await bot.run(
+    "写入并验证结果",
+    task_contract=TaskContract(
+        id="write-and-verify",
+        required_tools=("write_file", "read_file"),
+        required_files=("result.txt",),
+        file_contains=(("result.txt", "ready"),),
+    ),
+)
+assert result.task_evaluation is not None
+~~~
+
+任务结果只会有三种含义：passed 表示条件全部满足，failed 表示执行完成但条件
+没有满足，not_evaluable 表示执行被取消、模型/运行时失败，或校验器本身无法运行。
+它与轨迹是否复现、原执行是否有工具错误是三条独立信息。
+
 ## 运行
 
 列出场景：
@@ -103,6 +129,11 @@ uv run --no-sync pawbot harness run --json
 在 Gateway 的 WebUI 工作区访问模式下，受限工作区会显示批准卡片；完全访问模式仍
 表示用户已经明确授予本地工具权限，不额外拦截。原生 TUI 使用同一条协议，按 `a`
 批准、`d` 或 `Esc` 拒绝，`Ctrl+C` 仍然可以取消整个回合。
+
+Tool 还可以通过 execution_policy 声明副作用类型、幂等性、是否可撤销、恢复策略
+和执行凭证读取方式。只读或明确幂等的操作可以自动重试；取消、超时或异常返回后，
+未知或不可逆操作会保留操作指纹并在再次执行相同操作前要求人工确认。系统不会把
+进程取消当成外部系统已回滚。
 
 ## 实验元数据
 

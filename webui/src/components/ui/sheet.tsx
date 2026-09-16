@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 
 const Sheet = DialogPrimitive.Root;
 const SheetPortal = DialogPrimitive.Portal;
+const SheetTrigger = DialogPrimitive.Trigger;
 
 const SheetOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
@@ -134,4 +135,4 @@ const SheetDescription = React.forwardRef<
 ));
 SheetDescription.displayName = DialogPrimitive.Description.displayName;
 
-export { Sheet, SheetContent, SheetDescription, SheetTitle };
+export { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger };

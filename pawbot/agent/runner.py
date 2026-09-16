@@ -20,9 +20,14 @@ from pawbot.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
 )
+from pawbot.agent.evaluation import TaskContract, TaskEvaluation, evaluate_task
 from pawbot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from pawbot.agent.tools.base import ToolResult
-from pawbot.agent.tools.execution import execute_tool_calls
+from pawbot.agent.tools.execution import (
+    TOOL_EXECUTION_METADATA_KEY,
+    execute_tool_calls,
+    tool_execution_metadata,
+)
 from pawbot.agent.tools.registry import ToolRegistry
 from pawbot.llm_usage.context import (
     LLMUsageSource,
@@ -46,7 +51,7 @@ from pawbot.runtime_context import (
     detach_runtime_context,
     reattach_runtime_context,
 )
-from pawbot.session.history_visibility import is_hidden_history_message
+from pawbot.session.history_visibility import HIDDEN_HISTORY_META, is_hidden_history_message
 from pawbot.session.recovery import PENDING_FOLLOWUP_ID_KEY
 from pawbot.utils.helpers import (
     build_assistant_message,
@@ -80,6 +85,7 @@ _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
 _MAX_INJECTIONS_PER_TURN = 3
 _MAX_INJECTION_CYCLES = 5
+_TASK_VERIFICATION_META = "task_verification"
 
 
 def _restore_outer_whitespace(content: str, original: str | None) -> str:
@@ -120,8 +126,10 @@ class AgentRunSpec:
     provider_state: ProviderConversationState | None = None
     llm_usage_source: LLMUsageSource | None = None
     budget: TurnBudget | None = None
+    task_contract: TaskContract | None = None
     denied_tool_capabilities: frozenset[str] = field(default_factory=frozenset)
     tool_approval_callback: ToolApprovalCallback | None = None
+    recovery_approval_callback: ToolApprovalCallback | None = None
     approval_capabilities: frozenset[str] = field(
         default_factory=lambda: DEFAULT_APPROVAL_CAPABILITIES
     )
@@ -146,6 +154,7 @@ class AgentRunResult:
     provider_state: ProviderConversationState | None = field(default=None, repr=False)
     tool_states: list[dict[str, Any]] = field(default_factory=list)
     budget: dict[str, Any] | None = None
+    task_evaluation: TaskEvaluation | None = None
 
 
 @dataclass
@@ -173,6 +182,25 @@ class _TurnState:
     compacted_tool_call_ids: set[str] = field(default_factory=set)
     pending_stream_content: str | None = None
     tool_states: list[dict[str, Any]] = field(default_factory=list)
+    task_evaluation: TaskEvaluation | None = None
+    task_verification_attempts: int = 0
+
+
+def _task_verification_feedback(contract: TaskContract, evaluation: TaskEvaluation) -> dict[str, Any]:
+    """Build a hidden model-facing correction request after a failed check."""
+    failures = list(evaluation.failures)
+    details = "\n".join(f"- {failure}" for failure in failures) or "- The completion criteria were not satisfied."
+    return {
+        "role": "user",
+        "content": (
+            "The task completion check did not pass. Treat the following as authoritative "
+            "feedback, inspect the environment again, and continue the task. Do not claim "
+            "completion until every criterion is satisfied.\n\n"
+            f"Task: {contract.description or contract.id}\n"
+            f"Failed checks:\n{details}"
+        ),
+        HIDDEN_HISTORY_META: {"kind": _TASK_VERIFICATION_META, "contract_id": contract.id},
+    }
 
 
 class AgentRunner:
@@ -463,6 +491,20 @@ class AgentRunner:
             context.messages = deepcopy(messages)
             context.stop_reason = "cancelled"
             context.error = None
+            if spec.task_contract is not None:
+                evaluation = evaluate_task(
+                    spec.task_contract,
+                    None,
+                    execution_status="cancelled",
+                    workspace=spec.workspace,
+                )
+                evaluation_dict = evaluation.to_dict()
+                context.task_evaluation = evaluation_dict
+                await hook.on_task_verification(
+                    context,
+                    evaluation_dict,
+                    attempt=0,
+                )
             if spec.budget is not None:
                 context.budget = spec.budget.snapshot()
             context.exception = exc
@@ -471,6 +513,20 @@ class AgentRunner:
             context.messages = deepcopy(messages)
             context.stop_reason = "error"
             context.error = f"Error: {type(exc).__name__}: {exc}"
+            if spec.task_contract is not None:
+                evaluation = evaluate_task(
+                    spec.task_contract,
+                    None,
+                    execution_status="error",
+                    workspace=spec.workspace,
+                )
+                evaluation_dict = evaluation.to_dict()
+                context.task_evaluation = evaluation_dict
+                await hook.on_task_verification(
+                    context,
+                    evaluation_dict,
+                    attempt=0,
+                )
             if spec.budget is not None:
                 context.budget = spec.budget.snapshot()
             context.exception = exc
@@ -487,6 +543,11 @@ class AgentRunner:
             context.tool_states = deepcopy(result.tool_states)
             context.had_injections = result.had_injections
             context.budget = deepcopy(result.budget)
+            context.task_evaluation = (
+                result.task_evaluation.to_dict()
+                if result.task_evaluation is not None
+                else None
+            )
             context.exception = None
             if context.error is not None:
                 await hook.on_error(context)
@@ -670,7 +731,7 @@ class AgentRunner:
                 spec, hook, messages, conversation_state, state, budget
             )
 
-        return AgentRunResult(
+        result = AgentRunResult(
             final_content=state.final_content,
             messages=messages,
             tools_used=state.tools_used,
@@ -684,6 +745,85 @@ class AgentRunner:
             tool_states=state.tool_states,
             budget=budget.snapshot(),
         )
+        if spec.task_contract is not None and state.task_evaluation is None:
+            execution_status = (
+                "cancelled"
+                if result.stop_reason == "cancelled"
+                else "error"
+                if result.error
+                else "completed"
+            )
+            state.task_evaluation = evaluate_task(
+                spec.task_contract,
+                result,
+                execution_status=execution_status,
+                workspace=spec.workspace,
+            )
+            await hook.on_task_verification(
+                AgentRunHookContext(
+                    messages=deepcopy(result.messages),
+                    final_content=result.final_content,
+                    tools_used=list(result.tools_used),
+                    usage=result.usage,
+                    stop_reason=result.stop_reason,
+                    error=result.error,
+                    tool_events=deepcopy(result.tool_events),
+                    tool_states=deepcopy(result.tool_states),
+                    budget=deepcopy(result.budget),
+                ),
+                state.task_evaluation.to_dict(),
+                attempt=state.task_verification_attempts,
+            )
+        result.task_evaluation = state.task_evaluation
+        return result
+
+    async def _verify_terminal_candidate(
+        self,
+        spec: AgentRunSpec,
+        hook: AgentHook,
+        messages: list[dict[str, Any]],
+        candidate_message: dict[str, Any],
+        candidate_content: str,
+        state: _TurnState,
+        budget: TurnBudget,
+    ) -> TaskEvaluation | None:
+        """Evaluate a proposed final answer before the turn is closed."""
+        if spec.task_contract is None:
+            return None
+        candidate_messages = [*messages, candidate_message]
+        candidate = AgentRunResult(
+            final_content=candidate_content,
+            messages=candidate_messages,
+            tools_used=list(state.tools_used),
+            usage=state.usage,
+            stop_reason="completed",
+            tool_events=list(state.tool_events),
+            tool_states=list(state.tool_states),
+            budget=budget.snapshot(),
+        )
+        evaluation = evaluate_task(
+            spec.task_contract,
+            candidate,
+            execution_status="completed",
+            workspace=spec.workspace,
+        )
+        state.task_verification_attempts += 1
+        await hook.on_task_verification(
+            AgentRunHookContext(
+                messages=deepcopy(candidate_messages),
+                final_content=candidate_content,
+                tools_used=list(state.tools_used),
+                usage=state.usage,
+                stop_reason="completed",
+                tool_events=deepcopy(state.tool_events),
+                tool_states=deepcopy(state.tool_states),
+                budget=budget.snapshot(),
+                task_evaluation=evaluation.to_dict(),
+            ),
+            evaluation.to_dict(),
+            attempt=state.task_verification_attempts,
+        )
+        return evaluation
 
     @staticmethod
     def _finish_budget_limit(
@@ -778,6 +918,17 @@ class AgentRunner:
             response,
         )
         messages.append(assistant_message)
+        pending_tool_calls = [
+            {
+                **tool_call.to_openai_tool_call(),
+                TOOL_EXECUTION_METADATA_KEY: tool_execution_metadata(
+                    spec.tools,
+                    spec.session_key,
+                    tool_call,
+                ),
+            }
+            for tool_call in response.tool_calls
+        ]
         await self._emit_checkpoint(
             spec,
             {
@@ -786,7 +937,7 @@ class AgentRunner:
                 "model": spec.runtime.model,
                 "assistant_message": assistant_message,
                 "completed_tool_results": [],
-                "pending_tool_calls": [tc.to_openai_tool_call() for tc in response.tool_calls],
+                "pending_tool_calls": pending_tool_calls,
             },
         )
 
@@ -802,6 +953,7 @@ class AgentRunner:
             context=context,
             denied_tool_capabilities=spec.denied_tool_capabilities,
             tool_approval_callback=spec.tool_approval_callback,
+            recovery_approval_callback=spec.recovery_approval_callback,
             approval_capabilities=spec.approval_capabilities,
             channel=spec.channel,
             chat_id=spec.chat_id,
@@ -815,7 +967,17 @@ class AgentRunner:
         context.tool_results = list(results)
         context.tool_events = list(new_events)
         completed_tool_results: list[dict[str, Any]] = []
-        for tool_call, result in zip(response.tool_calls, results):
+        states_by_call_id = {
+            str(tool_state.get("call_id")): tool_state
+            for tool_state in context.tool_states
+            if tool_state.get("call_id")
+        }
+        for index, (tool_call, result) in enumerate(zip(response.tool_calls, results, strict=False)):
+            execution_metadata = tool_execution_metadata(
+                spec.tools,
+                spec.session_key,
+                tool_call,
+            )
             tool_message = {
                 "role": "tool",
                 "tool_call_id": tool_call.id,
@@ -826,7 +988,17 @@ class AgentRunner:
                     tool_call.name,
                     result,
                 ),
+                "operation_id": execution_metadata["operation_id"],
+                TOOL_EXECUTION_METADATA_KEY: execution_metadata,
             }
+            tool_state = states_by_call_id.get(str(tool_call.id), {})
+            event = new_events[index] if index < len(new_events) else {}
+            if (
+                event.get("status") != "ok"
+                and tool_state.get("recovery_required") is True
+                and tool_state.get("recovery_resolution") == "pending_confirmation"
+            ):
+                tool_message["_recovery_pending"] = True
             messages.append(tool_message)
             completed_tool_results.append(tool_message)
         checkpoint_model_messages = (
@@ -967,6 +1139,7 @@ class AgentRunner:
         if (
             state.length_recovery_parts
             and hook.wants_streaming()
+            and spec.task_contract is None
             and not context.streamed_content
             and response.finish_reason != "error"
             and not is_blank_text(clean)
@@ -1007,7 +1180,12 @@ class AgentRunner:
         if should_continue:
             state.had_injections = True
 
-        if hook.wants_streaming():
+        if hook.wants_streaming() and (
+            spec.task_contract is None
+            or should_continue
+            or response.finish_reason == "error"
+            or is_blank_text(clean)
+        ):
             await hook.on_stream_end(context, resuming=should_continue)
 
         if should_continue:
@@ -1056,24 +1234,142 @@ class AgentRunner:
                 return "continue"
             return "done"
 
-        messages.append(
-            assistant_message
-            or conversation_state.project_response_message(
-                build_assistant_message(
-                    clean,
-                    reasoning_content=response.reasoning_content,
-                    thinking_blocks=response.thinking_blocks,
-                ),
-                response,
-            )
+        candidate_message = assistant_message or conversation_state.project_response_message(
+            build_assistant_message(
+                clean,
+                reasoning_content=response.reasoning_content,
+                thinking_blocks=response.thinking_blocks,
+            ),
+            response,
         )
+        candidate_content = (
+            "".join(state.length_recovery_parts)
+            + _restore_outer_whitespace(clean or "", original_content)
+        ).strip() if state.length_recovery_parts else clean
+        candidate_text = candidate_content or ""
+        evaluation = await self._verify_terminal_candidate(
+            spec,
+            hook,
+            messages,
+            candidate_message,
+            candidate_text,
+            state,
+            budget,
+        )
+        if (
+            evaluation is not None
+            and evaluation.status == "failed"
+            and spec.task_contract is not None
+        ):
+            if iteration + 1 >= spec.max_iterations:
+                messages.append(candidate_message)
+                state.final_content = candidate_text
+                state.stop_reason = "task_verification_failed"
+                state.task_evaluation = evaluation
+                context.final_content = candidate_text
+                context.stop_reason = state.stop_reason
+                context.task_evaluation = evaluation.to_dict()
+                if hook.wants_streaming():
+                    await hook.on_stream(context, candidate_text)
+                    await hook.on_stream_end(context, resuming=False)
+                await self._emit_checkpoint(
+                    spec,
+                    {
+                        "phase": "final_response",
+                        "iteration": iteration,
+                        "model": spec.runtime.model,
+                        "assistant_message": candidate_message,
+                        "completed_tool_results": [],
+                        "pending_tool_calls": [],
+                        "stop_reason": state.stop_reason,
+                        "task_evaluation": evaluation.to_dict(),
+                        "provider_state": conversation_state.checkpoint(messages),
+                    },
+                )
+                await hook.after_iteration(context)
+                return "done"
+
+            retry_message = dict(candidate_message)
+            retry_message[HIDDEN_HISTORY_META] = {
+                "kind": _TASK_VERIFICATION_META,
+                "contract_id": spec.task_contract.id,
+                "status": "failed",
+            }
+            messages.append(retry_message)
+            feedback = _task_verification_feedback(spec.task_contract, evaluation)
+            messages.append(feedback)
+            await self._emit_checkpoint(
+                spec,
+                {
+                    "phase": "task_verification_retry",
+                    "iteration": iteration,
+                    "model": spec.runtime.model,
+                    "assistant_message": retry_message,
+                    "completed_tool_results": [],
+                    "pending_tool_calls": [],
+                    "verification_feedback": feedback,
+                    "task_evaluation": evaluation.to_dict(),
+                    "provider_state": conversation_state.checkpoint(messages),
+                },
+            )
+            if hook.wants_streaming():
+                await hook.on_stream_end(context, resuming=True)
+            context.final_content = candidate_text
+            await hook.after_iteration(context)
+            state.task_evaluation = None
+            state.final_content = None
+            state.length_recovery_parts.clear()
+            return "continue"
+
+        if (
+            evaluation is not None
+            and evaluation.status == "not_evaluable"
+            and spec.task_contract is not None
+        ):
+            messages.append(candidate_message)
+            state.final_content = candidate_text
+            state.stop_reason = "task_verification_not_evaluable"
+            state.task_evaluation = evaluation
+            context.final_content = candidate_text
+            context.stop_reason = state.stop_reason
+            context.task_evaluation = evaluation.to_dict()
+            if hook.wants_streaming():
+                await hook.on_stream(context, candidate_text)
+                await hook.on_stream_end(context, resuming=False)
+            await self._emit_checkpoint(
+                spec,
+                {
+                    "phase": "final_response",
+                    "iteration": iteration,
+                    "model": spec.runtime.model,
+                    "assistant_message": candidate_message,
+                    "completed_tool_results": [],
+                    "pending_tool_calls": [],
+                    "stop_reason": state.stop_reason,
+                    "task_evaluation": evaluation.to_dict(),
+                    "provider_state": conversation_state.checkpoint(messages),
+                },
+            )
+            await hook.after_iteration(context)
+            return "done"
+
+        if hook.wants_streaming() and spec.task_contract is not None:
+            await hook.on_stream(context, candidate_text)
+            context.streamed_content = True
+            await hook.on_stream_end(context, resuming=False)
+
+        if evaluation is not None:
+            state.task_evaluation = evaluation
+            context.task_evaluation = evaluation.to_dict()
+
+        messages.append(candidate_message)
         await self._emit_checkpoint(
             spec,
             {
                 "phase": "final_response",
                 "iteration": iteration,
                 "model": spec.runtime.model,
-                "assistant_message": messages[-1],
+                "assistant_message": candidate_message,
                 "completed_tool_results": [],
                 "pending_tool_calls": [],
                 "provider_state": conversation_state.checkpoint(messages),
@@ -1232,9 +1528,10 @@ class AgentRunner:
             async def _stream(delta: str) -> None:
                 _generation_delta(delta)
                 if delta:
-                    context.streamed_content = True
                     await _close_native_reasoning()
-                await hook.on_stream(context, delta)
+                    if spec.task_contract is None:
+                        context.streamed_content = True
+                        await hook.on_stream(context, delta)
 
             async def _thinking(delta: str) -> None:
                 nonlocal native_reasoning_open, thinking_buf
@@ -1253,7 +1550,8 @@ class AgentRunner:
             async def _stream_recover() -> None:
                 _pause_generation()
                 await _close_native_reasoning()
-                await hook.on_stream_end(context, resuming=True)
+                if spec.task_contract is None:
+                    await hook.on_stream_end(context, resuming=True)
 
             coro = spec.runtime.provider.chat_stream_with_retry(
                 **kwargs,

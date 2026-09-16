@@ -9,6 +9,7 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 # Force UTF-8 encoding for Windows console
@@ -542,6 +543,17 @@ def _format_trace_duration(value: Any) -> str:
     return f"{milliseconds}ms" if milliseconds < 1_000 else f"{milliseconds / 1000:.1f}s"
 
 
+def _inspection_session_names(config: Config) -> dict[str, str]:
+    """Resolve human conversation titles for CLI inspection output."""
+    from pawbot.session.manager import SessionManager
+    from pawbot.webui.blackbox_api import _session_display_names
+
+    data_dir = config.runtime_data_dir
+    sessions_root = data_dir / "sessions" if isinstance(data_dir, Path) else None
+    sessions = SessionManager(config.workspace_path, sessions_root=sessions_root)
+    return _session_display_names(SimpleNamespace(sessions=sessions))
+
+
 @trace_app.command("list")
 def trace_list(
     trace_filter: str = typer.Option("all", "--filter", help="all, errors, or slow"),
@@ -552,7 +564,7 @@ def trace_list(
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
 ) -> None:
     """List recent lightweight traces."""
-    store, _ = _cli_trace_store(config, workspace)
+    store, loaded = _cli_trace_store(config, workspace)
     normalized_filter = trace_filter.strip().lower()
     if normalized_filter not in {"all", "errors", "slow"}:
         console.print("[red]--filter must be all, errors, or slow[/red]")
@@ -563,6 +575,18 @@ def trace_list(
         issues_only=normalized_filter == "errors",
         slow_only=normalized_filter == "slow",
     )
+    session_names = _inspection_session_names(loaded)
+    rows = [
+        {
+            **row,
+            "session_name": (
+                session_names.get(row.get("session_key"))
+                if isinstance(row.get("session_key"), str)
+                else None
+            ),
+        }
+        for row in rows
+    ]
     if json_output:
         console.print_json(json.dumps(rows, ensure_ascii=False))
         return
@@ -580,7 +604,7 @@ def trace_list(
         duration_text = _format_trace_duration(row.get("duration_ms"))
         table.add_row(
             escape(str(row.get("id") or row.get("trace_id") or "unknown")),
-            escape(str(row.get("session_key") or "-")),
+            escape(str(row.get("session_name") or "Unnamed conversation")),
             escape(str(row.get("status") or "unknown")),
             duration_text,
             str(row.get("event_count") or 0),
@@ -602,7 +626,7 @@ def trace_show(
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
 ) -> None:
     """Show one trace's ordered events."""
-    store, _ = _cli_trace_store(config, workspace)
+    store, loaded = _cli_trace_store(config, workspace)
     try:
         summary, events = store.detail(identifier)
     except FileNotFoundError:
@@ -624,7 +648,10 @@ def trace_show(
         )
         return
     console.print(f"[bold]Trace[/bold] {escape(str(summary.get('trace_id') or identifier))}")
-    console.print(f"Session: {escape(str(summary.get('session_key') or '-'))}")
+    session_names = _inspection_session_names(loaded)
+    session_key = summary.get("session_key")
+    session_name = session_names.get(session_key) if isinstance(session_key, str) else None
+    console.print(f"Session: {escape(session_name or 'Unnamed conversation')}")
     console.print(
         f"Status: {escape(str(summary.get('status') or 'unknown'))} · "
         f"Duration: {_format_trace_duration(summary.get('duration_ms'))} · "
@@ -724,23 +751,28 @@ def record_list(
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
 ) -> None:
     """List regression samples saved under the workspace."""
-    from pawbot.webui.blackbox_api import _recording_summary
+    from pawbot.webui.blackbox_api import _recording_session_names, _recording_summary
 
     _, loaded = _load_inspection_config(config=config, workspace=workspace)
+    session_names = _inspection_session_names(loaded)
     root = loaded.workspace_path / "blackbox"
     table = Table(title="Agent Regression Samples")
     table.add_column("Sample", style="cyan")
     table.add_column("Status")
+    table.add_column("Conversations")
     table.add_column("Turns", justify="right")
     table.add_column("Trace events", justify="right")
     if root.exists():
         for directory in sorted(path for path in root.iterdir() if path.is_dir()):
             summary = _recording_summary(directory)
+            recording_sessions = _recording_session_names(directory, session_names)
             status = str(summary.get("status") or "invalid")
             status_text = "[green]ready[/green]" if status == "ready" else "[yellow]invalid[/yellow]"
+            conversation_text = " · ".join(recording_sessions) or "-"
             table.add_row(
                 escape(directory.name),
                 status_text,
+                escape(conversation_text),
                 str(summary.get("turns") or 0),
                 str(summary.get("trace_events") or 0),
             )

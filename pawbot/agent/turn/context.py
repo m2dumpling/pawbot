@@ -26,6 +26,7 @@ from pawbot.session.summary import SessionSummary
 from pawbot.utils.llm_runtime import LLMRuntime
 
 if TYPE_CHECKING:
+    from pawbot.agent.evaluation import TaskContract
     from pawbot.agent.observability import TraceRun
 
 
@@ -78,12 +79,14 @@ class TurnContext:
     hook_factories: list[AgentTurnHookFactory] = field(default_factory=list)
     turn_scopes: list[AbstractContextManager[Any]] = field(default_factory=list)
     tools: ToolRegistry | None = None
+    task_contract: TaskContract | None = None
     trace: TraceRun | None = field(default=None, repr=False)
 
     turn_wall_started_at: float = field(default_factory=time.time)
     visible_run_started_at: float | None = None
     turn_latency_ms: int | None = None
     usage: LLMUsage | None = None
+    task_evaluation: dict[str, Any] | None = None
 
     def require_runtime(self) -> LLMRuntime:
         """Return the runtime established by the BUILD stage."""

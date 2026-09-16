@@ -1141,6 +1141,7 @@ export interface BlackboxStatus {
 export interface BlackboxRecording {
   directory: string;
   name: string;
+  session_names?: string[];
   turns: number;
   trace_events?: number;
   status: "ready" | "invalid";
@@ -1157,12 +1158,15 @@ export interface BlackboxReplayResult {
   original_failed_tool_calls: number;
   original_provider_errors: number;
   original_unknown_side_effects: number;
+  original_task_failures?: number;
+  replay_task_failures?: number;
   trace_comparable_turns?: number;
   trace_diff_turns?: number;
   benchmark?: ReplayBenchmark;
   summary: string;
   results: Array<{
     turn_id: string;
+    session_name?: string | null;
     ok: boolean;
     diffs: unknown[];
     message_diffs?: unknown[];
@@ -1177,6 +1181,8 @@ export interface BlackboxReplayResult {
       provider_error_count: number;
       unknown_side_effect_count: number;
     };
+    original_task?: { status?: string | null; completed?: boolean | null } | null;
+    replay_task?: { status?: string | null; completed?: boolean | null } | null;
   }>;
 }
 
@@ -1193,6 +1199,7 @@ export interface ReplayBenchmark {
 export interface BlackboxDetail {
   directory: string;
   turn_id: string;
+  session_name?: string | null;
   turn: Record<string, unknown>;
   events: Array<Record<string, unknown>>;
   trace_events?: Array<Record<string, unknown>>;
@@ -1231,6 +1238,7 @@ export interface TraceSummary {
   id: string;
   trace_id: string;
   session_key: string | null;
+  session_name?: string | null;
   turn_id: string;
   channel: string;
   chat_id: string;
@@ -1246,6 +1254,8 @@ export interface TraceSummary {
   tool_failure_count?: number;
   provider_error_count?: number;
   unknown_side_effect_count?: number;
+  verification_status?: "passed" | "failed" | "not_evaluable" | null;
+  verification_completed?: boolean | null;
   max_step_duration_ms?: number;
   timestamp_ms?: number | null;
 }
@@ -1324,12 +1334,14 @@ export async function traceList(
   options?: {
     filter?: "all" | "issues" | "slow";
     sessionKey?: string | null;
+    chatId?: string | null;
     limit?: number;
   },
 ): Promise<{ traces: TraceSummary[]; root: string }> {
   return mutation(transport, "trace.list", {
     filter: options?.filter ?? "all",
     session_key: options?.sessionKey ?? null,
+    chat_id: options?.chatId ?? null,
     limit: options?.limit ?? 50,
   });
 }

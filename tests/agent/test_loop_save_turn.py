@@ -11,6 +11,10 @@ from pawbot.agent.context import ContextBuilder
 from pawbot.agent.loop import AgentLoop
 from pawbot.agent.runner import AgentRunResult
 from pawbot.agent.tools.context import RequestContext, request_context
+from pawbot.agent.tools.execution import (
+    TOOL_EXECUTION_METADATA_KEY,
+    operation_id_for_tool_call,
+)
 from pawbot.bus.events import InboundMessage
 from pawbot.bus.outbound_events import (
     GoalStatusEvent,
@@ -738,6 +742,51 @@ def test_restore_runtime_checkpoint_rehydrates_completed_and_pending_tools() -> 
     assert session.messages[2]["tool_call_id"] == "call_pending"
     assert "interrupted before this tool finished" in session.messages[2]["content"].lower()
     assert session.provider_state is None
+
+
+def test_restore_runtime_checkpoint_preserves_interrupted_operation_identity() -> None:
+    operation = {
+        "call_id": "call-pending",
+        "name": "exec",
+        "operation_id": operation_id_for_tool_call(
+            "test:operation-identity",
+            "exec",
+            {},
+        ),
+        "side_effect_class": "unknown",
+        "idempotency": "unknown",
+        "recovery_strategy": "manual_confirmation",
+    }
+    session = Session(
+        key="test:operation-identity",
+        metadata={
+            RUNTIME_CHECKPOINT_KEY: {
+                "phase": "awaiting_tools",
+                "assistant_message": {
+                    "role": "assistant",
+                    "content": "working",
+                    "tool_calls": [{
+                        "id": "call-pending",
+                        "type": "function",
+                        "function": {"name": "exec", "arguments": "{}"},
+                    }],
+                },
+                "completed_tool_results": [],
+                "pending_tool_calls": [{
+                    "id": "call-pending",
+                    "type": "function",
+                    "function": {"name": "exec", "arguments": "{}"},
+                    TOOL_EXECUTION_METADATA_KEY: operation,
+                }],
+            }
+        },
+    )
+
+    assert restore_runtime_checkpoint(session) is True
+    restored = session.messages[-1]
+    assert restored["operation_id"] == operation["operation_id"]
+    assert restored[TOOL_EXECUTION_METADATA_KEY] == operation
+    assert restored["_recovery_interrupted"] is True
 
 
 def test_restore_final_response_checkpoint_preserves_matching_provider_state() -> None:

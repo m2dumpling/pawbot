@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ class AgentHookContext:
     error: str | None = None
     session_key: str | None = None
     budget: dict[str, Any] | None = None
+    task_evaluation: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -56,6 +58,7 @@ class AgentRunHookContext:
     had_injections: bool = False
     exception: BaseException | None = None
     budget: dict[str, Any] | None = None
+    task_evaluation: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -137,6 +140,16 @@ class AgentHook:
         reason: str,
     ) -> None:
         """Observe an operation blocked by the turn budget."""
+        pass
+
+    async def on_task_verification(
+        self,
+        context: AgentRunHookContext,
+        evaluation: dict[str, Any],
+        *,
+        attempt: int,
+    ) -> None:
+        """Observe a task-level completion check after a final answer candidate."""
         pass
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
@@ -297,6 +310,20 @@ class CompositeHook(AgentHook):
     ) -> None:
         await self._for_each_hook_safe("on_budget_exhausted", context, reason)
 
+    async def on_task_verification(
+        self,
+        context: AgentRunHookContext,
+        evaluation: dict[str, Any],
+        *,
+        attempt: int,
+    ) -> None:
+        await self._for_each_hook_safe(
+            "on_task_verification",
+            context,
+            evaluation,
+            attempt=attempt,
+        )
+
     async def before_execute_tools(self, context: AgentHookContext) -> None:
         await self._for_each_hook_safe("before_execute_tools", context)
 
@@ -414,6 +441,7 @@ class SDKCaptureHook(AgentHook):
         self.tool_states: list[dict[str, Any]] = []
         self.had_injections: bool = False
         self.budget: dict[str, Any] | None = None
+        self.task_evaluation: dict[str, Any] | None = None
 
     async def after_iteration(self, context: AgentHookContext) -> None:
         for call in context.tool_calls:
@@ -435,3 +463,4 @@ class SDKCaptureHook(AgentHook):
         self.tool_states = list(context.tool_states)
         self.had_injections = context.had_injections
         self.budget = context.budget
+        self.task_evaluation = deepcopy(context.task_evaluation) if context.task_evaluation else None

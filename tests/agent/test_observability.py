@@ -96,6 +96,41 @@ async def test_trace_records_lifecycle_without_raw_payloads(tmp_path: Path) -> N
     assert summary["provider_error_count"] == 0
 
 
+@pytest.mark.asyncio
+async def test_trace_records_task_verification_as_a_separate_outcome(tmp_path: Path) -> None:
+    store = TraceStore(tmp_path / "traces")
+    trace = store.start_turn(
+        session_key="cli:verification",
+        turn_id="turn-verification",
+        channel="cli",
+        chat_id="direct",
+    )
+    assert trace is not None
+    hook = trace.hook(initial_messages=[{"role": "user", "content": "finish"}], tools_count=0)
+
+    evaluation = {
+        "status": "failed",
+        "completed": False,
+        "reason": "task assertions failed",
+        "failures": ["required file is missing: result.txt"],
+    }
+    await hook.on_task_verification(
+        AgentRunHookContext(messages=[], task_evaluation=evaluation),
+        evaluation,
+        attempt=1,
+    )
+    trace.finish(status="completed", stop_reason="task_verification_failed")
+
+    summary, events = store.detail("cli_verification/turn-verification.jsonl")
+    verification = next(event for event in events if event["event"] == "task.verification")
+    assert verification["status"] == "failed"
+    assert verification["verification_status"] == "failed"
+    assert verification["verification_attempt"] == 1
+    assert verification["verification_failures"] == ["required file is missing: result.txt"]
+    assert summary["verification_status"] == "failed"
+    assert summary["verification_completed"] is False
+
+
 def test_recording_trace_uses_recording_directory(tmp_path: Path) -> None:
     recording = tmp_path / "blackbox" / "sample"
     store = TraceStore(tmp_path / "traces")
@@ -313,6 +348,24 @@ def test_trace_store_filters_and_deletes_session_traces(tmp_path: Path) -> None:
     remaining = store.list_summaries()
     assert len(remaining) == 1
     assert remaining[0]["session_key"] == "cli:healthy"
+
+
+def test_trace_store_can_filter_unified_sessions_by_chat_id(tmp_path: Path) -> None:
+    store = TraceStore(tmp_path / "traces", retention_days=0)
+    for chat_id in ("chat-a", "chat-b"):
+        trace = store.start_turn(
+            session_key="unified:default",
+            turn_id=f"turn-{chat_id}",
+            channel="websocket",
+            chat_id=chat_id,
+        )
+        assert trace is not None
+        trace.finish(status="completed", stop_reason="completed")
+
+    rows = store.list_summaries(session_key="unified:default", chat_id="chat-b")
+
+    assert len(rows) == 1
+    assert rows[0]["chat_id"] == "chat-b"
 
 
 def test_reopened_store_marks_crashed_trace_incomplete(tmp_path: Path) -> None:

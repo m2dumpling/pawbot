@@ -13,10 +13,14 @@ composition layer wires the rest of the WebUI surface) and an optional
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
+
+from pawbot.webui.session_list_index import list_webui_sessions
+from pawbot.webui.sidebar_state import read_webui_sidebar_state
 
 
 class BlackboxActionError(Exception):
@@ -25,6 +29,103 @@ class BlackboxActionError(Exception):
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
         self.status = status
+
+
+def _compact_session_label(value: Any) -> str:
+    """Return the same compact, human-readable label used by the WebUI list."""
+    if not isinstance(value, str):
+        return ""
+    label = re.sub(r"\s+", " ", value).strip()
+    if not label or label.startswith("/"):
+        return ""
+    return label[:60].rstrip() + ("…" if len(label) > 60 else "")
+
+
+def _session_display_names(agent: Any) -> dict[str, str]:
+    """Build session-key-to-title mappings for trace and replay surfaces."""
+    sessions = getattr(agent, "sessions", None)
+    list_sessions = getattr(sessions, "list_sessions", None)
+    if not callable(list_sessions):
+        return {}
+    rows: list[Any] = []
+    # Keep the two indexes independent. A malformed legacy session should not
+    # erase the titles that can still be read from the WebUI index.
+    try:
+        raw_sessions = list_sessions()
+        if isinstance(raw_sessions, list):
+            rows.extend(cast(list[Any], raw_sessions))
+    except Exception:
+        pass
+    try:
+        raw_webui_sessions = list_webui_sessions(cast(Any, sessions))
+        rows.extend(cast(list[Any], raw_webui_sessions))
+    except Exception:
+        pass
+
+    names: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_mapping = cast(dict[str, Any], row)
+        key = row_mapping.get("key")
+        if not isinstance(key, str) or not key:
+            continue
+        title = _compact_session_label(row_mapping.get("title"))
+        preview = _compact_session_label(row_mapping.get("preview"))
+        if title or preview:
+            names[key] = title or preview
+    try:
+        sidebar_state = read_webui_sidebar_state()
+    except Exception:
+        sidebar_state = {}
+    overrides = sidebar_state.get("title_overrides")
+    if isinstance(overrides, dict):
+        for raw_key, raw_title in cast(dict[Any, Any], overrides).items():
+            key = raw_key if isinstance(raw_key, str) else ""
+            title = _compact_session_label(raw_title)
+            if key and title:
+                names[key] = title
+
+    # Unified-session mode records the technical key ``unified:default`` while
+    # the WebUI title belongs to the last concrete WebSocket route. Project the
+    # title back to the unified key so the inspection surface remains readable.
+    read_metadata = getattr(sessions, "read_session_metadata", None)
+    if callable(read_metadata):
+        for row in rows:
+            row_mapping = cast(dict[str, Any], row) if isinstance(row, dict) else {}
+            key = row_mapping.get("key")
+            if not isinstance(key, str) or key in names:
+                continue
+            try:
+                metadata = read_metadata(key)
+            except Exception:
+                continue
+            if isinstance(metadata, dict):
+                route = cast(dict[str, Any], metadata).get("last_channel")
+                if isinstance(route, str) and route in names:
+                    names[key] = names[route]
+    return names
+
+
+def _session_display_name(agent: Any, session_key: Any) -> str | None:
+    if not isinstance(session_key, str) or not session_key:
+        return None
+    return _session_display_names(agent).get(session_key)
+
+
+def _attach_session_name(agent: Any, row: dict[str, Any], names: dict[str, str] | None = None) -> dict[str, Any]:
+    """Add a display title without replacing the stable technical session key."""
+    session_key = row.get("session_key")
+    name_mapping = names if names is not None else _session_display_names(agent)
+    name = name_mapping.get(session_key) if isinstance(session_key, str) else None
+    if not name:
+        channel = row.get("channel")
+        chat_id = row.get("chat_id")
+        route = f"{channel}:{chat_id}" if isinstance(channel, str) and isinstance(chat_id, str) else ""
+        name = name_mapping.get(route) if route else None
+    if name:
+        row = {**row, "session_name": name}
+    return row
 
 
 def _json_safe(value: Any) -> Any:
@@ -137,6 +238,23 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
     }
 
 
+def _recording_session_names(directory: Path, names: dict[str, str]) -> list[str]:
+    """Return unique WebUI titles referenced by a detailed recording."""
+    try:
+        records = _read_jsonl(directory / "turns.jsonl")
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for record in records:
+        key = record.get("session_key")
+        title = names.get(key) if isinstance(key, str) else None
+        if title and title not in seen:
+            seen.add(title)
+            result.append(title)
+    return result
+
+
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     """Read JSONL records for the authenticated local inspection surface."""
     if not path.exists():
@@ -211,7 +329,12 @@ def _original_execution_status(
         return "execution_error"
     if unknown_side_effects:
         return "unknown_side_effect"
-    if str(turn.get("stop_reason") or "").lower() in {"completed", "stop"}:
+    if str(turn.get("stop_reason") or "").lower() in {
+        "completed",
+        "stop",
+        "task_verification_failed",
+        "task_verification_not_evaluable",
+    }:
         return "success"
     return "unknown"
 
@@ -258,13 +381,24 @@ def _turn_diagnostics(turn: dict[str, Any], events: list[dict[str, Any]]) -> dic
         provider_errors=provider_errors,
         unknown_side_effects=unknown_side_effects,
     )
-    original_execution = {
+    task_evaluation_value = turn.get("task_evaluation")
+    task_evaluation = (
+        cast(dict[str, Any], task_evaluation_value)
+        if isinstance(task_evaluation_value, dict)
+        else None
+    )
+    original_execution: dict[str, Any] = {
         "status": original_status,
         "ok": original_status == "success",
         "failed_tool_count": len(failed_tools),
         "provider_error_count": len(provider_errors),
         "unknown_side_effect_count": len(unknown_side_effects),
     }
+    if task_evaluation is not None:
+        original_execution.update({
+            "task_status": task_evaluation.get("status"),
+            "task_completed": task_evaluation.get("completed"),
+        })
     return {
         "stop_reason": turn.get("stop_reason") or "unknown",
         "failed_tools": failed_tools,
@@ -272,6 +406,7 @@ def _turn_diagnostics(turn: dict[str, Any], events: list[dict[str, Any]]) -> dic
         "unknown_side_effects": unknown_side_effects,
         "provider_tool_events": _json_safe(provider_tool_events),
         "original_execution": original_execution,
+        "task_evaluation": task_evaluation,
         "budget": turn.get("budget"),
         "message": (
             "本轮正常结束"
@@ -325,10 +460,12 @@ async def _detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
             int(record.get("response_index", record.get("invocation_index", 0)) or 0),
         )
     )
+    session_name = _session_display_name(agent, turn.get("session_key"))
     cassette = _cassette_name(turn_id)
     return {
         "directory": str(directory),
         "turn_id": turn_id,
+        "session_name": session_name,
         "turn": _json_safe(turn),
         "events": _json_safe(events),
         "trace_events": _json_safe(trace_events),
@@ -408,14 +545,17 @@ async def _stop(agent: Any) -> dict[str, Any]:
 async def _list(agent: Any) -> dict[str, Any]:
     root = _blackbox_root(agent)
     recordings: list[dict[str, Any]] = []
+    names = _session_display_names(agent)
     if root.exists():
         for entry in sorted(root.iterdir()):
             if not entry.is_dir():
                 continue
             summary = _recording_summary(entry)
+            session_names = _recording_session_names(entry, names)
             recordings.append({
                 "directory": str(entry),
                 "name": entry.name,
+                "session_names": session_names,
                 **summary,
             })
     return {"recordings": recordings, "root": str(root)}
@@ -436,15 +576,19 @@ async def _trace_list(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
     session_key = payload.get("session_key")
     if not isinstance(session_key, str) or not session_key:
         session_key = None
+    chat_id = payload.get("chat_id")
+    if not isinstance(chat_id, str) or not chat_id:
+        chat_id = None
+    summaries = store.list_summaries(
+        limit=limit,
+        session_key=session_key,
+        chat_id=chat_id,
+        issues_only=payload.get("filter") == "issues",
+        slow_only=payload.get("filter") == "slow",
+    )
+    names = _session_display_names(agent)
     return {
-        "traces": _json_safe(
-            store.list_summaries(
-                limit=limit,
-                session_key=session_key,
-                issues_only=payload.get("filter") == "issues",
-                slow_only=payload.get("filter") == "slow",
-            )
-        ),
+        "traces": _json_safe([_attach_session_name(agent, row, names) for row in summaries]),
         "root": str(store.root),
     }
 
@@ -460,7 +604,10 @@ async def _trace_detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
         raise BlackboxActionError(404, "执行追踪不存在") from exc
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         raise BlackboxActionError(422, f"无法读取执行追踪：{exc}") from exc
-    return {"summary": _json_safe(summary), "events": _json_safe(events)}
+    return {
+        "summary": _json_safe(_attach_session_name(agent, summary)),
+        "events": _json_safe(events),
+    }
 
 
 async def _delete(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -554,9 +701,11 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
                 benchmark_by_id[benchmark_mapping["turn_id"]] = benchmark_mapping
 
     rows: list[dict[str, Any]] = []
+    session_names = _session_display_names(agent)
     for turn_id, ok, diffs in results:
+        turn_record = turns_by_id.get(turn_id, {"turn_id": turn_id})
         diagnostics = _turn_diagnostics(
-            turns_by_id.get(turn_id, {"turn_id": turn_id}),
+            turn_record,
             events_by_id.get(turn_id, []),
         )
         replay_detail = replay_detail_by_id.get(turn_id, {})
@@ -569,8 +718,19 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
             trace_diffs = []
         if not isinstance(trace_comparable, bool):
             trace_comparable = False
+        replay_task = {
+            "status": replay_detail.get("task_status"),
+            "completed": replay_detail.get("task_completed"),
+        }
+        turn_session_key = turn_record.get("session_key")
+        turn_session_name = (
+            session_names.get(turn_session_key)
+            if isinstance(turn_session_key, str)
+            else None
+        )
         rows.append({
             "turn_id": turn_id,
+            "session_name": turn_session_name,
             "ok": ok,
             "diffs": _json_safe(diffs),
             "message_diffs": _json_safe(message_diffs),
@@ -583,6 +743,8 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
                 else f"当前执行与原样本有 {len(diffs)} 处差异"
             ),
             "original_execution": _json_safe(diagnostics["original_execution"]),
+            "original_task": _json_safe(diagnostics.get("task_evaluation")),
+            "replay_task": _json_safe(replay_task),
         })
     total = len(rows)
     deterministic = sum(1 for row in rows if row["ok"])
@@ -602,6 +764,18 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
     original_unknown_side_effects = sum(
         int(row["original_execution"].get("unknown_side_effect_count") or 0)
         for row in rows
+    )
+    original_task_failures = sum(
+        1
+        for row in rows
+        if isinstance(row.get("original_task"), dict)
+        and row["original_task"].get("status") == "failed"
+    )
+    replay_task_failures = sum(
+        1
+        for row in rows
+        if isinstance(row.get("replay_task"), dict)
+        and row["replay_task"].get("status") == "failed"
     )
     trace_comparable_turns = sum(1 for row in rows if row["trace_comparable"])
     trace_diff_turns = sum(1 for row in rows if row["trace_diffs"])
@@ -630,12 +804,15 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
         "original_failed_tool_calls": original_failed_tool_calls,
         "original_provider_errors": original_provider_errors,
         "original_unknown_side_effects": original_unknown_side_effects,
+        "original_task_failures": original_task_failures,
+        "replay_task_failures": replay_task_failures,
         "trace_comparable_turns": trace_comparable_turns,
         "trace_diff_turns": trace_diff_turns,
         "benchmark": _json_safe(benchmark_summary),
         "summary": (
             f"{deterministic}/{total} 个回合回放一致；"
-            f"{original_issue_turns} 个回合原始执行包含问题"
+            f"{original_issue_turns} 个回合原始执行包含问题；"
+            f"{original_task_failures} 个回合任务验收未通过"
             if total
             else "没有可以检查的回合"
         ),
