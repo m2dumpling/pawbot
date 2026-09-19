@@ -391,6 +391,7 @@ class TurnStagesMixin:
         ctx.final_content = result.final_content
         ctx.all_messages = result.messages
         ctx.stop_reason = result.stop_reason
+        ctx.outcome = result.outcome
         ctx.task_evaluation = (
             result.task_evaluation.to_dict()
             if result.task_evaluation is not None
@@ -431,6 +432,8 @@ class TurnStagesMixin:
         ctx.turn_latency_ms = max(0, int((time.time() - latency_started_at) * 1000))
         if ctx.usage is not None and not ctx.ephemeral:
             session.metadata["_last_usage"] = ctx.usage.to_dict()
+        if ctx.outcome is not None:
+            session.metadata["_last_turn_outcome"] = ctx.outcome.to_dict()
         self._save_turn(
             session, ctx.all_messages, ctx.save_skip,
             turn_latency_ms=ctx.turn_latency_ms,
@@ -477,6 +480,8 @@ class TurnStagesMixin:
         )
         if ctx.outbound is not None and ctx.task_evaluation is not None:
             ctx.outbound.metadata["task_evaluation"] = dict(ctx.task_evaluation)
+        if ctx.outbound is not None and ctx.outcome is not None:
+            ctx.outbound.metadata["turn_outcome"] = ctx.outcome.to_dict()
         if ctx.ephemeral and ctx.outbound is not None:
             ctx.outbound.metadata["_stop_reason"] = ctx.stop_reason
 

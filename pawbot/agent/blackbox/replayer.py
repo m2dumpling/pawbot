@@ -321,7 +321,12 @@ class ReplayController:
     mode = "replay"
 
     def __init__(self, directory: str, break_at: int | None = None) -> None:
+        from pawbot.agent.blackbox.manifest import validate_recording_manifest
+
         self.directory = Path(directory)
+        sample_health = validate_recording_manifest(self.directory)
+        if sample_health not in {"ready", "legacy_unverified"}:
+            raise ValueError(f"recording sample is not replayable: {sample_health}")
         self.break_at = break_at
         self.turns = self._load_turns()
         if not self.turns:

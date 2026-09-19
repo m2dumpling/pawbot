@@ -146,19 +146,19 @@ v0.4.2 开始，`pawbot update` 会把升级交给辅助进程，等当前启动
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.1/scripts/install.sh | sh
 ```
 
 如果系统没有 `curl`，也可以使用 `wget`：
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.0/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.1/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.0/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.1/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
@@ -394,6 +394,21 @@ WebUI 使用“工作区访问”时，写入、执行和网络 Tool 会在真�
 `/model <model-id>` 会把已探查或手动输入的模型固定到当前会话，`/model default` 恢复
 配置中的默认模型；这个会话选择不会改写全局配置。
 
+#### Provider 兼容性说明
+
+当前仓库对 **DeepSeek** 这条路径做了最充分的验证：V4 模型能力表、1M 上下文元数据、
+思考档位、Tool Call 历史补全、流式 Tool Call 拼接、重试/错误元数据，以及对应的本地
+Provider 契约测试都放在同一条测试链路中。其他 Provider 使用统一适配层，可能可以正常
+工作，但不同接口或中转站在模型列表、reasoning 字段、流式事件、Tool Call 格式、会话请求头
+和错误语义上可能存在差异，不能默认拥有与 DeepSeek 相同的验证覆盖。使用其他 Provider 时，
+请针对自己的 endpoint 做实际验证；如果遇到协议差异，可以补充对应的适配测试，或等待后续
+版本继续优化。
+
+自托管进程需要限制压力时，可以选择配置以下进程级护栏：
+`PAWBOT_MAX_CONCURRENT_REQUESTS`、`PAWBOT_MAX_CONCURRENT_PER_SENDER`、
+`PAWBOT_PROVIDER_MAX_INFLIGHT` 和 `PAWBOT_PROVIDER_RPM`。也可以使用 Provider 专属变量，
+例如 `PAWBOT_DEEPSEEK_RPM`，它会覆盖通用值。这些限制只在当前进程内生效，不是分布式限流服务。
+
 ## 通道与集成
 
 pawbot 支持 WebUI、终端、OpenAI 兼容 API、Python SDK、WebSocket 通道和聊天
@@ -430,7 +445,7 @@ Provider + ToolRegistry + MCP
 - [文档索引](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
 - [Agent Harness Benchmark](docs/agent-harness.md)
-- [发布说明](docs/release-notes/0.5.0.md)
+- [发布说明](docs/release-notes/0.5.1.md)
 - [发布与 PyPI 指南](docs/publishing.md)
 - [变更记录](CHANGELOG.md)
 - [贡献指南](CONTRIBUTING.md)

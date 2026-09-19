@@ -129,6 +129,7 @@ async def test_trace_records_task_verification_as_a_separate_outcome(tmp_path: P
     assert verification["verification_failures"] == ["required file is missing: result.txt"]
     assert summary["verification_status"] == "failed"
     assert summary["verification_completed"] is False
+    assert summary["outcome"] is None
 
 
 def test_recording_trace_uses_recording_directory(tmp_path: Path) -> None:
@@ -386,6 +387,7 @@ def test_reopened_store_marks_crashed_trace_incomplete(tmp_path: Path) -> None:
     _, events = reopened.detail("cli_crashed/turn-crashed.jsonl")
     assert events[-1]["event"] == "turn.incomplete"
     assert events[-1]["error"]["code"] == "INCOMPLETE_TRACE"
+    assert events[-1]["outcome"]["execution_status"] == "incomplete"
 
 
 def test_trace_inspection_does_not_close_a_live_foreign_process(

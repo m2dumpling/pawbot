@@ -142,6 +142,18 @@ def _json_safe(value: Any) -> Any:
 
 def _recording_summary(directory: Path) -> dict[str, Any]:
     """Return a user-facing summary without trusting directory shape alone."""
+    from pawbot.agent.blackbox.manifest import recording_health
+
+    health = recording_health(directory)
+    sample_health = str(health["sample_health"])
+    if sample_health in {"recording", "incomplete", "corrupted"}:
+        return {
+            "status": "invalid",
+            "sample_health": sample_health,
+            "reason": sample_health,
+            "message": "样本尚未完整保存，当前只能查看诊断，不能离线验证",
+            "turns": 0,
+        }
     turns_path = directory / "turns.jsonl"
     if not turns_path.exists():
         return {
@@ -149,6 +161,7 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
             "reason": "missing_turn_file",
             "message": "找不到录制文件，无法检查",
             "turns": 0,
+            "sample_health": sample_health,
         }
 
     valid_turns = 0
@@ -214,6 +227,7 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
             "reason": "unreadable",
             "message": "录制文件无法读取",
             "turns": 0,
+            "sample_health": sample_health,
         }
 
     if malformed_lines:
@@ -222,6 +236,7 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
             "reason": "malformed",
             "message": "录制文件格式有问题，无法检查",
             "turns": valid_turns,
+            "sample_health": sample_health,
         }
     if valid_turns == 0:
         return {
@@ -229,12 +244,14 @@ def _recording_summary(directory: Path) -> dict[str, Any]:
             "reason": "no_valid_turns",
             "message": "没有找到有效的任务记录，无法检查",
             "turns": 0,
+            "sample_health": sample_health,
         }
     return {
         "status": "ready",
         "message": "记录完整",
         "turns": valid_turns,
         "trace_events": trace_events,
+        "sample_health": sample_health,
     }
 
 
@@ -339,6 +356,56 @@ def _original_execution_status(
     return "unknown"
 
 
+def _original_turn_outcome(
+    turn: dict[str, Any],
+    *,
+    original_status: str,
+    task_evaluation: dict[str, Any] | None,
+    unknown_side_effects: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Prefer stored Outcome while keeping old recordings readable."""
+    from pawbot.agent.turn.outcome import TurnOutcome
+
+    stored = turn.get("outcome")
+    if isinstance(stored, dict):
+        return TurnOutcome.from_dict(stored).to_dict()
+    stop_reason = str(turn.get("stop_reason") or "") or None
+    if original_status == "success":
+        execution_status = "completed"
+    elif original_status == "cancelled":
+        execution_status = "cancelled"
+    elif stop_reason in {
+        "max_iterations",
+        "max_tool_calls",
+        "max_wall_time",
+        "max_input_tokens",
+        "max_output_tokens",
+        "max_cost_usd",
+    }:
+        execution_status = "limited"
+    elif original_status == "unknown_side_effect":
+        execution_status = "incomplete"
+    else:
+        execution_status = "failed"
+    raw_task_status = task_evaluation.get("status") if task_evaluation is not None else None
+    task_status = (
+        raw_task_status
+        if raw_task_status in {"passed", "failed", "not_evaluable"}
+        else "not_requested"
+    )
+    side_effect_status = "unknown" if unknown_side_effects else "not_applicable"
+    recovery_status = "awaiting_confirmation" if unknown_side_effects else (
+        "not_needed" if execution_status == "completed" else "resumable"
+    )
+    return TurnOutcome(
+        execution_status=cast(Any, execution_status),
+        stop_reason=stop_reason,
+        task_status=cast(Any, task_status),
+        side_effect_status=cast(Any, side_effect_status),
+        recovery_status=cast(Any, recovery_status),
+    ).to_dict()
+
+
 def _turn_diagnostics(turn: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a compact explanation layer above the raw replay rails."""
     tool_events = [event for event in events if event.get("kind") == "tool"]
@@ -399,6 +466,12 @@ def _turn_diagnostics(turn: dict[str, Any], events: list[dict[str, Any]]) -> dic
             "task_status": task_evaluation.get("status"),
             "task_completed": task_evaluation.get("completed"),
         })
+    original_outcome = _original_turn_outcome(
+        turn,
+        original_status=original_status,
+        task_evaluation=task_evaluation,
+        unknown_side_effects=unknown_side_effects,
+    )
     return {
         "stop_reason": turn.get("stop_reason") or "unknown",
         "failed_tools": failed_tools,
@@ -406,6 +479,7 @@ def _turn_diagnostics(turn: dict[str, Any], events: list[dict[str, Any]]) -> dic
         "unknown_side_effects": unknown_side_effects,
         "provider_tool_events": _json_safe(provider_tool_events),
         "original_execution": original_execution,
+        "original_outcome": original_outcome,
         "task_evaluation": task_evaluation,
         "budget": turn.get("budget"),
         "message": (
@@ -538,6 +612,12 @@ async def _stop(agent: Any) -> dict[str, Any]:
     if callable(stop_recording):
         stop_recording()
     else:
+        active = getattr(agent, "blackbox", None)
+        directory = getattr(active, "directory", None)
+        if isinstance(directory, Path):
+            from pawbot.agent.blackbox import finalize_recording_manifest
+
+            finalize_recording_manifest(directory)
         agent.blackbox = None
     return {"recording": False}
 
@@ -629,12 +709,20 @@ async def _delete(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    from pawbot.agent.blackbox import ReplayBreakpoint, ReplayController
+    from pawbot.agent.blackbox import (
+        ReplayBreakpoint,
+        ReplayController,
+        validate_recording_manifest,
+    )
 
     directory_name = str(payload.get("directory") or "")
     if not directory_name:
         raise BlackboxActionError(400, "directory is required for replay")
-    directory = str(_resolve_directory(agent, directory_name))
+    directory_path = _resolve_directory(agent, directory_name)
+    sample_health = validate_recording_manifest(directory_path)
+    if sample_health not in {"ready", "legacy_unverified"}:
+        raise BlackboxActionError(409, f"样本状态为 {sample_health}，请先停止并完整保存后再验证")
+    directory = str(directory_path)
     break_at = payload.get("break_at")
     if break_at is not None and not isinstance(break_at, int):
         raise BlackboxActionError(400, "break_at must be an integer")
@@ -722,6 +810,7 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
             "status": replay_detail.get("task_status"),
             "completed": replay_detail.get("task_completed"),
         }
+        replay_outcome = replay_detail.get("outcome")
         turn_session_key = turn_record.get("session_key")
         turn_session_name = (
             session_names.get(turn_session_key)
@@ -743,8 +832,10 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
                 else f"当前执行与原样本有 {len(diffs)} 处差异"
             ),
             "original_execution": _json_safe(diagnostics["original_execution"]),
+            "original_outcome": _json_safe(diagnostics["original_outcome"]),
             "original_task": _json_safe(diagnostics.get("task_evaluation")),
             "replay_task": _json_safe(replay_task),
+            "replay_outcome": _json_safe(replay_outcome),
         })
     total = len(rows)
     deterministic = sum(1 for row in rows if row["ok"])

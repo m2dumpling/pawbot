@@ -52,6 +52,7 @@ def _bwrap(
     *,
     sandbox_ro_binds: Iterable[str] | None = None,
     sandbox_rw_binds: Iterable[str] | None = None,
+    network_policy: str = "full",
 ) -> str:
     """Wrap command in a bubblewrap sandbox (requires bwrap in container).
 
@@ -82,6 +83,8 @@ def _bwrap(
     ]
 
     args = ["bwrap", "--new-session", "--die-with-parent", "--setenv", "HOME", str(ws)]
+    if network_policy == "deny":
+        args.append("--unshare-net")
     for p in required:
         args += ["--ro-bind", p, p]
     for p in optional:
@@ -112,6 +115,7 @@ def wrap_command(
     *,
     sandbox_ro_binds: Iterable[str] | None = None,
     sandbox_rw_binds: Iterable[str] | None = None,
+    network_policy: str = "full",
 ) -> str:
     """Wrap *command* using the named sandbox backend."""
     if backend := _BACKENDS.get(sandbox):
@@ -121,5 +125,6 @@ def wrap_command(
             cwd,
             sandbox_ro_binds=sandbox_ro_binds,
             sandbox_rw_binds=sandbox_rw_binds,
+            network_policy=network_policy,
         )
     raise ValueError(f"Unknown sandbox backend {sandbox!r}. Available: {list(_BACKENDS)}")

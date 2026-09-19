@@ -823,6 +823,11 @@ def test_exec_config_accepts_bwrap_bind_aliases() -> None:
     assert dumped["sandboxRwBinds"] == ["/home/user/.cache/uv"]
 
 
+def test_exec_config_network_deny_requires_bwrap() -> None:
+    with pytest.raises(ValidationError, match="requires tools.exec.sandbox='bwrap'"):
+        ExecToolConfig(network_policy="deny")
+
+
 def test_resolve_timeout_config_uncapped_and_unlimited() -> None:
     """Config timeout drives the hard timeout uncapped; 0 means no limit (#3595)."""
     assert ExecTool(timeout=3600)._resolve_timeout(None) == 3600

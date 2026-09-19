@@ -1147,6 +1147,19 @@ export interface BlackboxRecording {
   status: "ready" | "invalid";
   message: string;
   reason?: "missing_turn_file" | "unreadable" | "malformed" | "no_valid_turns" | string;
+  sample_health?: "ready" | "recording" | "incomplete" | "corrupted" | "legacy_unverified" | string;
+}
+
+export interface TurnOutcome {
+  schema_version?: number;
+  execution_status: "completed" | "failed" | "cancelled" | "limited" | "incomplete" | string;
+  stop_reason?: string | null;
+  task_status: "passed" | "failed" | "not_evaluable" | "not_requested" | string;
+  side_effect_status: "not_applicable" | "confirmed" | "unknown" | string;
+  recovery_status: "not_needed" | "resumable" | "awaiting_confirmation" | "recovered" | string;
+  replay_status: "not_run" | "consistent" | "divergent" | "unavailable" | string;
+  error_code?: string | null;
+  error_message?: string | null;
 }
 
 export interface BlackboxReplayResult {
@@ -1183,6 +1196,8 @@ export interface BlackboxReplayResult {
     };
     original_task?: { status?: string | null; completed?: boolean | null } | null;
     replay_task?: { status?: string | null; completed?: boolean | null } | null;
+    original_outcome?: TurnOutcome | null;
+    replay_outcome?: TurnOutcome | null;
   }>;
 }
 

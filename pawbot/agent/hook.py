@@ -41,6 +41,7 @@ class AgentHookContext:
     session_key: str | None = None
     budget: dict[str, Any] | None = None
     task_evaluation: dict[str, Any] | None = None
+    outcome: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -59,6 +60,7 @@ class AgentRunHookContext:
     exception: BaseException | None = None
     budget: dict[str, Any] | None = None
     task_evaluation: dict[str, Any] | None = None
+    outcome: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -442,6 +444,7 @@ class SDKCaptureHook(AgentHook):
         self.had_injections: bool = False
         self.budget: dict[str, Any] | None = None
         self.task_evaluation: dict[str, Any] | None = None
+        self.outcome: dict[str, Any] | None = None
 
     async def after_iteration(self, context: AgentHookContext) -> None:
         for call in context.tool_calls:
@@ -464,3 +467,4 @@ class SDKCaptureHook(AgentHook):
         self.had_injections = context.had_injections
         self.budget = context.budget
         self.task_evaluation = deepcopy(context.task_evaluation) if context.task_evaluation else None
+        self.outcome = deepcopy(context.outcome) if context.outcome else None

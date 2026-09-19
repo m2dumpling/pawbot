@@ -29,6 +29,7 @@ from pawbot.agent.evaluation import TaskContract, TaskEvaluationStatus, evaluate
 from pawbot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
 from pawbot.agent.tools.base import Tool, ToolResult
 from pawbot.agent.tools.registry import ToolRegistry
+from pawbot.agent.turn.outcome import TurnOutcome
 from pawbot.providers.base import (
     GenerationSettings,
     LLMProvider,
@@ -269,6 +270,7 @@ class HarnessResult:
     task_failures: tuple[str, ...] = ()
     task_reason: str | None = None
     failures: tuple[str, ...] = ()
+    outcome: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -287,6 +289,7 @@ class HarnessResult:
                 "failures": list(self.task_failures),
             },
             "execution_status": self.execution_status,
+            "outcome": self.outcome,
             "elapsed_ms": self.elapsed_ms,
             "model_requests": self.model_requests,
             "tool_attempts": self.tool_attempts,
@@ -976,6 +979,24 @@ async def run_case(case: HarnessCase) -> HarnessResult:
     elif not case.expectation.task_completed and task_evaluation.completed:
         task_failures.append("task completed when the scenario expected a boundary")
     failures = [*trajectory_failures, *task_failures]
+    if run_result is not None and run_result.outcome is not None:
+        outcome = run_result.outcome.to_dict()
+    else:
+        outcome = TurnOutcome(
+            execution_status=(
+                "cancelled" if execution_status == "cancelled" else "failed"
+            ),
+            stop_reason=stop_reason,
+            task_status=(
+                task_evaluation.status
+                if task_evaluation.status in {"passed", "failed", "not_evaluable"}
+                else "not_evaluable"
+            ),
+            side_effect_status="unknown" if execution_status == "cancelled" else "not_applicable",
+            recovery_status="resumable",
+            error_code="TURN_CANCELLED" if execution_status == "cancelled" else "AGENT_RUN_ERROR",
+            error_message=error,
+        ).to_dict()
     tool_failures = sum(status != "ok" for status in tool_statuses)
     trajectory_status: HarnessResultStatus = (
         "passed" if not trajectory_failures else "failed"
@@ -1003,6 +1024,7 @@ async def run_case(case: HarnessCase) -> HarnessResult:
         task_failures=tuple(task_failures),
         task_reason=task_evaluation.reason,
         failures=tuple(failures),
+        outcome=outcome,
     )
 
 

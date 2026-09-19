@@ -47,6 +47,7 @@ from pawbot.agent.tools.file_state import FileStateStore, bind_file_states, rese
 from pawbot.agent.tools.registry import ToolRegistry
 from pawbot.agent.tools.runtime_control import AgentRuntimeControl
 from pawbot.agent.turn.context import TurnContext, TurnKind
+from pawbot.agent.turn.outcome import TurnOutcome
 from pawbot.agent.turn.stages import TurnStagesMixin
 from pawbot.agent.turn_delivery import (
     TurnDelivery,
@@ -415,6 +416,19 @@ class AgentLoop(TurnStagesMixin):
         self._concurrency_gate: asyncio.Semaphore | None = (
             asyncio.Semaphore(_max) if _max > 0 else None
         )
+        # Session locks already serialize one conversation.  This optional
+        # second gate limits bursts from one source identity across sessions;
+        # it is process-local and disabled by default.
+        _per_sender = os.environ.get("PAWBOT_MAX_CONCURRENT_PER_SENDER", "0")
+        try:
+            self._max_concurrent_per_sender = max(0, int(_per_sender))
+        except ValueError:
+            logger.warning(
+                "Ignoring invalid PAWBOT_MAX_CONCURRENT_PER_SENDER={!r}",
+                _per_sender,
+            )
+            self._max_concurrent_per_sender = 0
+        self._sender_concurrency_gates: dict[str, asyncio.Semaphore] = {}
         self.consolidator = Consolidator(
             store=self.context.memory,
             sessions=self.sessions,
@@ -1189,6 +1203,29 @@ class AgentLoop(TurnStagesMixin):
             if session is None:
                 return
             public_payload = dict(payload)
+            pending_value = payload.get("pending_tool_calls")
+            completed_value = payload.get("completed_tool_results")
+            pending_tool_calls: list[Any] = (
+                cast(list[Any], pending_value) if isinstance(pending_value, list) else []
+            )
+            completed_tool_results: list[Any] = (
+                cast(list[Any], completed_value) if isinstance(completed_value, list) else []
+            )
+            has_uncertain_side_effect = any(
+                isinstance(row, dict)
+                and cast(dict[str, Any], row).get("_recovery_pending") is True
+                for row in completed_tool_results
+            )
+            checkpoint_outcome = TurnOutcome(
+                execution_status="incomplete",
+                stop_reason=f"checkpoint:{payload.get('phase') or 'unknown'}",
+                task_status="not_evaluable" if task_contract is not None else "not_requested",
+                side_effect_status="unknown" if has_uncertain_side_effect else "not_applicable",
+                recovery_status=(
+                    "awaiting_confirmation" if has_uncertain_side_effect else "resumable"
+                ),
+            )
+            public_payload["turn_outcome"] = checkpoint_outcome.to_dict()
             if task_contract is not None:
                 public_payload[TASK_CONTRACT_METADATA_KEY] = task_contract.to_dict()
             private_state = public_payload.pop("provider_state", None)
@@ -1208,8 +1245,8 @@ class AgentLoop(TurnStagesMixin):
                     status="completed",
                     phase=payload.get("phase"),
                     iteration=payload.get("iteration"),
-                    pending_tool_count=len(payload.get("pending_tool_calls") or []),
-                    completed_tool_count=len(payload.get("completed_tool_results") or []),
+                    pending_tool_count=len(pending_tool_calls),
+                    completed_tool_count=len(completed_tool_results),
                     provider_state_saved=private_state is not None,
                 )
 
@@ -1890,8 +1927,11 @@ class AgentLoop(TurnStagesMixin):
 
     def stop_detailed_recording(self) -> None:
         """Disable shared detailed recording while keeping existing samples."""
-        from pawbot.agent.blackbox import clear_recording_policy
+        from pawbot.agent.blackbox import clear_recording_policy, finalize_recording_manifest
 
+        active = self.blackbox
+        if active is not None:
+            finalize_recording_manifest(active.directory)
         clear_recording_policy(self.workspace)
         if self._blackbox_policy_active:
             self.blackbox = None
@@ -2061,6 +2101,7 @@ class AgentLoop(TurnStagesMixin):
             ctx.on_stream = _tracked_stream
             ctx.on_stream_end = _tracked_stream_end
 
+        sender_gate = await self._acquire_sender_gate(msg)
         try:
             await self._run_turn_stage(ctx, "restore", self._restore_turn)
             await self._run_turn_stage(ctx, "compact", self._compact_session)
@@ -2076,6 +2117,7 @@ class AgentLoop(TurnStagesMixin):
                 ctx.trace.finish(
                     status="cancelled",
                     stop_reason=ctx.stop_reason or "cancelled",
+                    outcome=ctx.outcome.to_dict() if ctx.outcome is not None else None,
                 )
             raise
         except Exception as exc:
@@ -2084,14 +2126,32 @@ class AgentLoop(TurnStagesMixin):
                     status="error",
                     stop_reason=ctx.stop_reason or "error",
                     error=exc,
+                    outcome=ctx.outcome.to_dict() if ctx.outcome is not None else None,
                 )
             raise
         finally:
+            if sender_gate is not None:
+                sender_gate.release()
             if ctx.trace is not None and not ctx.trace.closed:
                 ctx.trace.finish(
                     status="completed",
                     stop_reason=ctx.stop_reason or "completed",
+                    outcome=ctx.outcome.to_dict() if ctx.outcome is not None else None,
                 )
+
+    async def _acquire_sender_gate(self, msg: InboundMessage) -> asyncio.Semaphore | None:
+        """Acquire the optional process-local gate for one source identity."""
+        if self._max_concurrent_per_sender <= 0:
+            return None
+        metadata = msg.metadata
+        identity = metadata.get("user_id") or msg.sender_id or msg.chat_id
+        key = f"{msg.channel}:{identity}"
+        gate = self._sender_concurrency_gates.get(key)
+        if gate is None:
+            gate = asyncio.Semaphore(self._max_concurrent_per_sender)
+            self._sender_concurrency_gates[key] = gate
+        await gate.acquire()
+        return gate
 
     async def _run_turn_stage(
         self,
@@ -2563,6 +2623,11 @@ class AgentLoop(TurnStagesMixin):
                 "task_completed": (
                     result.task_evaluation.completed
                     if result.task_evaluation is not None
+                    else None
+                ),
+                "outcome": (
+                    result.outcome.with_replay("consistent" if ok else "divergent").to_dict()
+                    if result.outcome is not None
                     else None
                 ),
             })

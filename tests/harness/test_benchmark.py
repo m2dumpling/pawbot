@@ -27,6 +27,10 @@ async def test_builtin_benchmark_passes_all_failure_boundaries() -> None:
     assert by_id["investigate-and-summarize"].task_status == "passed"
     assert by_id["provider-error"].task_status == "not_evaluable"
     assert by_id["cancelled-turn"].task_status == "not_evaluable"
+    assert by_id["basic-tool-call"].outcome["task_status"] == "passed"
+    assert by_id["provider-error"].outcome["execution_status"] == "failed"
+    assert by_id["cancelled-turn"].outcome["execution_status"] == "cancelled"
+    assert by_id["turn-budget"].outcome["execution_status"] == "limited"
 
     metadata = report.to_dict()["metadata"]
     assert metadata["benchmark_version"] == "1.0"

@@ -157,19 +157,19 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.1/scripts/install.sh | sh
 ```
 
 If `curl` is not available, use `wget` instead:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.0/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.1/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.0/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.1/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a
@@ -437,6 +437,25 @@ or manually entered model to the current session; `/model default` returns to
 the configured default. The global configuration is not changed by a session
 pin.
 
+#### Provider compatibility note
+
+DeepSeek is the provider path with the deepest validation in this repository:
+the V4 model capability table, 1M-token context metadata, reasoning controls,
+tool-call history normalization, streaming tool-call accumulation, retry/error
+metadata, and the local provider contract tests are maintained together. Other
+providers use the shared adapter and may work well, but their model catalogue,
+reasoning fields, streaming events, tool-call conventions, session headers,
+and error semantics can differ by endpoint or gateway. Treat those integrations
+as compatibility paths rather than assuming DeepSeek-level coverage; verify
+the exact endpoint you use, or contribute a focused adapter test/fix as the
+provider evolves.
+
+For a busy self-hosted process, optional local guardrails are available through
+`PAWBOT_MAX_CONCURRENT_REQUESTS`, `PAWBOT_MAX_CONCURRENT_PER_SENDER`,
+`PAWBOT_PROVIDER_MAX_INFLIGHT`, and `PAWBOT_PROVIDER_RPM` (provider-specific
+overrides such as `PAWBOT_DEEPSEEK_RPM` take precedence). These limits are
+process-local safety controls, not a distributed quota service.
+
 ## Channels and integrations
 
 Pawbot can be used from its WebUI, terminal, OpenAI-compatible API, Python SDK,
@@ -474,7 +493,7 @@ The core source is organized around:
 - [Documentation index](docs/README.md)
 - [Record & Replay](docs/record-replay.md)
 - [Agent Harness Benchmark](docs/agent-harness.md)
-- [Release notes](docs/release-notes/0.5.0.md)
+- [Release notes](docs/release-notes/0.5.1.md)
 - [Publishing guide](docs/publishing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)

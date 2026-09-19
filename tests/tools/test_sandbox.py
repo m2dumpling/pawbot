@@ -222,6 +222,18 @@ class TestBwrapBackend:
         assert (str(parent), str(parent)) not in ro_try_pairs
         assert (str(parent), str(parent)) not in bind_try_pairs
 
+    def test_network_deny_creates_a_separate_network_namespace(self, tmp_path):
+        ws = tmp_path / "project"
+        result = wrap_command(
+            "bwrap",
+            "curl https://example.com",
+            str(ws),
+            str(ws),
+            network_policy="deny",
+        )
+
+        assert "--unshare-net" in _parse(result)
+
 
 class TestUnknownBackend:
     def test_raises_value_error(self, tmp_path):

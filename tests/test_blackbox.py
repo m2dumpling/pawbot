@@ -180,6 +180,7 @@ async def test_record_then_replay_is_deterministic(tmp_path: Path, scripted_turn
 
     assert len(FakeTool.calls) == 1, "record mode must really execute the tool"
     assert recorded.final_content == "done"
+    controller.finalize()
 
     # Replay: the tool must NOT run again (short-circuited from the JSONL rail),
     # and the LLM rail must be served from recorded provider responses.
@@ -232,6 +233,7 @@ async def test_record_then_replay_preserves_task_evaluation(tmp_path: Path, scri
 
     assert recorded.task_evaluation is not None
     assert recorded.task_evaluation.status == "passed"
+    controller.finalize()
     replay = ReplayController(str(bb_dir))
     turn = replay.turns[0]
     assert turn.task_contract is not None
@@ -284,6 +286,7 @@ async def test_replay_missing_tool_observation_fails_closed(tmp_path: Path, scri
         + "\n",
         encoding="utf-8",
     )
+    controller.finalize()
 
     replay = ReplayController(str(bb_dir))
     turn = replay.turns[0]
@@ -432,6 +435,7 @@ async def test_replay_consumes_repeated_identical_tool_calls_in_order(
         recorded = await AgentRunner().run(_build_spec(tools, runtime, recorder, initial))
 
     assert SequenceTool.calls == [{"value": "x"}, {"value": "x"}]
+    controller.finalize()
     replay = ReplayController(str(bb_dir))
     turn = replay.turns[0]
     replay_provider = ReplayProvider(runtime.provider, replay.store, turn.turn_id)
@@ -476,6 +480,7 @@ async def test_replay_preserves_classified_tool_errors(tmp_path: Path):
     with controller.turn_scope("turn_error"):
         recorded = await AgentRunner().run(_build_spec(tools, runtime, recorder, initial))
 
+    controller.finalize()
     replay = ReplayController(str(bb_dir))
     turn = replay.turns[0]
     replay_provider = ReplayProvider(runtime.provider, replay.store, turn.turn_id)
@@ -508,6 +513,11 @@ async def test_one_recording_accumulates_turns_from_multiple_sessions(tmp_path: 
             session_key=session_key,
             model="fake-model",
         )
+        await recorder.after_iteration(AgentHookContext(
+            iteration=0,
+            messages=initial,
+            response=LLMResponse(content=f"reply-{index}", finish_reason="stop"),
+        ))
         await recorder.after_run(
             AgentRunHookContext(
                 messages=[*initial, {"role": "assistant", "content": f"reply-{index}"}],
@@ -516,6 +526,7 @@ async def test_one_recording_accumulates_turns_from_multiple_sessions(tmp_path: 
             )
         )
 
+    controller.finalize()
     replay = ReplayController(str(directory))
     assert [turn.session_key for turn in replay.turns] == [
         "websocket:chat-a",

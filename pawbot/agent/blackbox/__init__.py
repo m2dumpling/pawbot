@@ -8,6 +8,11 @@
   short-circuit, then structurally diffs the message sequence.
 """
 
+from pawbot.agent.blackbox.manifest import (
+    finalize_recording_manifest,
+    recording_health,
+    validate_recording_manifest,
+)
 from pawbot.agent.blackbox.recorder import (
     BlackboxController,
     clear_recording_policy,
@@ -32,6 +37,9 @@ __all__ = [
     "read_recording_policy",
     "recording_policy_path",
     "write_recording_policy",
+    "finalize_recording_manifest",
+    "recording_health",
+    "validate_recording_manifest",
     "ReplayBreakpoint",
     "ReplayController",
     "ReplayProvider",

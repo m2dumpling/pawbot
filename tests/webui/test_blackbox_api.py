@@ -314,6 +314,9 @@ def test_turn_diagnostics_separates_replay_health_from_original_errors() -> None
     }
     assert diagnostics["provider_errors"][0]["status_code"] == 429
     assert diagnostics["failed_tools"][0]["name"] == "write_file"
+    assert diagnostics["original_outcome"]["execution_status"] == "failed"
+    assert diagnostics["original_outcome"]["task_status"] == "not_requested"
+    assert diagnostics["original_outcome"]["replay_status"] == "not_run"
 
 
 @pytest.mark.asyncio
@@ -378,6 +381,7 @@ async def test_replay_reports_original_execution_separately(tmp_path: Path) -> N
     assert result["original_unknown_side_effects"] == 0
     assert result["results"][0]["ok"] is True
     assert result["results"][0]["original_execution"]["status"] == "tool_error"
+    assert result["results"][0]["original_outcome"]["execution_status"] == "failed"
     assert result["trace_comparable_turns"] == 1
     assert result["trace_diff_turns"] == 1
     assert result["results"][0]["trace_comparable"] is True

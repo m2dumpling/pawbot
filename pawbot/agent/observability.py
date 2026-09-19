@@ -33,8 +33,8 @@ from loguru import logger
 from pawbot.agent.approval import ToolApprovalRequest, ToolApprovalResult
 from pawbot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from pawbot.agent.tools.execution import execution_policy_for_tool, operation_id_for_tool_call
+from pawbot.agent.trace_schema import TRACE_SCHEMA_VERSION, normalize_trace_event
 
-TRACE_SCHEMA_VERSION = 1
 TRACE_EVENTS_FILENAME = "events.jsonl"
 TRACE_INDEX_FILENAME = "index.jsonl"
 _DEFAULT_RETENTION_DAYS = 14
@@ -267,6 +267,7 @@ class TraceRun:
     _max_step_duration_ms: int = 0
     _verification_status: str | None = None
     _verification_completed: bool | None = None
+    _outcome: dict[str, Any] | None = None
     _closed: bool = False
 
     def set_runtime(self, *, provider: str | None, model: str | None) -> None:
@@ -316,7 +317,8 @@ class TraceRun:
         if call_id:
             row["call_id"] = call_id
         row.update(fields)
-        safe_row = cast(dict[str, Any], _redact_payload(row))
+        normalized_row = normalize_trace_event(row)
+        safe_row = cast(dict[str, Any], _redact_payload(normalized_row))
         self.writer.append(safe_row)
         self._event_count += 1
         tool_call_key = _trace_tool_call_key(row)
@@ -379,6 +381,7 @@ class TraceRun:
             "unknown_side_effect_count": self._unknown_side_effect_count,
             "verification_status": self._verification_status,
             "verification_completed": self._verification_completed,
+            "outcome": self._outcome,
             "max_step_duration_ms": self._max_step_duration_ms,
             "timestamp_ms": int(time.time() * 1000),
         }
@@ -389,6 +392,7 @@ class TraceRun:
         status: str,
         stop_reason: str | None = None,
         error: Any = None,
+        outcome: dict[str, Any] | None = None,
     ) -> None:
         if self._closed:
             return
@@ -409,7 +413,9 @@ class TraceRun:
             duration_ms=duration_ms,
             stop_reason=stop_reason,
             error=_error_payload(error) if error is not None else None,
+            outcome=outcome,
         )
+        self._outcome = dict(outcome) if isinstance(outcome, dict) else None
         if self.on_finish is not None:
             try:
                 self.on_finish(
@@ -685,6 +691,8 @@ class TraceHook(AgentHook):
             "read_only": bool(getattr(tool, "read_only", False)),
             "concurrency_safe": bool(getattr(tool, "concurrency_safe", False)),
             "exclusive": bool(getattr(tool, "exclusive", False)),
+            "sandbox_backend": getattr(tool, "sandbox", None) or None,
+            "network_policy": getattr(tool, "network_policy", None) or None,
             "operation_id": operation_id,
             **policy.to_dict(),
         }
@@ -702,6 +710,8 @@ class TraceHook(AgentHook):
             read_only=tool_metadata["read_only"],
             concurrency_safe=tool_metadata["concurrency_safe"],
             exclusive=tool_metadata["exclusive"],
+            sandbox_backend=tool_metadata["sandbox_backend"],
+            network_policy=tool_metadata["network_policy"],
             operation_id=operation_id,
             **policy.to_dict(),
         )
@@ -775,6 +785,12 @@ class TraceHook(AgentHook):
             tool_metadata = self._tool_metadata.pop(call_id, {})
             result = context.tool_results[index] if index < len(context.tool_results) else None
             lifecycle_state = str(state.get("state") or "")
+            raw_tool_outcome = state.get("outcome")
+            tool_outcome = (
+                cast(dict[str, Any], raw_tool_outcome)
+                if isinstance(raw_tool_outcome, dict)
+                else None
+            )
             status = str(event.get("status") or lifecycle_state or "unknown")
             if lifecycle_state == "blocked" or status in {"blocked", "denied"}:
                 normalized_status = "blocked"
@@ -805,6 +821,10 @@ class TraceHook(AgentHook):
                 reversible=state.get("reversible", tool_metadata.get("reversible", False)),
                 receipt_supported=state.get(
                     "receipt_supported", tool_metadata.get("receipt_supported", False)
+                ),
+                tool_outcome=tool_outcome,
+                error_code=(
+                    tool_outcome.get("error_code") if tool_outcome is not None else None
                 ),
                 detail=redact_text(event.get("detail")) if event.get("detail") else None,
                 error=_tool_error_payload(event, state),
@@ -839,6 +859,7 @@ class TraceHook(AgentHook):
             error=_error_payload(context.error or context.exception),
             stop_reason=context.stop_reason,
             budget=context.budget,
+            outcome=context.outcome,
         )
 
     async def after_run(self, context: AgentRunHookContext) -> None:
@@ -857,6 +878,7 @@ class TraceHook(AgentHook):
             tools_used=list(context.tools_used),
             usage=context.usage.to_dict() if context.usage is not None else None,
             budget=context.budget,
+            outcome=context.outcome,
         )
 
     async def on_finally(self, context: AgentRunHookContext) -> None:
@@ -869,6 +891,7 @@ class TraceHook(AgentHook):
             error=redact_text(context.error) if context.error else None,
             message_count=len(context.messages),
             budget=context.budget,
+            outcome=context.outcome,
         )
 
 
@@ -1074,6 +1097,17 @@ class TraceStore:
                         "message": "The process ended before this turn recorded a terminal event.",
                         "retryable": False,
                     },
+                    "outcome": {
+                        "schema_version": 1,
+                        "execution_status": "incomplete",
+                        "stop_reason": "process_interrupted",
+                        "task_status": "not_evaluable",
+                        "side_effect_status": "unknown",
+                        "recovery_status": "resumable",
+                        "replay_status": "not_run",
+                        "error_code": "INCOMPLETE_TRACE",
+                        "error_message": "The process ended before this turn recorded a terminal event.",
+                    },
                 })
             except (OSError, ValueError, json.JSONDecodeError):
                 continue
@@ -1159,6 +1193,7 @@ class TraceStore:
                 ),
                 None,
             ),
+            "outcome": last.get("outcome") if isinstance(last.get("outcome"), dict) else None,
             "max_step_duration_ms": max(
                 (
                     int(event["duration_ms"])

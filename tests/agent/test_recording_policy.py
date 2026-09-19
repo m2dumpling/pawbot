@@ -11,6 +11,7 @@ from pawbot.agent.blackbox import (
     read_recording_policy,
     write_recording_policy,
 )
+from pawbot.agent.blackbox.manifest import read_recording_manifest
 from pawbot.agent.blackbox.recorder import BlackboxController
 from pawbot.agent.loop import AgentLoop
 from pawbot.bus.queue import MessageBus
@@ -27,6 +28,7 @@ def test_recording_policy_round_trips_without_accepting_path_escape(tmp_path: Pa
     )
     assert payload["name"] == "demo_sample"
     assert "api_key" not in json.dumps(payload)
+    assert read_recording_manifest(directory)["sample_status"] == "recording"
 
     clear_recording_policy(tmp_path)
     assert read_recording_policy(tmp_path) is None

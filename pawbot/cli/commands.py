@@ -733,10 +733,16 @@ def record_stop(
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
 ) -> None:
     """Stop regression-sample capture without deleting saved samples."""
-    from pawbot.agent.blackbox import clear_recording_policy, read_recording_policy
+    from pawbot.agent.blackbox import (
+        clear_recording_policy,
+        finalize_recording_manifest,
+        read_recording_policy,
+    )
 
     _, loaded = _load_inspection_config(config=config, workspace=workspace)
     current = read_recording_policy(loaded.workspace_path)
+    if current is not None:
+        finalize_recording_manifest(current)
     clear_recording_policy(loaded.workspace_path)
     if current is None:
         console.print("Regression sample capture was already off.")

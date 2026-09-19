@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from pawbot.agent.hook import AgentHook, AgentTurnHookFactory
 from pawbot.agent.tools.context import RequestContext
 from pawbot.agent.tools.registry import ToolRegistry
+from pawbot.agent.turn.outcome import TurnOutcome
 from pawbot.agent.turn_delivery import TurnDelivery
 from pawbot.bus.events import InboundMessage, OutboundMessage
 from pawbot.providers.base import LLMUsage, ProviderConversationState
@@ -87,6 +88,7 @@ class TurnContext:
     turn_latency_ms: int | None = None
     usage: LLMUsage | None = None
     task_evaluation: dict[str, Any] | None = None
+    outcome: TurnOutcome | None = None
 
     def require_runtime(self) -> LLMRuntime:
         """Return the runtime established by the BUILD stage."""

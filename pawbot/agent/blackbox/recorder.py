@@ -16,7 +16,6 @@ Turn envelopes (initial messages, final messages, stop reason) are written to
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import time
 from contextlib import contextmanager
@@ -26,6 +25,11 @@ from typing import TYPE_CHECKING, Any, cast
 from loguru import logger
 
 from pawbot.agent.blackbox.keys import tool_key
+from pawbot.agent.blackbox.manifest import (
+    finalize_recording_manifest,
+    initialize_recording_manifest,
+)
+from pawbot.agent.blackbox.writer import append_jsonl, tighten_permissions, write_json_atomic
 from pawbot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from pawbot.utils.provenance import collect_provenance
 
@@ -121,16 +125,12 @@ def write_recording_policy(workspace: Path, name: str) -> Path:
     if directory == root or root not in directory.parents:
         raise ValueError("recording name must stay within workspace/blackbox")
     policy = recording_policy_path(workspace)
-    temporary = policy.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps({
-            "schema_version": _BLACKBOX_SCHEMA_VERSION,
-            "name": safe_name,
-            "started_at_ms": int(time.time() * 1000),
-        }, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary, policy)
+    initialize_recording_manifest(directory)
+    write_json_atomic(policy, {
+        "schema_version": _BLACKBOX_SCHEMA_VERSION,
+        "name": safe_name,
+        "started_at_ms": int(time.time() * 1000),
+    })
     return directory
 
 
@@ -196,8 +196,7 @@ class TurnRecorder(AgentHook):
         self._turn_written = False
 
     def _append_tools(self, record: dict[str, Any]) -> None:
-        with open(self._dir / _TOOL_JSONL, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False, default=repr) + "\n")
+        append_jsonl(self._dir / _TOOL_JSONL, record)
 
     async def before_iteration(self, context: AgentHookContext) -> None:
         # Nothing to do at iteration start; the LLM rail is written after each
@@ -339,9 +338,39 @@ class TurnRecorder(AgentHook):
                 "result": _json_safe(result),
             })
 
+    async def on_model_error(
+        self,
+        context: AgentHookContext,
+        error: BaseException,
+    ) -> None:
+        """Keep provider failures replayable instead of leaving a rail gap."""
+        response = context.response
+        usage = response.usage.to_dict() if response is not None and response.usage is not None else None
+        self._append_tools({
+            "kind": "llm",
+            "schema_version": _BLACKBOX_SCHEMA_VERSION,
+            "turn_id": self._turn_id,
+            "iteration": context.iteration,
+            "response_index": self._response_index,
+            "response": {
+                "content": response.content if response is not None else None,
+                "tool_calls": [],
+                "finish_reason": "error",
+                "usage": usage,
+                "reasoning_content": None,
+                "thinking_blocks": None,
+                "generation_ms": None,
+                "ttft_ms": None,
+                "error_type": type(error).__name__,
+                "error_code": type(error).__name__.upper(),
+                "error_message": str(error)[:1_000],
+                "error_should_retry": False,
+            },
+        })
+        self._response_index += 1
+
     async def after_run(self, context: AgentRunHookContext) -> None:
-        with open(self._dir / _TURNS_JSONL, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps({
+        append_jsonl(self._dir / _TURNS_JSONL, {
                 "kind": "turn",
                 "schema_version": _BLACKBOX_SCHEMA_VERSION,
                 "complete": True,
@@ -364,18 +393,22 @@ class TurnRecorder(AgentHook):
                     else None
                 ),
                 "task_evaluation": _json_safe(context.task_evaluation),
-            }, ensure_ascii=False, default=repr) + "\n")
+                "outcome": _json_safe(context.outcome),
+        })
         self._turn_written = True
 
     async def on_finally(self, context: AgentRunHookContext) -> None:
         """Keep an aborted turn visible as an incomplete diagnostic artifact."""
         if self._turn_written:
             return
-        with open(self._dir / _TURNS_JSONL, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps({
+        append_jsonl(self._dir / _TURNS_JSONL, {
                 "kind": "turn",
                 "schema_version": _BLACKBOX_SCHEMA_VERSION,
-                "complete": False,
+                # Provider exceptions with a captured LLM error rail are a
+                # terminal, replayable execution. Cancellation remains an
+                # incomplete sample because the in-flight side effect/model
+                # boundary is not fully known.
+                "complete": context.stop_reason == "error" and context.error is not None,
                 "turn_id": self._turn_id,
                 "session_key": self._session_key,
                 "model": self._model,
@@ -393,7 +426,8 @@ class TurnRecorder(AgentHook):
                     else None
                 ),
                 "task_evaluation": _json_safe(context.task_evaluation),
-            }, ensure_ascii=False, default=repr) + "\n")
+                "outcome": _json_safe(context.outcome),
+        })
         self._turn_written = True
 
 
@@ -405,6 +439,8 @@ class BlackboxController:
     def __init__(self, directory: str) -> None:
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
+        tighten_permissions(self.directory, directory=True)
+        initialize_recording_manifest(self.directory)
         self._meta_written = False
         self._vcr = self._load_vcr()
 
@@ -429,6 +465,7 @@ class BlackboxController:
             yield
             if not cassette_path.exists():
                 cassette_path.write_text("interactions: []\n", encoding="utf-8")
+                tighten_permissions(cassette_path)
             return
         with self._vcr.use_cassette(str(cassette_path)):
             yield
@@ -438,6 +475,7 @@ class BlackboxController:
         # write an empty cassette on that path.
         if not cassette_path.exists():
             cassette_path.write_text("interactions: []\n", encoding="utf-8")
+            tighten_permissions(cassette_path)
 
     def turn_hook(
         self,
@@ -471,10 +509,11 @@ class BlackboxController:
         })
         revision = str(metadata.get("git_revision") or "unknown")
         metadata["git_rev"] = revision[:12]
-        (self.directory / _META_JSON).write_text(
-            json.dumps(metadata, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(self.directory / _META_JSON, metadata)
+
+    def finalize(self) -> dict[str, Any]:
+        """Mark this opt-in sample ready only after rail validation succeeds."""
+        return finalize_recording_manifest(self.directory)
 
     @staticmethod
     def _clean_artifacts(directory: Path) -> None:

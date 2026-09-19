@@ -510,6 +510,7 @@ async def cmd_record(ctx: CommandContext) -> OutboundMessage:
     from pawbot.agent.blackbox import (
         BlackboxController,
         clear_recording_policy,
+        finalize_recording_manifest,
         read_recording_policy,
         write_recording_policy,
     )
@@ -560,6 +561,7 @@ async def cmd_record(ctx: CommandContext) -> OutboundMessage:
             if policy_directory is None:
                 content = "Regression sample capture is already off."
             else:
+                finalize_recording_manifest(policy_directory)
                 clear_recording_policy(workspace)
                 content = "Regression sample capture is now off. Existing samples were kept."
         else:
@@ -568,6 +570,7 @@ async def cmd_record(ctx: CommandContext) -> OutboundMessage:
             if callable(stop_recording):
                 stop_recording()
             else:
+                finalize_recording_manifest(active.directory)
                 clear_recording_policy(workspace)
                 loop.blackbox = None
             content = f"Stopped regression sample capture: `{name}`. You can validate it offline with `pawbot replay`."

@@ -7,6 +7,27 @@ supported surface and known boundaries of each published version.
 
 No unreleased changes.
 
+## 0.5.1 - 2026-09-19
+
+### Added
+
+- Added DeepSeek-focused Provider contract tests for V4 capabilities, long
+  context metadata, reasoning controls, Tool Call history, streaming deltas,
+  usage, and provider error semantics.
+- Added fault-injection checks for recovery, recording manifests, Provider
+  failures, and unified TurnOutcome invariants to the quality gate.
+- Added optional process-local request guardrails for per-sender concurrency and
+  Provider in-flight/RPM limits; provider-specific environment variables take
+  precedence over global values.
+
+### Changed
+
+- Documented that DeepSeek has the strongest validation coverage while other
+  Provider endpoints remain compatibility paths that require endpoint-specific
+  verification.
+- Clarified the security boundary between local Trace/Record & Replay evidence
+  and a distributed compliance audit system.
+
 ## 0.5.0 - 2026-09-16
 
 ### Added

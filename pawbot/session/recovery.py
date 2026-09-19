@@ -328,6 +328,11 @@ def restore_runtime_checkpoint(session: Session) -> bool:
     contract_value = data.get(_TASK_CONTRACT_METADATA_KEY)
     if isinstance(contract_value, dict):
         session.metadata[_TASK_CONTRACT_METADATA_KEY] = contract_value
+    turn_outcome = data.get("turn_outcome")
+    if isinstance(turn_outcome, dict):
+        from pawbot.agent.turn.outcome import TurnOutcome
+
+        session.metadata["_last_turn_outcome"] = TurnOutcome.from_dict(turn_outcome).to_dict()
     assistant = cast(object, data.get("assistant_message"))
     completed_value = cast(object, data.get("completed_tool_results"))
     pending_value = cast(object, data.get("pending_tool_calls"))

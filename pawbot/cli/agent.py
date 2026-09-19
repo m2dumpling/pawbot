@@ -279,6 +279,9 @@ def agent(
         try:
             await agent_loop.aclose()
         finally:
+            finalize = getattr(blackbox, "finalize", None)
+            if callable(finalize):
+                finalize()
             await mcp_provider.aclose()
 
     # Shared reference for progress callbacks

@@ -36,6 +36,7 @@ from pawbot.agent.approval import (
 )
 from pawbot.agent.hook import AgentHook, AgentHookContext
 from pawbot.agent.tools.base import ToolExecutionPolicy
+from pawbot.agent.tools.outcome import ToolOutcome
 from pawbot.agent.tools.registry import ToolRegistry, ToolResult, is_tool_error_result
 from pawbot.providers.base import ToolCallRequest
 from pawbot.utils.runtime import (
@@ -109,6 +110,15 @@ def _ok_detail(result: Any) -> str:
     if len(detail) > 120:
         return detail[:120] + "..."
     return detail
+
+
+def _error_code_for_text(text: str, fallback: str) -> str:
+    """Classify known boundary failures without parsing them in UI clients."""
+    if is_ssrf_violation(text):
+        return "NETWORK_SSRF_BLOCKED"
+    if _is_workspace_violation(text):
+        return "WORKSPACE_BOUNDARY_BLOCKED"
+    return fallback
 
 
 def execution_policy_for_tool(tool: Any) -> ToolExecutionPolicy:
@@ -338,6 +348,7 @@ class CallExecutor:
         lifecycle: str,
         side_effect: str,
         started_at: float,
+        error_code: str | None = None,
     ) -> None:
         finished_at = time.time()
         state.update({
@@ -347,6 +358,9 @@ class CallExecutor:
             "finished_at": finished_at,
             "duration_ms": max(0, int((finished_at - started_at) * 1000)),
         })
+        if error_code is not None:
+            state["error_code"] = error_code
+        state["outcome"] = ToolOutcome.from_state(state).to_dict()
 
     @staticmethod
     def _side_effect_class(tool: Any) -> str:
@@ -427,6 +441,7 @@ class CallExecutor:
                 lifecycle="blocked",
                 side_effect="not_started",
                 started_at=time.time(),
+                error_code="TOOL_POLICY_DENIED",
             )
             event = {
                 "name": tool_call.name,
@@ -445,6 +460,7 @@ class CallExecutor:
                 lifecycle="failed",
                 side_effect="not_started",
                 started_at=time.time(),
+                error_code=_error_code_for_text(prep_error, "TOOL_PARAMETER_INVALID"),
             )
             event = {
                 "name": tool_call.name,
@@ -478,6 +494,7 @@ class CallExecutor:
                 lifecycle="blocked",
                 side_effect="not_started",
                 started_at=time.time(),
+                error_code="TOOL_POLICY_DENIED",
             )
             event = {"name": tool_call.name, "status": "error", "detail": detail}
             return ToolResult.error(
@@ -494,6 +511,7 @@ class CallExecutor:
                     lifecycle="blocked",
                     side_effect="may_have_occurred",
                     started_at=time.time(),
+                    error_code="UNKNOWN_SIDE_EFFECT",
                 )
                 return ToolResult.error(
                     f"Error: duplicate retry for interrupted operation {operation_id} "
@@ -511,6 +529,7 @@ class CallExecutor:
                     lifecycle="blocked",
                     side_effect="may_have_occurred",
                     started_at=time.time(),
+                    error_code="UNKNOWN_SIDE_EFFECT",
                 )
                 return self._recovery_error(
                     tool_call.name,
@@ -561,6 +580,7 @@ class CallExecutor:
                             lifecycle="blocked",
                             side_effect="may_have_occurred",
                             started_at=time.time(),
+                            error_code="UNKNOWN_SIDE_EFFECT",
                         )
                         raise
                     except Exception as exc:
@@ -576,6 +596,7 @@ class CallExecutor:
                         lifecycle="blocked",
                         side_effect="may_have_occurred",
                         started_at=time.time(),
+                        error_code="UNKNOWN_SIDE_EFFECT",
                     )
                     return self._recovery_error(tool_call.name, operation_id), {
                         "name": tool_call.name,
@@ -618,6 +639,7 @@ class CallExecutor:
                     lifecycle="blocked",
                     side_effect="not_started",
                     started_at=time.time(),
+                    error_code="TOOL_APPROVAL_DENIED",
                 )
                 raise
             except Exception as exc:
@@ -632,6 +654,7 @@ class CallExecutor:
                     lifecycle="blocked",
                     side_effect="not_started",
                     started_at=time.time(),
+                    error_code="TOOL_APPROVAL_DENIED",
                 )
                 denial = ToolResult.error(
                     f"Error: tool '{tool_call.name}' was not approved: {reason}"
@@ -671,6 +694,7 @@ class CallExecutor:
                     lifecycle="failed" if is_tool_error_result(replayed) else "succeeded",
                     side_effect="not_executed",
                     started_at=started_at,
+                    error_code="REPLAYED_TOOL_ERROR" if is_tool_error_result(replayed) else None,
                 )
                 if is_tool_error_result(replayed):
                     await self._hook.on_execute_tool_error(
@@ -709,6 +733,7 @@ class CallExecutor:
                     lifecycle="failed",
                     side_effect="not_executed",
                     started_at=started_at,
+                    error_code="REPLAY_OBSERVATION_MISSING",
                 )
                 await self._hook.on_execute_tool_error(
                     self._context,
@@ -738,6 +763,11 @@ class CallExecutor:
                 lifecycle="unknown",
                 side_effect=self._side_effect_class(tool),
                 started_at=started_at,
+                error_code=(
+                    "UNKNOWN_SIDE_EFFECT"
+                    if policy.side_effect != "none"
+                    else "TOOL_CANCELLED"
+                ),
             )
             await self._hook.on_execute_tool_cancelled(
                 self._context,
@@ -756,6 +786,7 @@ class CallExecutor:
                 lifecycle="failed",
                 side_effect=self._side_effect_class(tool),
                 started_at=started_at,
+                error_code=_error_code_for_text(str(exc), "TOOL_EXECUTION_FAILED"),
             )
             await self._hook.on_execute_tool_error(
                 self._context, tool_call, tool, params, exc
@@ -787,6 +818,7 @@ class CallExecutor:
                 lifecycle="failed",
                 side_effect=self._side_effect_class(tool),
                 started_at=started_at,
+                error_code=_error_code_for_text(result, "TOOL_EXECUTION_FAILED"),
             )
             await self._hook.on_execute_tool_error(
                 self._context, tool_call, tool, params, result

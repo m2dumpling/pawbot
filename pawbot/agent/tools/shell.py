@@ -13,11 +13,11 @@ import sys
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 from urllib.parse import unquote
 
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from pawbot.agent.tools.base import Tool, ToolResult, tool_parameters
 from pawbot.agent.tools.context import ToolContext, current_request_session_key
@@ -98,11 +98,20 @@ class ExecToolConfig(Base):
     path_prepend: str = ""
     path_append: str = ""
     sandbox: str = ""
+    network_policy: Literal["full", "deny"] = "full"
     sandbox_ro_binds: list[str] = Field(default_factory=list)
     sandbox_rw_binds: list[str] = Field(default_factory=list)
     allowed_env_keys: list[str] = Field(default_factory=list)
     allow_patterns: list[str] = Field(default_factory=list)
     deny_patterns: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_network_policy(self) -> ExecToolConfig:
+        if self.network_policy == "deny" and self.sandbox != "bwrap":
+            raise ValueError("tools.exec.networkPolicy='deny' requires tools.exec.sandbox='bwrap'")
+        if self.network_policy == "deny" and _IS_WINDOWS:
+            raise ValueError("tools.exec.networkPolicy='deny' is unavailable on Windows")
+        return self
 
 
 @dataclass(slots=True)
@@ -182,6 +191,7 @@ class ExecTool(Tool):
             restrict_to_workspace=ctx.config.restrict_to_workspace,
             webui_allow_local_service_access=ctx.config.webui_allow_local_service_access,
             sandbox=cfg.sandbox,
+            network_policy=cfg.network_policy,
             path_prepend=cfg.path_prepend,
             path_append=cfg.path_append,
             sandbox_ro_binds=cfg.sandbox_ro_binds,
@@ -202,6 +212,7 @@ class ExecTool(Tool):
         webui_allow_local_service_access: bool = True,
         allow_local_preview_access: bool | None = None,
         sandbox: str = "",
+        network_policy: Literal["full", "deny"] = "full",
         path_prepend: str = "",
         path_append: str = "",
         sandbox_ro_binds: list[str] | None = None,
@@ -212,6 +223,7 @@ class ExecTool(Tool):
         self.timeout = timeout
         self.working_dir = working_dir
         self.sandbox = sandbox
+        self.network_policy = network_policy
         self.deny_patterns = (deny_patterns or []) + [
             r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
             r"\bdel\s+/[fq]\b",              # del /f, del /q
@@ -459,6 +471,12 @@ class ExecTool(Tool):
             if guard_error:
                 return guard_error
 
+        if self.network_policy == "deny" and (self.sandbox != "bwrap" or _IS_WINDOWS):
+            return ToolResult.error(
+                "Error: network_policy='deny' requires the Linux bwrap sandbox; "
+                "Pawbot will not silently run this command with network access"
+            )
+
         if self.sandbox:
             if _IS_WINDOWS:
                 logger.warning(
@@ -474,6 +492,7 @@ class ExecTool(Tool):
                     cwd,
                     sandbox_ro_binds=[str(p) for p in self.sandbox_ro_binds],
                     sandbox_rw_binds=[str(p) for p in self.sandbox_rw_binds],
+                    network_policy=self.network_policy,
                 )
                 cwd = str(Path(workspace).resolve())
 

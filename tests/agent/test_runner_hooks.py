@@ -99,6 +99,37 @@ async def test_runner_calls_hooks_in_order():
 
 
 @pytest.mark.asyncio
+async def test_runner_exposes_one_outcome_to_result_and_run_hooks():
+    from pawbot.agent.hook import AgentHook, AgentRunHookContext
+    from pawbot.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="done", tool_calls=[]))
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    seen: dict[str, object] = {}
+
+    class OutcomeHook(AgentHook):
+        async def after_run(self, context: AgentRunHookContext) -> None:
+            seen["outcome"] = context.outcome
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "finish"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=1,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        hook=OutcomeHook(),
+    ))
+
+    assert result.outcome is not None
+    assert result.outcome.execution_status == "completed"
+    assert result.outcome.task_status == "not_requested"
+    assert seen["outcome"] == result.outcome.to_dict()
+
+
+@pytest.mark.asyncio
 async def test_runner_streaming_hook_receives_deltas_and_end_signal():
     from pawbot.agent.hook import AgentHook, AgentHookContext
     from pawbot.agent.runner import AgentRunner

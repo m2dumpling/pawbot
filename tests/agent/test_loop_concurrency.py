@@ -26,6 +26,7 @@ def test_request_concurrency_is_unlimited_by_default(
     loop = loop_factory(provider=_provider(), patch_deps=True)
 
     assert loop._concurrency_gate is None
+    assert loop._max_concurrent_per_sender == 0
 
 
 @pytest.mark.asyncio
@@ -45,3 +46,14 @@ async def test_positive_request_concurrency_keeps_explicit_cap(
     finally:
         for _ in range(2):
             gate.release()
+
+
+def test_positive_sender_concurrency_creates_a_separate_identity_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    loop_factory,
+) -> None:
+    monkeypatch.setenv("PAWBOT_MAX_CONCURRENT_PER_SENDER", "1")
+    loop = loop_factory(provider=_provider(), patch_deps=True)
+
+    assert loop._max_concurrent_per_sender == 1
+    assert loop._sender_concurrency_gates == {}

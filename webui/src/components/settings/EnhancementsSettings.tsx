@@ -349,6 +349,46 @@ function taskEvaluationLabel(evaluation: unknown, t: Translate): string {
   }
 }
 
+function outcomeTaskLabel(outcome: unknown, t: Translate): string {
+  const status = isRecord(outcome) ? String(outcome.task_status ?? "") : "";
+  switch (status) {
+    case "passed":
+      return tx(t, "settings.enhancements.task.passed", "Task checks passed");
+    case "failed":
+      return tx(t, "settings.enhancements.task.failed", "Task checks failed");
+    case "not_evaluable":
+      return tx(t, "settings.enhancements.task.notEvaluable", "Task could not be evaluated");
+    default:
+      return tx(t, "settings.enhancements.task.notRecorded", "Task checks not recorded");
+  }
+}
+
+function outcomeTaskTone(outcome: unknown): string {
+  const status = isRecord(outcome) ? String(outcome.task_status ?? "") : "";
+  return status === "passed"
+    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+    : status === "failed"
+      ? "border-rose-200 bg-rose-50 text-rose-800"
+      : "border-settings-border bg-background/70 text-settings-muted";
+}
+
+function outcomeSideEffectLabel(outcome: unknown, t: Translate): string {
+  const status = isRecord(outcome) ? String(outcome.side_effect_status ?? "") : "";
+  if (status === "unknown") {
+    return tx(t, "settings.enhancements.original.unknownSideEffect", "Tool side effect is uncertain");
+  }
+  if (status === "confirmed") {
+    return tx(t, "settings.enhancements.result.sideEffectConfirmed", "External action completed");
+  }
+  return tx(t, "settings.enhancements.result.sideEffectNone", "No external side effect recorded");
+}
+
+function outcomeSideEffectTone(outcome: unknown): string {
+  return isRecord(outcome) && outcome.side_effect_status === "unknown"
+    ? "border-amber-200 bg-amber-50 text-amber-800"
+    : "border-settings-border bg-background/70 text-settings-muted";
+}
+
 function taskEvaluationTone(evaluation: unknown): string {
   const status = isRecord(evaluation) ? String(evaluation.status ?? "") : "";
   return status === "passed"
@@ -1037,6 +1077,9 @@ function ReplayTurnSummary({
   const taskEvaluation = isRecord(diagnostics.task_evaluation)
     ? diagnostics.task_evaluation
     : null;
+  const originalOutcome = isRecord(diagnostics.original_outcome)
+    ? diagnostics.original_outcome
+    : null;
   const taskHasIssue = taskEvaluation
     && ["failed", "not_evaluable"].includes(String(taskEvaluation.status ?? ""));
   const userRequest = lastMessageText(turn.initial_messages, "user");
@@ -1141,6 +1184,12 @@ function ReplayTurnSummary({
         </span>
         <span className={`rounded-full border px-3 py-1 ${originalExecutionTone(originalExecution)}`}>
           {tx(t, "settings.enhancements.result.originalLabel", "Original execution")} · {originalExecutionLabel(originalExecution, t)}
+        </span>
+        <span className={`rounded-full border px-3 py-1 ${outcomeTaskTone(originalOutcome)}`}>
+          {tx(t, "settings.enhancements.result.taskLabel", "Task verification")} · {outcomeTaskLabel(originalOutcome, t)}
+        </span>
+        <span className={`rounded-full border px-3 py-1 ${outcomeSideEffectTone(originalOutcome)}`}>
+          {tx(t, "settings.enhancements.result.sideEffectLabel", "External effect")} · {outcomeSideEffectLabel(originalOutcome, t)}
         </span>
       </div>
 
@@ -1952,6 +2001,12 @@ export function EnhancementsSettings() {
                       </span>
                       <span className={`rounded-full border px-2 py-0.5 text-[11px] ${originalExecutionTone(row.original_execution)}`}>
                         {tx(t, "settings.enhancements.result.originalLabel", "Original execution")} · {originalExecutionLabel(row.original_execution, t)}
+                      </span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[11px] ${outcomeTaskTone(row.original_outcome)}`}>
+                        {tx(t, "settings.enhancements.result.taskLabel", "Task verification")} · {outcomeTaskLabel(row.original_outcome, t)}
+                      </span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[11px] ${outcomeSideEffectTone(row.original_outcome)}`}>
+                        {tx(t, "settings.enhancements.result.sideEffectLabel", "External effect")} · {outcomeSideEffectLabel(row.original_outcome, t)}
                       </span>
                       <span className={`rounded-full border px-2 py-0.5 text-[11px] ${traceChecked
                         ? traceDiffs.length > 0

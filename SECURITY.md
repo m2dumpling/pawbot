@@ -90,6 +90,27 @@ Requires `bwrap` installed (`apt install bubblewrap`). Pre-installed in the offi
 
 Enabling the sandbox also automatically activates `restrictToWorkspace` for file tools.
 
+**Shell network isolation:**
+
+By default, sandboxed shell commands retain normal network access. On Linux you can explicitly
+deny network access for the `exec` Tool by combining Bubblewrap with:
+
+```json
+{
+  "tools": {
+    "exec": {
+      "sandbox": "bwrap",
+      "networkPolicy": "deny"
+    }
+  }
+}
+```
+
+This adds Bubblewrap's `--unshare-net` isolation. `networkPolicy: "deny"` deliberately fails
+closed when `bwrap` is unavailable, including on Windows and macOS; Pawbot does not claim a
+kernel-level network boundary where it cannot enforce one. This policy applies to shell commands,
+not to the configured model provider or dedicated web Tools.
+
 **Blocked patterns:**
 - `rm -rf /` - Root filesystem deletion
 - Fork bombs
@@ -241,11 +262,20 @@ If you suspect a security breach:
 
 ⚠️ **Current Security Limitations:**
 
-1. **No Rate Limiting** - Users can send unlimited messages (add your own if needed)
-2. **Plain Text Config** - API keys stored in plain text in `config.json` (prefer `${VAR}` env references when possible, or use keyring for production)
-3. **No Session Management** - No automatic session expiry
-4. **Limited Command Filtering** - Only blocks obvious dangerous patterns (enable the bwrap sandbox for kernel-level isolation on Linux)
-5. **No Audit Trail** - Limited security event logging (enhance as needed)
+1. **No distributed rate limiting** - Optional process-local request guards are
+   available through `PAWBOT_MAX_CONCURRENT_REQUESTS`,
+   `PAWBOT_MAX_CONCURRENT_PER_SENDER`, `PAWBOT_PROVIDER_MAX_INFLIGHT`, and
+   `PAWBOT_PROVIDER_RPM`. Multi-instance deployments still need an external
+   gateway or quota service.
+2. **Plain Text Config** - API keys can still be stored in `config.json`; prefer
+   `${VAR}` environment references or an OS keyring for production.
+3. **Local session state** - Sessions, checkpoints, traces, and recordings are
+   local files; there is no shared durable session store across instances.
+4. **Limited Command Filtering** - Pattern filtering is not a security boundary.
+   Enable the bwrap sandbox for kernel-level isolation on Linux; use
+   `networkPolicy: "deny"` when shell network isolation is required.
+5. **Local audit surface** - Trace and Record & Replay provide local diagnostic
+   evidence, not a centralized tamper-resistant compliance audit system.
 
 ## Security Checklist
 

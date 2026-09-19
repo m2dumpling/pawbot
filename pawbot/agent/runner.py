@@ -29,6 +29,7 @@ from pawbot.agent.tools.execution import (
     tool_execution_metadata,
 )
 from pawbot.agent.tools.registry import ToolRegistry
+from pawbot.agent.turn.outcome import TurnOutcome
 from pawbot.llm_usage.context import (
     LLMUsageSource,
     bind_llm_usage_source,
@@ -155,6 +156,7 @@ class AgentRunResult:
     tool_states: list[dict[str, Any]] = field(default_factory=list)
     budget: dict[str, Any] | None = None
     task_evaluation: TaskEvaluation | None = None
+    outcome: TurnOutcome | None = None
 
 
 @dataclass
@@ -507,6 +509,7 @@ class AgentRunner:
                 )
             if spec.budget is not None:
                 context.budget = spec.budget.snapshot()
+            context.outcome = TurnOutcome.from_run_result(context).to_dict()
             context.exception = exc
             raise
         except Exception as exc:
@@ -529,6 +532,7 @@ class AgentRunner:
                 )
             if spec.budget is not None:
                 context.budget = spec.budget.snapshot()
+            context.outcome = TurnOutcome.from_run_result(context).to_dict()
             context.exception = exc
             await hook.on_error(context)
             raise
@@ -548,6 +552,7 @@ class AgentRunner:
                 if result.task_evaluation is not None
                 else None
             )
+            context.outcome = result.outcome.to_dict() if result.outcome is not None else None
             context.exception = None
             if context.error is not None:
                 await hook.on_error(context)
@@ -775,6 +780,7 @@ class AgentRunner:
                 attempt=state.task_verification_attempts,
             )
         result.task_evaluation = state.task_evaluation
+        result.outcome = TurnOutcome.from_run_result(result)
         return result
 
     async def _verify_terminal_candidate(

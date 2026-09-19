@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import json_repair
 from loguru import logger
 
+from pawbot.providers.admission import ProviderRequestAdmission
 from pawbot.utils.helpers import sanitize_surrogates_deep
 
 if TYPE_CHECKING:
@@ -689,6 +690,10 @@ class LLMProvider(ABC):
         self.provider_name = provider_name
         self.generation: GenerationSettings = GenerationSettings()
         self._llm_call_observer: LLMCallObserver | None = None
+        # Optional process-local protection against bursts.  Defaults are
+        # unlimited for backwards compatibility; deployments can opt in with
+        # PAWBOT_PROVIDER_* or PAWBOT_<PROVIDER>_* environment variables.
+        self._request_admission = ProviderRequestAdmission.from_environment(provider_name)
 
     def set_llm_call_observer(self, observer: LLMCallObserver | None) -> None:
         """Attach a fail-open observer for each physical retry-managed call."""
@@ -1166,14 +1171,15 @@ class LLMProvider(ABC):
         started_at_ms = time.time_ns() // 1_000_000
         started_at_ns = time.monotonic_ns()
         try:
-            provider_context = kwargs.pop("provider_context", None)
-            if isinstance(provider_context, ProviderCallContext):
-                response = await self.chat_with_context(
-                    provider_context=provider_context,
-                    **kwargs,
-                )
-            else:
-                response = await self.chat(**kwargs)
+            async with self._request_admission:
+                provider_context = kwargs.pop("provider_context", None)
+                if isinstance(provider_context, ProviderCallContext):
+                    response = await self.chat_with_context(
+                        provider_context=provider_context,
+                        **kwargs,
+                    )
+                else:
+                    response = await self.chat(**kwargs)
         except asyncio.CancelledError:
             self._observe_llm_call(
                 LLMResponse(
@@ -1308,14 +1314,15 @@ class LLMProvider(ABC):
             return response
 
         try:
-            provider_context = kwargs.pop("provider_context", None)
-            if isinstance(provider_context, ProviderCallContext):
-                response = await self.chat_stream_with_context(
-                    provider_context=provider_context,
-                    **kwargs,
-                )
-            else:
-                response = await self.chat_stream(**kwargs)
+            async with self._request_admission:
+                provider_context = kwargs.pop("provider_context", None)
+                if isinstance(provider_context, ProviderCallContext):
+                    response = await self.chat_stream_with_context(
+                        provider_context=provider_context,
+                        **kwargs,
+                    )
+                else:
+                    response = await self.chat_stream(**kwargs)
         except asyncio.CancelledError:
             self._observe_llm_call(
                 LLMResponse(

@@ -127,6 +127,26 @@ def _build_checks(*, full: bool) -> list[CheckResult]:
             ),
         ),
         _run_command(
+            "DeepSeek provider contract tests",
+            _external_command(
+                "pytest",
+                "-q",
+                "tests/providers/test_deepseek_contract.py",
+                "tests/providers/test_provider_admission.py",
+            ),
+        ),
+        _run_command(
+            "Fault-injection boundary tests",
+            _external_command(
+                "pytest",
+                "-q",
+                "tests/session/test_recovery_fault_injection.py",
+                "tests/agent/blackbox/test_manifest.py",
+                "tests/agent/blackbox/test_provider_error_recording.py",
+                "tests/agent/test_turn_outcome_invariants.py",
+            ),
+        ),
+        _run_command(
             "Record & Replay fixture tests",
             _external_command(
                 "pytest",

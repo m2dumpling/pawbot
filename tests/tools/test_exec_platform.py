@@ -487,6 +487,14 @@ class TestPathAppendPlatform:
 class TestSandboxPlatform:
 
     @pytest.mark.asyncio
+    async def test_network_deny_fails_closed_without_supported_sandbox(self):
+        tool = ExecTool(network_policy="deny")
+
+        result = await tool.execute(command="echo should-not-run")
+
+        assert "will not silently run" in result
+
+    @pytest.mark.asyncio
     async def test_bwrap_skipped_on_windows(self):
         """bwrap must be silently skipped on Windows, not crash."""
         mock_proc = AsyncMock()
@@ -542,6 +550,7 @@ class TestSandboxPlatform:
         ):
             tool = ExecTool(
                 sandbox="bwrap",
+                network_policy="deny",
                 working_dir="/workspace",
                 sandbox_ro_binds=[str(tool_bin)],
                 sandbox_rw_binds=[str(tool_cache)],
@@ -555,6 +564,7 @@ class TestSandboxPlatform:
         assert kwargs["sandbox_rw_binds"] == [
             str(tool_cache.resolve(strict=False))
         ]
+        assert kwargs["network_policy"] == "deny"
 
 
 # ---------------------------------------------------------------------------
