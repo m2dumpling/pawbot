@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator, cast
 
 from loguru import logger
 
+from pawbot.agent.personalization import memory_use_override_from_metadata
 from pawbot.llm_usage.context import llm_usage_source
 from pawbot.runtime_context import public_history_messages
 from pawbot.session.manager import (
@@ -937,6 +938,7 @@ class MemoryArchiver:
                 fallback_last_active=session.updated_at,
             ),
             workspace=workspace,
+            memory_use_override=memory_use_override_from_metadata(session.metadata),
             session_key=session.key,
             unified_session=self.unified_session,
         )
@@ -1071,6 +1073,7 @@ class Consolidator:
             current_message="[token-probe]",
             channel=channel,
             session_summary=summary,
+            memory_use_override=memory_use_override_from_metadata(session.metadata),
             session_key=session.key,
             unified_session=self.unified_session,
         )

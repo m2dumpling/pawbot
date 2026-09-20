@@ -2,6 +2,7 @@ import type { SettingsPayload } from "@/lib/types";
 
 export type SettingsSectionKey =
   | "overview"
+  | "personalization"
   | "appearance"
   | "models"
   | "image"

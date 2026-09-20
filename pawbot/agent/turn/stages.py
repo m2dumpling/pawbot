@@ -22,6 +22,7 @@ from pawbot.agent.evaluation import (
     TaskContract,
     task_contract_from_metadata,
 )
+from pawbot.agent.personalization import memory_use_override_from_metadata
 from pawbot.agent.tools.message import capture_message_deliveries
 from pawbot.agent.tools.registry import ToolRegistry
 from pawbot.agent.turn.context import TurnContext, TurnKind
@@ -260,6 +261,7 @@ class TurnStagesMixin:
                 workspace=scope.project_path,
                 include_memory=session.policy.persist,
                 include_memory_recent_history=not ctx.ephemeral,
+                memory_use_override=memory_use_override_from_metadata(session.metadata),
                 session_key=session.key,
             )
             reserved_system_tokens = system_prompt_tokens(system_prompt, runtime.model)

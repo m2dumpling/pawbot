@@ -3,6 +3,38 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.5.3 - 2026-09-20
+
+### Added
+
+- Added a separate WebUI **Personalization** section for global, user-authored
+  instructions, independent from execution and regression tooling.
+- Added global memory switches for using confirmed memories and generating
+  background candidates.
+- Added `/memories` controls for inspecting and overriding memory behavior in
+  the current conversation.
+- Added memory search and audit-preserving clear-all behavior.
+
+### Changed
+
+- Personalization instructions are injected as a bounded, user-authored context
+  layer before project guidance and confirmed memory.
+- Moved memory management out of **Execution & regression** and into
+  **Personalization** in the WebUI.
+- README and usage diagrams now show personalization and memory policy as part
+  of the turn context path.
+
+### Fixed
+
+- Chinese memory keys such as `用户称呼=大海星` are normalized safely instead
+  of becoming an empty key; Chinese credential labels remain blocked.
+
+### Verification
+
+- Python: 6919 passed, 54 skipped.
+- WebUI: 1126 passed; production build passed.
+- Ruff and basedpyright passed.
+
 ## 0.5.2 - 2026-09-20
 
 ### Added

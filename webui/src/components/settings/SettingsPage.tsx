@@ -2,6 +2,7 @@ import { ChevronLeft, Loader2 } from "lucide-react";
 
 import { SkillsCatalogSettings } from "@/components/settings/SkillsCatalogSettings";
 import { EnhancementsSettings } from "@/components/settings/EnhancementsSettings";
+import { PersonalizationSettings } from "@/components/settings/PersonalizationSettings";
 import { ImageGenerationSettings } from "@/components/settings/capabilities/ImageGenerationSettings";
 import { AdvancedSettings } from "@/components/settings/capabilities/SecuritySettings";
 import { TranscriptionSettings } from "@/components/settings/capabilities/TranscriptionSettings";
@@ -229,6 +230,8 @@ export function SettingsPage({
             onSelectSection={selectSection}
           />
         );
+      case "personalization":
+        return <PersonalizationSettings />;
       case "appearance":
         return (
           <AppearanceSettings

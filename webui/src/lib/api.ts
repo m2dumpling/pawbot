@@ -10,6 +10,7 @@ import type {
   ExplicitMemoryKind,
   ExplicitMemoryRecord,
   ExplicitMemoryScope,
+  PersonalizationPayload,
   FilePreviewPayload,
   ImageGenerationSettingsUpdate,
   McpPresetsPayload,
@@ -1536,4 +1537,29 @@ export async function memoryForget(
   memoryId: string,
 ): Promise<{ memory_id: string; deleted: boolean }> {
   return mutation(transport, "memory.forget", { memory_id: memoryId });
+}
+
+export async function memoryClear(
+  transport: WebUIMutationTransport,
+): Promise<{ deleted: number }> {
+  return mutation(transport, "memory.clear", {});
+}
+
+export async function personalizationGet(
+  transport: WebUIMutationTransport,
+): Promise<PersonalizationPayload> {
+  return mutation<PersonalizationPayload>(transport, "personalization.get", {});
+}
+
+export async function personalizationUpdate(
+  transport: WebUIMutationTransport,
+  input: Partial<Pick<PersonalizationPayload, "enabled" | "instructions" | "use_memories" | "generate_memories">>,
+): Promise<PersonalizationPayload> {
+  return mutation<PersonalizationPayload>(transport, "personalization.update", input);
+}
+
+export async function personalizationClear(
+  transport: WebUIMutationTransport,
+): Promise<PersonalizationPayload> {
+  return mutation<PersonalizationPayload>(transport, "personalization.clear", {});
 }

@@ -207,7 +207,15 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "Manage memories",
         "List confirmed memories or review automatic candidates.",
         "brain",
-        "[list|candidates|show <id>]",
+        "[list|candidates|show <id>|clear]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/memories",
+        "Memory controls",
+        "Control memory use and memory generation for this chat.",
+        "brain-circuit",
+        "[show|use on|off|default|generate on|off|default]",
         accepts_args=True,
     ),
     BuiltinCommandSpec(
@@ -829,6 +837,15 @@ async def cmd_memory(ctx: CommandContext) -> OutboundMessage:
     else:
         records = []
 
+    if action == "clear":
+        deleted = store.clear_all()
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=f"已清空 {deleted} 条记忆。",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+
     if action == "show" and len(args) == 2 and not records:
         content = f"No memory found for `{args[1]}`."
     elif not records:
@@ -852,6 +869,62 @@ async def cmd_memory(ctx: CommandContext) -> OutboundMessage:
             for record in records
         )
         content = "\n".join(lines)
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+async def cmd_memories(ctx: CommandContext) -> OutboundMessage:
+    """Control memory behavior for the current conversation."""
+
+    from pawbot.agent.personalization import (
+        MEMORY_GENERATE_OVERRIDE_METADATA_KEY,
+        MEMORY_USE_OVERRIDE_METADATA_KEY,
+        memory_generate_override_from_metadata,
+        memory_use_override_from_metadata,
+    )
+
+    session = ctx.session or ctx.loop.sessions.get_or_create(ctx.key)
+    args = ctx.args.strip().lower().split()
+    if not args or args[0] == "show":
+        state = ctx.loop.context.personalization.read()
+        use_override = memory_use_override_from_metadata(session.metadata)
+        generate_override = memory_generate_override_from_metadata(session.metadata)
+        use_value = state.use_memories if use_override is None else use_override
+        generate_value = state.generate_memories if generate_override is None else generate_override
+        inherited = "（继承全局）" if use_override is None else "（当前会话覆盖）"
+        generated_inherited = "（继承全局）" if generate_override is None else "（当前会话覆盖）"
+        content = (
+            "当前会话记忆设置：\n"
+            f"- 使用已保存记忆：{'开启' if use_value else '关闭'} {inherited}\n"
+            f"- 允许生成记忆候选：{'开启' if generate_value else '关闭'} {generated_inherited}\n\n"
+            "用法：`/memories use on|off|default`，"
+            "`/memories generate on|off|default`"
+        )
+    elif len(args) == 2 and args[0] in {"use", "generate"} and args[1] in {
+        "on", "off", "default"
+    }:
+        key = (
+            MEMORY_USE_OVERRIDE_METADATA_KEY
+            if args[0] == "use"
+            else MEMORY_GENERATE_OVERRIDE_METADATA_KEY
+        )
+        if args[1] == "default":
+            session.metadata.pop(key, None)
+            value = "已恢复全局设置"
+        else:
+            session.metadata[key] = args[1] == "on"
+            value = f"已{'开启' if args[1] == 'on' else '关闭'}当前会话设置"
+        ctx.loop.sessions.save(session)
+        content = f"{('记忆使用' if args[0] == 'use' else '记忆生成')}：{value}。"
+    else:
+        content = (
+            "用法：`/memories show`、`/memories use on|off|default`、"
+            "`/memories generate on|off|default`"
+        )
     return OutboundMessage(
         channel=ctx.msg.channel,
         chat_id=ctx.msg.chat_id,
@@ -1200,7 +1273,13 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
             prompt, last_cursor = result
             key = dream_session_key()
             dream_runtime = loop.dream_runtime()
-            if dream_runtime is not None and explicit_store is not None:
+            personalization = getattr(loop.context, "personalization", None)
+            generation_enabled = (
+                personalization.memory_generation_enabled()
+                if personalization is not None
+                else True
+            )
+            if dream_runtime is not None and explicit_store is not None and generation_enabled:
                 from pawbot.agent.memory_extractor import extract_and_store_dream_candidates
 
                 try:
@@ -1837,6 +1916,8 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.prefix("/remember ", cmd_remember)
     router.exact("/memory", cmd_memory)
     router.prefix("/memory ", cmd_memory)
+    router.exact("/memories", cmd_memories)
+    router.prefix("/memories ", cmd_memories)
     router.exact("/forget", cmd_forget)
     router.prefix("/forget ", cmd_forget)
     router.exact("/evaluator-prompt", cmd_evaluator_prompt)

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from pawbot.agent.memory_preferences import MemoryPolicyError
+from pawbot.agent.personalization import PersonalizationPolicyError
 from pawbot.webui.session_list_index import list_webui_sessions
 from pawbot.webui.sidebar_state import read_webui_sidebar_state
 
@@ -38,6 +39,38 @@ def _memory_store(agent: Any) -> Any:
     if store is None:
         raise BlackboxActionError(503, "Explicit memory is unavailable")
     return store
+
+
+def _personalization_store(agent: Any) -> Any:
+    context = getattr(agent, "context", None)
+    store = getattr(context, "personalization", None)
+    if store is None:
+        raise BlackboxActionError(503, "Personalization is unavailable")
+    return store
+
+
+async def _personalization_get(agent: Any, _payload: dict[str, Any]) -> dict[str, Any]:
+    return _personalization_store(agent).payload()
+
+
+async def _personalization_update(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    store = _personalization_store(agent)
+    kwargs = {
+        key: payload[key]
+        for key in ("instructions", "enabled", "use_memories", "generate_memories")
+        if key in payload
+    }
+    try:
+        store.update(**kwargs)
+    except PersonalizationPolicyError as exc:
+        raise BlackboxActionError(400, str(exc)) from exc
+    return store.payload()
+
+
+async def _personalization_clear(agent: Any, _payload: dict[str, Any]) -> dict[str, Any]:
+    store = _personalization_store(agent)
+    store.clear_instructions()
+    return store.payload()
 
 
 async def _memory_list(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -89,6 +122,11 @@ async def _memory_forget(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
     if not removed:
         raise BlackboxActionError(404, "memory not found")
     return {"memory_id": memory_id, "deleted": True}
+
+
+async def _memory_clear(agent: Any, _payload: dict[str, Any]) -> dict[str, Any]:
+    deleted = _memory_store(agent).clear_all()
+    return {"deleted": deleted}
 
 
 async def _memory_remember_note(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1294,6 +1332,12 @@ def blackbox_action_factory(
             return await _trace_list(agent, payload)
         if action == "trace.detail":
             return await _trace_detail(agent, payload)
+        if action == "personalization.get":
+            return await _personalization_get(agent, payload)
+        if action == "personalization.update":
+            return await _personalization_update(agent, payload)
+        if action == "personalization.clear":
+            return await _personalization_clear(agent, payload)
         if action == "memory.list":
             return await _memory_list(agent, payload)
         if action == "memory.remember":
@@ -1306,6 +1350,8 @@ def blackbox_action_factory(
             return await _memory_status_update(agent, payload, promote=False)
         if action == "memory.forget":
             return await _memory_forget(agent, payload)
+        if action == "memory.clear":
+            return await _memory_clear(agent, payload)
         raise BlackboxActionError(400, f"unknown blackbox action {action!r}")
 
     return dispatch

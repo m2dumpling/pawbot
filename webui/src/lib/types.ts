@@ -1355,6 +1355,18 @@ export interface ExplicitMemoryRecord {
   expires_at?: string | null;
 }
 
+export interface PersonalizationPayload {
+  schema_version: number;
+  enabled: boolean;
+  instructions: string;
+  use_memories: boolean;
+  generate_memories: boolean;
+  updated_at?: string | null;
+  content_hash?: string;
+  path?: string;
+  max_instructions_chars?: number;
+}
+
 export type ConnectionStatus =
   | "idle"
   | "connecting"

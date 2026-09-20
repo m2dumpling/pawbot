@@ -44,7 +44,8 @@ MemoryValue = Any
 
 _SENSITIVE_KEY_RE = re.compile(
     r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|"
-    r"authorization|private[_-]?key|client[_-]?secret)",
+    r"authorization|private[_-]?key|client[_-]?secret|"
+    r"密码|口令|密钥|令牌|访问令牌|刷新令牌|授权|私钥|凭证|秘密)",
     re.IGNORECASE,
 )
 _SECRET_VALUE_RE = re.compile(
@@ -56,6 +57,23 @@ _MAX_KEY_LENGTH = 120
 _MAX_VALUE_LENGTH = 2_000
 _MAX_EVIDENCE_REFS = 64
 _MAX_EVIDENCE_REF_LENGTH = 240
+
+_KEY_ALIASES = {
+    "用户称呼": "user_name",
+    "用户名字": "user_name",
+    "昵称": "user_name",
+    "称呼": "user_name",
+    "名字": "user_name",
+    "回复语言": "reply_language",
+    "回答语言": "reply_language",
+    "回复风格": "response_style",
+    "回答风格": "response_style",
+    "时区": "timezone",
+    "密码": "password",
+    "口令": "password",
+    "密钥": "secret",
+    "令牌": "token",
+}
 
 
 class MemoryPolicyError(ValueError):
@@ -99,7 +117,13 @@ def workspace_identity(workspace: Path) -> str:
 
 
 def _normalize_key(key: str) -> str:
-    normalized = re.sub(r"[^a-z0-9_.-]+", "_", key.strip().lower()).strip("_.-")
+    raw = " ".join(key.strip().split())
+    raw = _KEY_ALIASES.get(raw.casefold(), raw)
+    # Keep Unicode letters and numbers so an explicit command such as
+    # ``/remember global 用户称呼=大海星`` remains a valid structured record.
+    # Canonical aliases above keep common fields stable across Chinese and
+    # English input, while arbitrary user-defined labels remain readable.
+    normalized = re.sub(r"[^\w.-]+", "_", raw.casefold(), flags=re.UNICODE).strip("_.-")
     if not normalized:
         raise MemoryPolicyError("memory key cannot be empty")
     if len(normalized) > _MAX_KEY_LENGTH:
@@ -408,6 +432,30 @@ class ExplicitMemoryStore:
             )
             return True
         return False
+
+    def clear_all(self) -> int:
+        """Append user deletion events for every current memory record."""
+
+        deleted = 0
+        for scope_value in ("global", "workspace"):
+            path = self.path_for_scope(scope_value)
+            current = self._current_for_path(path)
+            if not current:
+                continue
+            now = _now()
+            for memory_id in current:
+                self._append_event(
+                    path,
+                    {
+                        "event_id": f"mem_evt_{uuid4().hex}",
+                        "operation": "delete",
+                        "memory_id": memory_id,
+                        "source": "user",
+                        "created_at": now,
+                    },
+                )
+                deleted += 1
+        return deleted
 
     def remember_note(
         self,

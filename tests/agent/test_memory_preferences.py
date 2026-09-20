@@ -97,6 +97,13 @@ def test_explicit_memory_rejects_secrets(tmp_path: Path) -> None:
             key="provider",
             value="sk-12345678901234567890",
         )
+    with pytest.raises(MemoryPolicyError):
+        store.remember(
+            scope="global",
+            kind="fact",
+            key="密码",
+            value="not-safe-to-save",
+        )
 
 
 def test_memory_provenance_is_derived_and_untrusted_records_cannot_be_promoted(

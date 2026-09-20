@@ -14,6 +14,7 @@ import {
   Server,
   ShieldCheck,
   SlidersHorizontal,
+  UserRound,
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -34,6 +35,7 @@ import { cn } from "@/lib/utils";
 
 const SETTINGS_NAV_ITEMS: Array<{ key: SettingsSectionKey; icon: LucideIcon; fallback: string }> = [
   { key: "overview", icon: Activity, fallback: "Overview" },
+  { key: "personalization", icon: UserRound, fallback: "Personalization" },
   { key: "models", icon: SlidersHorizontal, fallback: "Models" },
   { key: "appearance", icon: Palette, fallback: "Appearance" },
   { key: "runtime", icon: Server, fallback: "System" },

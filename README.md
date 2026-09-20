@@ -44,6 +44,9 @@ without another model request, another token bill, or real tool side effects.
   and other tools.
 - Connect to MCP servers and load extensions without changing the core agent.
 - Keep session history and long-term memory across conversations.
+- Edit global personal instructions and manage saved memories separately in
+  **Settings → Personalization**; use `/memories` to override memory behavior for
+  the current chat.
 - Save explicit global or workspace preferences immediately with `/remember`, independently of Dream or context compaction.
 - Run long tasks and scheduled automations.
 - Use Anthropic, OpenAI-compatible endpoints, local models, fallbacks, and
@@ -67,11 +70,13 @@ real tools part of a regression test.
 flowchart LR
     A[WebUI / CLI / API / chat channels] --> B[Gateway / Message Bus]
     B --> C[AgentLoop turn pipeline]
-    C --> C1[Restore session]
+    C --> C0[Load personalization + project guidance]
+    C0 --> C1[Restore session]
     C1 --> C2[Compact context]
     C2 --> C3[Dispatch command]
     C3 --> C4[Build provider request]
-    C4 --> D[AgentRunner ReAct loop]
+    C4 --> Q[Apply personalization + memory policy]
+    Q --> D[AgentRunner ReAct loop]
     D --> E[Provider response]
     D --> F[Tool Registry]
     F --> G[Batch planner]
@@ -84,6 +89,8 @@ flowchart LR
     L --> N[Record & Replay]
     M --> N
     N --> O[Offline replay + structural diff]
+    D --> R[Trace + rolling replay evidence]
+    R --> N
     D --> P[Turn delivery / UI events]
 ```
 
@@ -96,6 +103,9 @@ The current runtime also makes three boundaries explicit:
 
 - **Memory provenance:** confirmed preferences, Dream candidates, and external
   tool/web content have different trust levels and source references.
+- **Personalization boundary:** user-authored instructions, project guidance,
+  confirmed memories, and automatic candidates remain separate and can be
+  disabled at the global or current-chat level.
 - **Task assertions:** `TaskContract` can express `must`, `must_not`, and
   partial `ordered` constraints, returning `passed`, `failed`, or
   `not_evaluable` per assertion.
@@ -177,19 +187,19 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.2/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.3/scripts/install.sh | sh
 ```
 
 If `curl` is not available, use `wget` instead:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.2/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.3/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.2/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.3/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a

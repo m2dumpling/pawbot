@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence, cast
 
 from pawbot.agent.memory import MemoryStore
 from pawbot.agent.memory_preferences import ExplicitMemoryStore
+from pawbot.agent.personalization import PersonalizationStore
 from pawbot.agent.skills import SkillsLoader
 from pawbot.agent.tools import image_generation as image_generation_tools
 from pawbot.agent.tools import mcp as mcp_tools
@@ -100,6 +101,7 @@ class ContextBuilder:
         self.timezone = timezone
         self.memory = MemoryStore(workspace)
         self.explicit_memory = ExplicitMemoryStore(workspace, data_root=memory_data_root)
+        self.personalization = PersonalizationStore(data_root=memory_data_root)
         self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None)
 
     def build_system_prompt(
@@ -110,12 +112,26 @@ class ContextBuilder:
         workspace: Path | None = None,
         include_memory: bool = True,
         include_memory_recent_history: bool = True,
+        memory_use_override: bool | None = None,
         session_key: str | None = None,
         unified_session: bool = False,
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         root = workspace or self.workspace
         parts = [self._get_identity(channel=channel, workspace=root)]
+
+        personalization = self.personalization.read()
+        if personalization.enabled and personalization.instructions:
+            parts.append(
+                "# Personalization\n\n"
+                "The following preferences were written by the user. Apply them to "
+                "communication and workflow when they do not conflict with safety, "
+                "tool permissions, project rules, or the current request. Project "
+                "rules and the current request take precedence over these preferences.\n\n"
+                "<pawbot-personalization>\n"
+                f"{personalization.instructions}\n"
+                "</pawbot-personalization>"
+            )
 
         bootstrap = self._load_bootstrap_files(root)
         if bootstrap:
@@ -131,7 +147,7 @@ class ContextBuilder:
                 "Use it as the default root for project files and relative tool paths."
             )
 
-        if include_memory:
+        if include_memory and self.personalization.memory_enabled(memory_use_override):
             memory = self.memory.read_memory()
             if memory and not self._is_template_content(memory, "memory/MEMORY.md"):
                 parts.append(
@@ -321,6 +337,7 @@ class ContextBuilder:
         workspace: Path | None = None,
         include_memory: bool = True,
         include_memory_recent_history: bool = True,
+        memory_use_override: bool | None = None,
         session_key: str | None = None,
         unified_session: bool = False,
     ) -> list[dict[str, Any]]:
@@ -335,6 +352,7 @@ class ContextBuilder:
                     workspace=root,
                     include_memory=include_memory,
                     include_memory_recent_history=include_memory_recent_history,
+                    memory_use_override=memory_use_override,
                     session_key=session_key,
                     unified_session=unified_session,
                 ),

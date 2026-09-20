@@ -36,6 +36,7 @@ from pawbot.agent.memory import Consolidator
 from pawbot.agent.memory_preferences import MemoryScope
 from pawbot.agent.model_runtime import ModelRuntimeResolver
 from pawbot.agent.observability import TraceRun, TraceStore, redact_text
+from pawbot.agent.personalization import memory_use_override_from_metadata
 from pawbot.agent.runner import (
     _MAX_INJECTIONS_PER_TURN,
     AgentRunner,
@@ -1088,6 +1089,7 @@ class AgentLoop(TurnStagesMixin):
             runtime_context_blocks=ctx.runtime_context_blocks,
             include_memory=ctx.session.policy.persist,
             include_memory_recent_history=not ctx.ephemeral,
+            memory_use_override=memory_use_override_from_metadata(ctx.session.metadata),
             session_key=ctx.session.key,
             unified_session=self._unified_session,
         )

@@ -25,6 +25,7 @@ export function MemorySettings() {
   const [scope, setScope] = useState<ExplicitMemoryScope>("global");
   const [key, setKey] = useState("reply_language");
   const [value, setValue] = useState("zh-CN");
+  const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +40,12 @@ export function MemorySettings() {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const onCleared = () => void refresh();
+    window.addEventListener("pawbot:memory-cleared", onCleared);
+    return () => window.removeEventListener("pawbot:memory-cleared", onCleared);
   }, [refresh]);
 
   async function saveMemory() {
@@ -91,6 +98,16 @@ export function MemorySettings() {
       setBusy(null);
     }
   }
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleMemories = normalizedQuery
+    ? memories.filter((record) =>
+        [record.key, String(record.value), record.evidence ?? "", record.source]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery),
+      )
+    : memories;
 
   return (
     <section className="rounded-2xl border border-settings-border bg-settings-surface p-5">
@@ -160,14 +177,22 @@ export function MemorySettings() {
         </Button>
       </div>
 
+      <Input
+        className="mt-3"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder={t("settings.memory.search", { defaultValue: "Search memories" })}
+        aria-label={t("settings.memory.search", { defaultValue: "Search memories" })}
+      />
+
       {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
 
       <div className="mt-4 space-y-2">
-        {memories.length === 0 ? (
+        {visibleMemories.length === 0 ? (
           <p className="rounded-lg border border-dashed border-settings-border p-4 text-sm text-settings-muted">
             {t("settings.memory.empty", { defaultValue: "No confirmed memories yet." })}
           </p>
-        ) : memories.map((record) => (
+        ) : visibleMemories.map((record) => (
           <div key={record.memory_id} className="flex items-center justify-between gap-3 rounded-lg border border-settings-border p-3">
             <div className="min-w-0">
               <div className="truncate text-sm font-medium text-settings-foreground">

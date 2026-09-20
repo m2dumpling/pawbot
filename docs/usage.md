@@ -1,6 +1,6 @@
 # pawbot Usage Guide
 
-This guide corresponds to `v0.5.2`.
+This guide corresponds to `v0.5.3`.
 
 This guide explains how to use the released Pawbot features from the CLI and WebUI: Trace, the rolling replay buffer, Record & Replay, TaskContract, the Task Eval Set, and the Agent Harness.
 
@@ -118,7 +118,24 @@ The same actions are available as slash commands:
 
 **Keep for regression** creates a permanent sample for later Replay. **Add to task eval** promotes the sample and registers it in the local custom evaluation set. If the original turn had no TaskContract, its task result may be `not_evaluable`, while its trajectory can still be checked. **Ignore** moves it to reviewed evidence.
 
-## 5. Save an explicit user preference
+## 5. Personalization and memory
+
+Open **Settings → Personalization** to edit the free-form personal instructions
+that are injected into future chats. Use this for stable preferences such as
+response language, answer style, or how you want code changes explained. Project-only
+rules belong in the project's `AGENTS.md`.
+
+The same page controls whether confirmed memories are used and whether background
+memory candidates may be generated. `/memories` shows or overrides those choices
+for the current chat:
+
+```text
+/memories show
+/memories use on|off|default
+/memories generate on|off|default
+```
+
+### Save an explicit user preference
 
 Explicit preferences do not wait for Compact or Dream. They are stored in the
 Pawbot runtime data directory and injected into future turns for the selected
@@ -137,15 +154,16 @@ scope.
 
 Use `global` for a preference that should follow you across workspaces, and
 `workspace` for a project-specific rule. The WebUI exposes the same controls in
-**Settings → Confirmed memory**. Pawbot rejects obvious credentials and keeps a
-delete event in the local memory audit log.
+**Settings → Personalization → Memory**. Pawbot rejects obvious credentials and
+keeps a delete event in the local memory audit log. **Delete saved memories** clears
+confirmed records and candidates while retaining those audit tombstones.
 
 Dream remains the automatic, lower-confidence memory path; it must not overwrite
 an explicitly confirmed preference.
 
 When Dream finds a possible preference or project fact, it stores a candidate with
-confidence and evidence. Candidates are visible in **Settings → Confirmed memory →
-Suggestions**. Save or ignore them there, or use `/memory confirm <id>` and
+confidence and evidence. Candidates are visible in **Settings → Personalization →
+Memory → Suggestions**. Save or ignore them there, or use `/memory confirm <id>` and
 `/memory reject <id>`.
 
 ## 6. Save a complete regression sample manually

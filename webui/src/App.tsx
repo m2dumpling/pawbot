@@ -158,6 +158,7 @@ function SurfaceLoadingFallback() {
 
 const SETTINGS_SECTION_KEYS: SettingsSectionKey[] = [
   "overview",
+  "personalization",
   "appearance",
   "models",
   "image",

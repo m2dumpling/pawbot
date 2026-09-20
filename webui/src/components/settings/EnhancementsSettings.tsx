@@ -66,7 +66,6 @@ import {
   type TraceSummary,
 } from "@/lib/api";
 import { useClient } from "@/providers/ClientProvider";
-import { MemorySettings } from "@/components/settings/MemorySettings";
 
 type Translate = TFunction;
 type TraceFilter = "all" | "issues" | "slow";
@@ -1575,7 +1574,6 @@ export function EnhancementsSettings() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <MemorySettings />
       <section className="rounded-2xl border border-violet-200 bg-violet-50/70 p-5 dark:border-violet-900 dark:bg-violet-950/20">
         <div className="flex items-start gap-3">
           <Bug className="mt-0.5 h-5 w-5 shrink-0 text-violet-600" />
