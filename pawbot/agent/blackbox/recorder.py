@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import shutil
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -85,6 +86,16 @@ def _safe_vcr_import() -> Any | None:
 
 def _sanitize_turn_name(turn_id: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in turn_id)
+
+
+def safe_vcr_import() -> Any | None:
+    """Public adapter for other local recording implementations."""
+    return _safe_vcr_import()
+
+
+def sanitize_turn_name(turn_id: str) -> str:
+    """Public adapter for other local recording implementations."""
+    return _sanitize_turn_name(turn_id)
 
 
 def _recording_root(workspace: Path) -> Path:
@@ -184,6 +195,8 @@ class TurnRecorder(AgentHook):
         initial_messages: list[dict[str, Any]],
         tools_definitions: list[dict[str, Any]] | None = None,
         task_contract: TaskContract | None = None,
+        on_finished: Callable[[Path, AgentRunHookContext], None] | None = None,
+        payload_transform: Callable[[Any], Any] | None = None,
     ) -> None:
         self._dir = directory
         self._turn_id = turn_id
@@ -192,8 +205,13 @@ class TurnRecorder(AgentHook):
         self._initial_messages = initial_messages
         self._tools_definitions = tools_definitions or []
         self._task_contract = task_contract
+        self._on_finished = on_finished
+        self._payload_transform = payload_transform
         self._response_index = 0
         self._turn_written = False
+
+    def _payload(self, value: Any) -> Any:
+        return self._payload_transform(value) if self._payload_transform is not None else _json_safe(value)
 
     def _append_tools(self, record: dict[str, Any]) -> None:
         append_jsonl(self._dir / _TOOL_JSONL, record)
@@ -226,9 +244,9 @@ class TurnRecorder(AgentHook):
             "phase": event.get("phase"),
             "call_id": event.get("call_id"),
             "name": event.get("name"),
-            "args": _json_safe(event.get("arguments") or {}),
-            "result": _json_safe(event.get("result")),
-            "error": _json_safe(event.get("error")),
+            "args": self._payload(event.get("arguments") or {}),
+            "result": self._payload(event.get("result")),
+            "error": self._payload(event.get("error")),
         })
 
     async def on_execute_tool_cancelled(
@@ -259,10 +277,10 @@ class TurnRecorder(AgentHook):
             "invocation_index": len(context.tool_states) - 1,
             "name": tool_call.name,
             "key": tool_key(tool_call.name, args),
-            "args": _json_safe(args),
+            "args": self._payload(args),
             "status": "unknown",
             "detail": "tool execution cancelled; side effect status is unknown",
-            "execution": _json_safe(execution),
+            "execution": self._payload(execution),
             "result": "Tool execution was cancelled; inspect the external system before retrying.",
         })
 
@@ -283,12 +301,12 @@ class TurnRecorder(AgentHook):
             "response_index": response_index,
             "response": {
                 "content": response.content,
-                "tool_calls": [_tool_call_payload(tc) for tc in response.tool_calls],
+                "tool_calls": [self._payload(_tool_call_payload(tc)) for tc in response.tool_calls],
                 "finish_reason": response.finish_reason,
                 "usage": usage,
-                "reasoning_content": _json_safe(response.reasoning_content),
-                "thinking_blocks": _json_safe(response.thinking_blocks),
-                "provider_state": _provider_state_payload(response),
+                "reasoning_content": self._payload(response.reasoning_content),
+                "thinking_blocks": self._payload(response.thinking_blocks),
+                "provider_state": self._payload(_provider_state_payload(response)),
                 "generation_ms": response.generation_ms,
                 "ttft_ms": response.ttft_ms,
                 "error_status_code": response.error_status_code,
@@ -326,16 +344,16 @@ class TurnRecorder(AgentHook):
                 "invocation_index": index,
                 "name": tool_call.name,
                 "key": tool_key(tool_call.name, args),
-                "args": _json_safe(args),
+                "args": self._payload(args),
                 "status": str(event.get("status") or "ok"),
                 "detail": event.get("detail", ""),
-                "execution": _json_safe(
+                "execution": self._payload(
                     states_by_call_id.get(
                         str(tool_call.id),
                         {"state": "succeeded"},
                     ),
                 ),
-                "result": _json_safe(result),
+                "result": self._payload(result),
             })
 
     async def on_model_error(
@@ -377,25 +395,26 @@ class TurnRecorder(AgentHook):
                 "turn_id": self._turn_id,
                 "session_key": self._session_key,
                 "model": self._model,
-                "initial_messages": _json_safe(self._initial_messages),
-                "final_messages": _json_safe(context.messages),
+                "initial_messages": self._payload(self._initial_messages),
+                "final_messages": self._payload(context.messages),
                 "final_content": context.final_content,
                 "stop_reason": context.stop_reason,
-                "tools": _json_safe(self._tools_definitions),
+                "tools": self._payload(self._tools_definitions),
                 "usage": (
                     context.usage.to_dict() if context.usage is not None else None
                 ),
-                "tool_states": _json_safe(context.tool_states),
+                "tool_states": self._payload(context.tool_states),
                 "budget": _json_safe(context.budget),
                 "task_contract": (
-                    _json_safe(self._task_contract.to_dict())
+                    self._payload(self._task_contract.to_dict())
                     if self._task_contract is not None
                     else None
                 ),
-                "task_evaluation": _json_safe(context.task_evaluation),
-                "outcome": _json_safe(context.outcome),
+                "task_evaluation": self._payload(context.task_evaluation),
+                "outcome": self._payload(context.outcome),
         })
         self._turn_written = True
+        self._notify_finished(context)
 
     async def on_finally(self, context: AgentRunHookContext) -> None:
         """Keep an aborted turn visible as an incomplete diagnostic artifact."""
@@ -412,23 +431,33 @@ class TurnRecorder(AgentHook):
                 "turn_id": self._turn_id,
                 "session_key": self._session_key,
                 "model": self._model,
-                "initial_messages": _json_safe(self._initial_messages),
-                "final_messages": _json_safe(context.messages),
+                "initial_messages": self._payload(self._initial_messages),
+                "final_messages": self._payload(context.messages),
                 "final_content": context.final_content,
                 "stop_reason": context.stop_reason or "cancelled",
                 "error": context.error,
-                "tools": _json_safe(self._tools_definitions),
-                "tool_states": _json_safe(context.tool_states),
+                "tools": self._payload(self._tools_definitions),
+                "tool_states": self._payload(context.tool_states),
                 "budget": _json_safe(context.budget),
                 "task_contract": (
-                    _json_safe(self._task_contract.to_dict())
+                    self._payload(self._task_contract.to_dict())
                     if self._task_contract is not None
                     else None
                 ),
-                "task_evaluation": _json_safe(context.task_evaluation),
-                "outcome": _json_safe(context.outcome),
+                "task_evaluation": self._payload(context.task_evaluation),
+                "outcome": self._payload(context.outcome),
         })
         self._turn_written = True
+        self._notify_finished(context)
+
+    def _notify_finished(self, context: AgentRunHookContext) -> None:
+        """Notify an owning recorder without allowing bookkeeping to break a turn."""
+        if self._on_finished is None:
+            return
+        try:
+            self._on_finished(self._dir, context)
+        except Exception:
+            logger.exception("failed to finalize rolling recording {}", self._dir)
 
 
 class BlackboxController:
@@ -477,6 +506,15 @@ class BlackboxController:
             cassette_path.write_text("interactions: []\n", encoding="utf-8")
             tighten_permissions(cassette_path)
 
+    def recording_directory_for_turn(
+        self,
+        turn_id: str,
+        session_key: str | None = None,
+    ) -> Path:
+        """Return the shared sample directory for Trace co-location."""
+        del turn_id, session_key
+        return self.directory
+
     def turn_hook(
         self,
         turn_id: str,
@@ -486,6 +524,8 @@ class BlackboxController:
         model: str = "",
         tools_definitions: list[dict[str, Any]] | None = None,
         task_contract: TaskContract | None = None,
+        on_finished: Callable[[Path, AgentRunHookContext], None] | None = None,
+        payload_transform: Callable[[Any], Any] | None = None,
     ) -> AgentHook | None:
         return TurnRecorder(
             self.directory,
@@ -495,6 +535,8 @@ class BlackboxController:
             initial_messages=initial_messages,
             tools_definitions=tools_definitions,
             task_contract=task_contract,
+            on_finished=on_finished,
+            payload_transform=payload_transform,
         )
 
     def write_meta(self, *, session_key: str | None, model: str) -> None:

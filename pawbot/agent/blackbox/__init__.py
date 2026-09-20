@@ -30,6 +30,7 @@ from pawbot.agent.blackbox.replayer import (
     lookup_replay_result,
     replay_is_active,
 )
+from pawbot.agent.blackbox.rolling import RollingBlackboxController
 
 __all__ = [
     "BlackboxController",
@@ -42,6 +43,7 @@ __all__ = [
     "validate_recording_manifest",
     "ReplayBreakpoint",
     "ReplayController",
+    "RollingBlackboxController",
     "ReplayProvider",
     "ReplayStore",
     "compare_trace_events",

@@ -660,6 +660,20 @@ def _run_gateway(
                 prompt, last_cursor = result
                 key = dream_session_key()
                 dream_runtime = agent.dream_runtime()
+                explicit_store = getattr(agent.context, "explicit_memory", None)
+                if dream_runtime is not None and explicit_store is not None:
+                    from pawbot.agent.memory_extractor import extract_and_store_dream_candidates
+
+                    try:
+                        await extract_and_store_dream_candidates(
+                            dream_runtime,
+                            store.read_unprocessed_history(
+                                since_cursor=store.get_last_dream_cursor(),
+                            )[:20],
+                            explicit_store,
+                        )
+                    except Exception:
+                        logger.exception("Dream candidate extraction failed")
                 await mcp_provider.connect()
                 resp = await agent.process_direct(
                     prompt,

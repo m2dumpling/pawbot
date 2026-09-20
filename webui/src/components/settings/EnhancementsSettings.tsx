@@ -37,26 +37,36 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
+  blackboxAddCandidateToEval,
+  blackboxCandidates,
   blackboxDelete,
   blackboxDetail,
   blackboxList,
   blackboxReplay,
+  blackboxPromoteCandidate,
+  blackboxRejectCandidate,
   blackboxStart,
   blackboxStatus,
   blackboxStop,
   blackboxTokens,
+  taskEvalList,
+  taskEvalRun,
   traceDetail,
   traceList,
   type BlackboxBreakpoint,
+  type BlackboxCandidate,
   type BlackboxDetail,
   type BlackboxRecording,
   type BlackboxReplayResult,
   type BlackboxStatus,
   type BlackboxTokens,
+  type TaskEvalCase,
+  type TaskEvalReport,
   type TraceDetail,
   type TraceSummary,
 } from "@/lib/api";
 import { useClient } from "@/providers/ClientProvider";
+import { MemorySettings } from "@/components/settings/MemorySettings";
 
 type Translate = TFunction;
 type TraceFilter = "all" | "issues" | "slow";
@@ -1331,6 +1341,9 @@ export function EnhancementsSettings() {
 
   const [status, setStatus] = useState<BlackboxStatus | null>(null);
   const [recordings, setRecordings] = useState<BlackboxRecording[]>([]);
+  const [candidates, setCandidates] = useState<BlackboxCandidate[]>([]);
+  const [evalCases, setEvalCases] = useState<TaskEvalCase[]>([]);
+  const [evalReport, setEvalReport] = useState<TaskEvalReport | null>(null);
   const [tokens, setTokens] = useState<BlackboxTokens | null>(null);
   const [traces, setTraces] = useState<TraceSummary[]>([]);
   const [traceFilter, setTraceFilter] = useState<TraceFilter>("all");
@@ -1348,16 +1361,20 @@ export function EnhancementsSettings() {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextStatus, nextRecordings, nextTokens] = await Promise.all([
+      const [nextStatus, nextRecordings, nextCandidates, nextTokens] = await Promise.all([
         blackboxStatus(client),
         blackboxList(client),
+        blackboxCandidates(client).catch(() => ({ candidates: [] })),
         blackboxTokens(client, null),
       ]);
       const nextTraces = await traceList(client, { filter: traceFilter }).catch(() => ({ traces: [], root: "" }));
+      const nextEval = await taskEvalList(client).catch(() => ({ eval_set: "", version: 0, cases: [] }));
       setStatus(nextStatus);
       setRecordings(nextRecordings.recordings);
+      setCandidates(nextCandidates.candidates);
       setTokens(nextTokens);
       setTraces(nextTraces.traces);
+      setEvalCases(nextEval.cases);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1408,6 +1425,57 @@ export function EnhancementsSettings() {
     try {
       await blackboxStop(client);
       await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function promoteCandidate(candidate: BlackboxCandidate) {
+    setBusy(`promote:${candidate.candidate_id}`);
+    setError(null);
+    try {
+      await blackboxPromoteCandidate(client, candidate.candidate_id);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function addCandidateToEval(candidate: BlackboxCandidate) {
+    setBusy(`eval-candidate:${candidate.candidate_id}`);
+    setError(null);
+    try {
+      await blackboxAddCandidateToEval(client, candidate.candidate_id, candidate.candidate_id);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function rejectCandidate(candidate: BlackboxCandidate) {
+    setBusy(`reject:${candidate.candidate_id}`);
+    setError(null);
+    try {
+      await blackboxRejectCandidate(client, candidate.candidate_id);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runTaskEval() {
+    setBusy("eval");
+    setError(null);
+    try {
+      setEvalReport(await taskEvalRun(client));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1507,6 +1575,7 @@ export function EnhancementsSettings() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
+      <MemorySettings />
       <section className="rounded-2xl border border-violet-200 bg-violet-50/70 p-5 dark:border-violet-900 dark:bg-violet-950/20">
         <div className="flex items-start gap-3">
           <Bug className="mt-0.5 h-5 w-5 shrink-0 text-violet-600" />
@@ -1652,6 +1721,120 @@ export function EnhancementsSettings() {
         {status?.recording ? (
           <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-300">
             {tx(t, "settings.enhancements.recording.allSessions", "Every session's turns are included from Save until Stop.")}
+          </div>
+        ) : null}
+
+        {status?.rolling_enabled ? (
+          <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-200">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold">
+                {tx(t, "settings.enhancements.recording.rollingTitle", "Automatic rolling replay buffer")}
+              </span>
+              <span>
+                {tx(t, "settings.enhancements.recording.rollingLimit", "Keeps the latest {{count}} turns per conversation", {
+                  count: status.rolling_max_turns_per_session ?? 20,
+                })}
+              </span>
+            </div>
+            <p className="mt-1 text-blue-800/80 dark:text-blue-200/80">
+              {tx(t, "settings.enhancements.recording.rollingDescription", "Recent turns are kept locally so an unexpected failure can still be saved for replay. Normal turns are rotated out; flagged candidates stay until you decide.")}
+            </p>
+          </div>
+        ) : null}
+
+        {candidates.length > 0 ? (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-900 dark:bg-amber-950/15">
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <h4 className="text-sm font-semibold text-amber-950 dark:text-amber-100">
+                {tx(t, "settings.enhancements.recording.candidatesTitle", "Candidate problem runs")}
+              </h4>
+              <span className="text-xs text-amber-900/70 dark:text-amber-200/70">
+                {tx(t, "settings.enhancements.recording.candidatesDescription", "Failures kept automatically from the rolling buffer")}
+              </span>
+            </div>
+            <div className="flex flex-col gap-2">
+              {candidates.map((candidate) => (
+                <div key={candidate.candidate_id} className="flex flex-col gap-2 rounded-lg border border-amber-200 bg-white/80 px-3 py-3 dark:border-amber-900 dark:bg-black/20 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-settings-foreground">{candidate.candidate_id}</div>
+                    <div className="mt-1 text-xs text-settings-muted">
+                      {(candidate.reasons ?? []).join(" · ") || tx(t, "settings.enhancements.recording.candidateUnknown", "Execution issue")}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void promoteCandidate(candidate)}
+                      disabled={busy !== null}
+                    >
+                      {busy === `promote:${candidate.candidate_id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}
+                      {tx(t, "settings.enhancements.recording.keepCandidate", "Keep for regression")}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void addCandidateToEval(candidate)}
+                      disabled={busy !== null}
+                    >
+                      {busy === `eval-candidate:${candidate.candidate_id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}
+                      {tx(t, "settings.enhancements.recording.addToEval", "Add to task eval")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void rejectCandidate(candidate)}
+                      disabled={busy !== null}
+                    >
+                      {busy === `reject:${candidate.candidate_id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      {tx(t, "settings.enhancements.recording.rejectCandidate", "Ignore")}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {evalCases.length > 0 ? (
+          <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50/70 p-4 dark:border-violet-900 dark:bg-violet-950/15">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h4 className="text-sm font-semibold text-violet-950 dark:text-violet-100">
+                  {tx(t, "settings.enhancements.recording.eval.title", "Agent task evaluation set")}
+                </h4>
+                <p className="mt-1 text-xs text-violet-900/70 dark:text-violet-200/70">
+                  {tx(t, "settings.enhancements.recording.eval.description", "Run fixed, provider-free tasks to check task results and execution paths after a code change.")}
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => void runTaskEval()} disabled={busy !== null}>
+                {busy === "eval" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                {tx(t, "settings.enhancements.recording.eval.run", "Run evaluation")}
+              </Button>
+            </div>
+            {evalReport ? (
+              <div className="mt-3 rounded-lg border border-violet-200 bg-white/80 px-3 py-2 text-xs text-settings-foreground dark:border-violet-900 dark:bg-black/20">
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  <span>{tx(t, "settings.enhancements.recording.eval.summary", "Tasks: {{passed}}/{{total}} passed", { passed: evalReport.summary.task_passed, total: evalReport.summary.task_evaluable })}</span>
+                  <span>{tx(t, "settings.enhancements.recording.eval.trajectory", "Trajectories: {{passed}}/{{total}} passed", { passed: evalReport.summary.trajectory_passed, total: evalReport.summary.total })}</span>
+                  <span>{tx(t, "settings.enhancements.recording.eval.notEvaluable", "Not evaluable: {{count}}", { count: evalReport.summary.task_not_evaluable })}</span>
+                </div>
+                <div className="mt-2 flex flex-col gap-1">
+                  {evalReport.cases.map((item) => (
+                    <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-settings-border px-2 py-1.5">
+                      <span>{item.title}</span>
+                      <span className="text-settings-muted">{item.task_status} · {item.trajectory_status} · {item.elapsed_ms}ms</span>
+                    </div>
+                  ))}
+                  {(evalReport.custom_cases ?? []).map((item) => (
+                    <div key={`custom-${item.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded border border-violet-200 px-2 py-1.5 text-violet-900 dark:border-violet-900 dark:text-violet-200">
+                      <span>{item.title || item.id || tx(t, "settings.enhancements.eval.customCase", "Custom recorded task")}</span>
+                      <span className="text-settings-muted">{item.task_status ?? "not_evaluable"} · {item.trajectory_status ?? "unknown"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

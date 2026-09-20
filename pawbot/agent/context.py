@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
 from pawbot.agent.memory import MemoryStore
+from pawbot.agent.memory_preferences import ExplicitMemoryStore
 from pawbot.agent.skills import SkillsLoader
 from pawbot.agent.tools import image_generation as image_generation_tools
 from pawbot.agent.tools import mcp as mcp_tools
@@ -85,10 +86,17 @@ class ContextBuilder:
     _MAX_HISTORY_TOKENS = 8_000  # hard cap on recent history section size (tokens)
     _RUNTIME_CONTEXT_END = RUNTIME_CONTEXT_END
 
-    def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        timezone: str | None = None,
+        disabled_skills: list[str] | None = None,
+        memory_data_root: Path | None = None,
+    ):
         self.workspace = workspace
         self.timezone = timezone
         self.memory = MemoryStore(workspace)
+        self.explicit_memory = ExplicitMemoryStore(workspace, data_root=memory_data_root)
         self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None)
 
     def build_system_prompt(
@@ -124,6 +132,18 @@ class ContextBuilder:
             memory = self.memory.read_memory()
             if memory and not self._is_template_content(memory, "memory/MEMORY.md"):
                 parts.append(f"# Memory\n\n## Long-term Memory\n{memory}")
+
+            explicit_memory = self.explicit_memory
+            if project_path != self.workspace.expanduser().resolve():
+                explicit_memory = ExplicitMemoryStore(root, data_root=self.explicit_memory.data_root)
+            confirmed = explicit_memory.confirmed_for_prompt()
+            if confirmed:
+                parts.append(
+                    "# Confirmed User Preferences\n\n"
+                    "These are user-approved durable preferences. Apply them unless "
+                    "the current request explicitly overrides them.\n\n"
+                    f"{confirmed}"
+                )
 
         active_skills = self.skills.get_always_skills()
         if active_skills:

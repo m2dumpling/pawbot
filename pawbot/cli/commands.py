@@ -56,6 +56,7 @@ from pawbot.agent.tools.mcp import MCPProvider  # noqa: E402
 from pawbot.agent.tools.registry import ToolRegistry  # noqa: E402
 from pawbot.cli import terminal as cli_terminal  # noqa: E402
 from pawbot.cli.agent import agent  # noqa: E402
+from pawbot.cli.eval import eval_app  # noqa: E402
 from pawbot.cli.gateway import create_gateway_app  # noqa: E402
 from pawbot.cli.gateway_runtime import _run_gateway  # noqa: E402
 from pawbot.cli.harness import harness_app  # noqa: E402
@@ -507,6 +508,14 @@ app.add_typer(
 
 
 app.add_typer(harness_app, name="harness")
+
+
+# ============================================================================
+# Agent Task Evaluation Set
+# ============================================================================
+
+
+app.add_typer(eval_app, name="eval")
 
 
 # ============================================================================

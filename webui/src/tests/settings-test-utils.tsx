@@ -116,9 +116,9 @@ export function settingsPayload(): SettingsPayload {
     },
     docs: {
       version: "0.2.2",
-      base_url: "/docs/README.md",
-      chat_apps_url: "/docs/chat-apps.md",
-      latest_url: "/docs/README.md",
+      base_url: "https://github.com/m2dumpling/pawbot#readme",
+      chat_apps_url: "https://github.com/m2dumpling/pawbot#channels-and-integrations",
+      latest_url: "https://github.com/m2dumpling/pawbot#readme",
     },
   };
 }

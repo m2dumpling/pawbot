@@ -77,11 +77,14 @@ type ChannelConfigOption = {
   label: string;
 };
 
-const PAWBOT_DOCS_URL = "/docs/README.md";
-const CHAT_APPS_DOCS_URL = `${PAWBOT_DOCS_URL}/getting-started/chat-apps`;
+const CHAT_APPS_DOCS_URL = "https://github.com/m2dumpling/pawbot#channels-and-integrations";
 
 export function chatAppGuideUrl(sectionId: string): string {
-  return `${CHAT_APPS_DOCS_URL}#${sectionId}`;
+  // The local channel-docs bundle is intentionally not shipped anymore;
+  // keep the section argument for API compatibility and open the public
+  // integrations overview instead.
+  void sectionId;
+  return CHAT_APPS_DOCS_URL;
 }
 
 export function docsUrlWithBase(
@@ -90,6 +93,5 @@ export function docsUrlWithBase(
 ): string | undefined {
   if (!url || !chatAppsDocsUrl) return url;
   if (!url.startsWith(CHAT_APPS_DOCS_URL)) return url;
-  const anchor = url.includes("#") ? `#${url.split("#").pop()}` : "";
-  return `${chatAppsDocsUrl.replace(/\/$/, "")}${anchor}`;
+  return chatAppsDocsUrl.replace(/\/$/, "");
 }

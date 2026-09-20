@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, cast
 
 from loguru import logger
@@ -188,6 +189,13 @@ class TurnStagesMixin:
             turn_scopes=ctx.turn_scopes,
         )
         result = await self.commands.dispatch(cmd_ctx)
+        if result is None and is_user_turn and not ctx.ephemeral:
+            memory_handler = cast(
+                Callable[[TurnContext], Awaitable[Any]] | None,
+                getattr(self, "_maybe_handle_memory_intent", None),
+            )
+            if callable(memory_handler):
+                result = await memory_handler(ctx)
         if result is not None:
             ctx.outbound = result
             # Shortcut commands skip BUILD and SAVE, so we must persist the

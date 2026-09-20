@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   Check,
+  BookmarkPlus,
   ChevronRight,
   CircleAlert,
   Clock3,
@@ -70,6 +71,7 @@ interface MessageBubbleProps {
   slashCommands?: SlashCommand[];
   onOpenFilePreview?: (path: string) => void;
   onForkFromHere?: () => void;
+  onRememberMessage?: (message: UIMessage) => Promise<void> | void;
 }
 
 function ForkArrowIcon({ className }: { className?: string }) {
@@ -399,8 +401,10 @@ export function MessageBubble({
   slashCommands = [],
   onOpenFilePreview,
   onForkFromHere,
+  onRememberMessage,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
+  const [rememberState, setRememberState] = useState<"idle" | "saving" | "saved">("idle");
   const mentionCliApps = useMemo(
     () => mergeCliMentionApps(cliApps, message.cliApps),
     [cliApps, message.cliApps],
@@ -409,6 +413,17 @@ export function MessageBubble({
     () => mergeMcpMentionPresets(mcpPresets, message.mcpPresets),
     [mcpPresets, message.mcpPresets],
   );
+
+  const rememberMessage = useCallback(async () => {
+    if (!onRememberMessage || rememberState === "saving" || rememberState === "saved") return;
+    setRememberState("saving");
+    try {
+      await onRememberMessage(message);
+      setRememberState("saved");
+    } catch {
+      setRememberState("idle");
+    }
+  }, [message, onRememberMessage, rememberState]);
 
   if (message.kind === "trace") {
     return <TraceGroup message={message} />;
@@ -483,7 +498,7 @@ export function MessageBubble({
             {messageText}
           </p>
         ) : null}
-        {showDeliveryStatus || showCreatedAt || (hasText && showCopyAction) ? (
+        {showDeliveryStatus || showCreatedAt || (hasText && (showCopyAction || onRememberMessage)) ? (
           <TooltipProvider delayDuration={220} skipDelayDuration={80}>
             <div className="flex min-h-8 items-center justify-end gap-1.5 text-muted-foreground">
               {showCreatedAt ? (
@@ -500,6 +515,32 @@ export function MessageBubble({
                 errorKind={message.deliveryErrorKind}
               />
               {hasText && showCopyAction ? <MessageCopyButton content={message.content} /> : null}
+              {hasText && onRememberMessage ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => void rememberMessage()}
+                      aria-label={rememberState === "saved"
+                        ? t("message.remembered", { defaultValue: "Saved as memory" })
+                        : t("message.remember", { defaultValue: "Save as memory" })}
+                      className={cn(
+                        "touch-target inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                        "transition-colors hover:bg-muted/55 hover:text-foreground",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      )}
+                      disabled={rememberState === "saving" || rememberState === "saved"}
+                    >
+                      {rememberState === "saved" ? <Check className="h-4 w-4" /> : <BookmarkPlus className="h-4 w-4" />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" align="center">
+                    {rememberState === "saved"
+                      ? t("message.remembered", { defaultValue: "Saved as memory" })
+                      : t("message.remember", { defaultValue: "Save as memory" })}
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
             </div>
           </TooltipProvider>
         ) : null}

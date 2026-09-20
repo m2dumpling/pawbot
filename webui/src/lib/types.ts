@@ -1321,6 +1321,27 @@ export interface SlashCommand {
   acceptsArgs: boolean;
 }
 
+export type ExplicitMemoryScope = "global" | "workspace";
+export type ExplicitMemoryKind = "preference" | "fact" | "decision" | "habit";
+export type ExplicitMemoryStatus = "confirmed" | "candidate" | "rejected";
+
+export interface ExplicitMemoryRecord {
+  memory_id: string;
+  scope: ExplicitMemoryScope;
+  kind: ExplicitMemoryKind;
+  key: string;
+  value: unknown;
+  status: ExplicitMemoryStatus;
+  source: "explicit" | "dream" | "system";
+  created_at: string;
+  updated_at: string;
+  origin_session?: string | null;
+  origin_turn?: string | null;
+  confidence?: number | null;
+  evidence?: string | null;
+  expires_at?: string | null;
+}
+
 export type ConnectionStatus =
   | "idle"
   | "connecting"

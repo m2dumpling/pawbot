@@ -932,7 +932,7 @@ describe("Settings channels", () => {
     expect(await screen.findByRole("button", { name: "View Discord settings" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open Discord setup" })).toHaveAttribute(
       "href",
-      "/docs/chat-apps.md#discord",
+      "https://github.com/m2dumpling/pawbot#channels-and-integrations",
     );
     expect(screen.getByRole("switch", { name: "Discord channel" })).toBeDisabled();
     fireEvent.change(screen.getByPlaceholderText("Discord bot token"), {
@@ -1098,7 +1098,7 @@ describe("Settings channels", () => {
     expect(await screen.findByRole("button", { name: "View Telegram settings" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open Telegram setup" })).toHaveAttribute(
       "href",
-      "/docs/chat-apps.md#telegram",
+      "https://github.com/m2dumpling/pawbot#channels-and-integrations",
     );
   });
 

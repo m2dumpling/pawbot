@@ -106,6 +106,30 @@ def _run_harness() -> CheckResult:
     )
 
 
+def _run_task_eval() -> CheckResult:
+    started_at = time.perf_counter()
+    try:
+        from pawbot.evals import run_eval_sync
+
+        report = run_eval_sync()
+        payload = report.to_dict()
+        detail = json.dumps(payload["summary"], ensure_ascii=False)
+        passed = report.passed
+    except Exception as exc:
+        passed = False
+        detail = f"task eval crashed: {type(exc).__name__}: {exc}"
+    elapsed_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+    marker = "PASS" if passed else "FAIL"
+    print(f"[{marker}] Agent Task Eval Set ({elapsed_ms}ms)")
+    print(detail)
+    return CheckResult(
+        name="Agent Task Eval Set",
+        passed=passed,
+        elapsed_ms=elapsed_ms,
+        detail=detail,
+    )
+
+
 def _build_checks(*, full: bool) -> list[CheckResult]:
     checks = [
         _run_command("Working-tree whitespace", ["git", "diff", "--check"]),
@@ -113,6 +137,7 @@ def _build_checks(*, full: bool) -> list[CheckResult]:
         _run_command("Ruff", _external_command("ruff", "check", "pawbot", "tests", "scripts")),
         _run_command("basedpyright", _external_command("basedpyright")),
         _run_harness(),
+        _run_task_eval(),
         _run_command(
             "Agent contract tests",
             _external_command(

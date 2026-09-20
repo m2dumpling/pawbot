@@ -7,10 +7,13 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
+
+from loguru import logger
 
 from pawbot import __version__
 from pawbot.bus.events import INBOUND_META_USER_SHELL, OutboundMessage
@@ -133,9 +136,17 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
     BuiltinCommandSpec(
         "/record",
         "Save a regression sample",
-        "Show, start, or stop full execution capture across sessions.",
+        "Show, start, stop, or keep rolling execution evidence.",
         "radio",
-        "[status|start [name]|stop]",
+        "[status|start [name]|stop|candidates|keep <id>|reject <id>]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/eval",
+        "Run task evaluation",
+        "List or run the provider-free task evaluation set.",
+        "file-check-2",
+        "[list|run]",
         accepts_args=True,
     ),
     BuiltinCommandSpec(
@@ -181,6 +192,30 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "Tell Dream how to organize this workspace's memory.",
         "file-text",
         "[init]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/remember",
+        "Save a memory",
+        "Save an explicit global or workspace preference.",
+        "bookmark-plus",
+        "[global|workspace] <key=value or preference>",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/memory",
+        "Manage memories",
+        "List confirmed memories or review automatic candidates.",
+        "brain",
+        "[list|candidates|show <id>]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/forget",
+        "Forget a memory",
+        "Remove one explicit memory by its id.",
+        "bookmark-minus",
+        "<memory-id>",
         accepts_args=True,
     ),
     BuiltinCommandSpec(
@@ -574,14 +609,272 @@ async def cmd_record(ctx: CommandContext) -> OutboundMessage:
                 clear_recording_policy(workspace)
                 loop.blackbox = None
             content = f"Stopped regression sample capture: `{name}`. You can validate it offline with `pawbot replay`."
+    elif action == "candidates":
+        rolling = getattr(loop, "rolling_blackbox", None) or getattr(loop, "_rolling_blackbox", None)
+        list_candidates = getattr(rolling, "list_candidates", None)
+        candidate_lister = (
+            cast(Callable[[], list[dict[str, Any]]], list_candidates)
+            if callable(list_candidates)
+            else None
+        )
+        candidates = candidate_lister() if candidate_lister is not None else []
+        if candidates:
+            lines = ["Candidate problem runs:"]
+            for candidate in candidates:
+                reasons = ", ".join(str(item) for item in candidate.get("reasons", []))
+                lines.append(f"- `{candidate.get('candidate_id', 'unknown')}` · {reasons or 'execution issue'}")
+            lines.append("Use `/record keep <candidate-id>` to preserve one as a regression sample.")
+            content = "\n".join(lines)
+        else:
+            content = "No candidate problem runs are waiting for review."
+    elif action == "keep":
+        candidate_id = raw_name.strip()
+        rolling = getattr(loop, "rolling_blackbox", None) or getattr(loop, "_rolling_blackbox", None)
+        promote = getattr(rolling, "promote_candidate", None)
+        if not candidate_id:
+            content = "Usage: `/record keep <candidate-id>`."
+        elif not callable(promote):
+            content = "Automatic rolling replay is unavailable for this instance."
+        else:
+            try:
+                directory = cast(Path, promote(candidate_id))
+            except (OSError, ValueError) as exc:
+                content = f"Could not keep candidate: {_command_error_message(exc)}"
+            else:
+                content = f"Kept `{candidate_id}` as a regression sample: `{directory.name}`."
+    elif action == "reject":
+        candidate_id = raw_name.strip()
+        rolling = getattr(loop, "rolling_blackbox", None) or getattr(loop, "_rolling_blackbox", None)
+        reject = getattr(rolling, "reject_candidate", None)
+        if not candidate_id:
+            content = "Usage: `/record reject <candidate-id>`."
+        elif not callable(reject):
+            content = "Automatic rolling replay is unavailable for this instance."
+        else:
+            try:
+                directory = cast(Path, reject(candidate_id))
+            except (OSError, ValueError) as exc:
+                content = f"Could not ignore candidate: {_command_error_message(exc)}"
+            else:
+                content = f"Ignored `{candidate_id}` and moved it to reviewed evidence: `{directory.name}`."
     else:
-        content = "Usage: `/record status`, `/record start [name]`, or `/record stop`."
+        content = "Usage: `/record status`, `/record start [name]`, `/record stop`, `/record candidates`, `/record keep <id>`, or `/record reject <id>`."
 
     return OutboundMessage(
         channel=ctx.msg.channel,
         chat_id=ctx.msg.chat_id,
         content=content,
         metadata=metadata,
+    )
+
+
+async def cmd_eval(ctx: CommandContext) -> OutboundMessage:
+    """List or run the provider-free task evaluation set."""
+    from pawbot.evals import eval_cases, run_eval
+
+    action = ctx.args.strip().lower() or "list"
+    metadata = {**dict(ctx.msg.metadata or {}), "render_as": "text"}
+    if action == "list":
+        lines = ["## Agent task evaluation set"]
+        lines.extend(
+            f"- `{case.id}` · {case.category} · {case.description}"
+            for case in eval_cases()
+        )
+        lines.append("Run `/eval run` to execute the fixed provider-free checks.")
+        content = "\n".join(lines)
+    elif action == "run":
+        report = await run_eval()
+        summary = report.to_dict()["summary"]
+        content = (
+            f"Task eval: {summary['task_passed']}/{summary['task_evaluable']} "
+            f"evaluable tasks passed · {summary['trajectory_passed']}/{summary['total']} "
+            f"trajectories passed · {summary['elapsed_ms']}ms."
+        )
+    else:
+        content = "Usage: `/eval list` or `/eval run`."
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata=metadata,
+    )
+
+
+def _memory_preference_from_text(text: str) -> tuple[str, str] | None:
+    """Resolve the small set of deterministic natural-language preferences.
+
+    The explicit command must remain useful without another model request.  A
+    later extractor can expand this table for free-form candidates, but an
+    unrecognized phrase is rejected instead of being guessed and persisted.
+    """
+
+    normalized = " ".join(text.strip().split())
+    if not normalized:
+        return None
+    if "=" in normalized:
+        key, value = normalized.split("=", 1)
+        if key.strip() and value.strip():
+            return key.strip(), value.strip()
+
+    lowered = normalized.lower()
+    if any(token in lowered for token in ("简体中文", "中文回复", "用中文")):
+        return "reply_language", "zh-CN"
+    if any(token in lowered for token in ("英文回复", "英语回复", "用英文")):
+        return "reply_language", "en"
+    if any(token in lowered for token in ("简洁", "简短", "不要太长")):
+        return "response_style", "concise"
+    if any(token in lowered for token in ("详细", "展开讲", "讲详细")):
+        return "response_style", "detailed"
+    return None
+
+
+async def cmd_remember(ctx: CommandContext) -> OutboundMessage:
+    """Persist one explicit preference without waiting for Dream."""
+
+    from pawbot.agent.memory_preferences import MemoryPolicyError
+
+    args = ctx.args.strip()
+    first, _, rest = args.partition(" ")
+    if first.lower() in {"global", "workspace"}:
+        scope = cast(Literal["global", "workspace"], first.lower())
+        text = rest.strip()
+    else:
+        scope = "global"
+        text = args
+
+    parsed = _memory_preference_from_text(text)
+    extracted = None
+    if parsed is None and text and ctx.runtime is not None:
+        from pawbot.agent.memory_extractor import extract_memory_candidate
+
+        try:
+            extracted = await extract_memory_candidate(ctx.runtime, text, scope_hint=scope)
+        except Exception:
+            extracted = None
+        if extracted is not None:
+            parsed = (extracted.key, extracted.value)
+    if parsed is None:
+        content = (
+            "Usage: `/remember [global|workspace] <key=value or preference>`\n\n"
+            "Examples:\n"
+            "- `/remember global reply_language=zh-CN`\n"
+            "- `/remember global 默认使用简体中文回复`\n"
+            "- `/remember workspace response_style=concise`"
+        )
+    else:
+        key, value = parsed
+        try:
+            record = ctx.loop.context.explicit_memory.remember(
+                scope=scope,
+                kind=extracted.kind if extracted is not None else "preference",
+                key=key,
+                value=value,
+                source="explicit",
+                status="confirmed",
+                origin_session=ctx.key,
+                origin_turn=ctx.msg.metadata.get("turn_id"),
+            )
+        except MemoryPolicyError as exc:
+            content = f"Memory was not saved: {exc}"
+        else:
+            content = (
+                f"已保存为{('全局' if scope == 'global' else '当前工作区')}偏好：\n"
+                f"{record.key} = {record.value}\n"
+                f"记忆编号：`{record.memory_id}`"
+            )
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+async def cmd_memory(ctx: CommandContext) -> OutboundMessage:
+    """List or inspect structured explicit and candidate memories."""
+
+    args = ctx.args.strip().split()
+    action = args[0].lower() if args else "list"
+    store = ctx.loop.context.explicit_memory
+    if action in {"list", "confirmed"}:
+        records = store.list_records(status="confirmed")
+    elif action in {"candidates", "candidate"}:
+        records = store.list_records(status="candidate")
+    elif action in {"confirm", "promote", "reject", "ignore"} and len(args) == 2:
+        candidate_id = args[1]
+        record = (
+            store.promote(candidate_id)
+            if action in {"confirm", "promote"}
+            else store.reject(candidate_id)
+        )
+        content = (
+            f"已确认记忆 `{candidate_id}`。"
+            if action in {"confirm", "promote"} and record is not None
+            else f"已忽略候选记忆 `{candidate_id}`。"
+            if action in {"reject", "ignore"} and record is not None
+            else f"未找到候选记忆 `{candidate_id}`。"
+        )
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=content,
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+    elif action == "show" and len(args) == 2:
+        records = [
+            record
+            for record in store.list_records()
+            if record.memory_id == args[1]
+        ]
+    else:
+        records = []
+
+    if action == "show" and len(args) == 2 and not records:
+        content = f"No memory found for `{args[1]}`."
+    elif not records:
+        if action not in {"list", "confirmed", "candidates", "candidate", "show"}:
+            content = (
+                "Usage: `/memory list`, `/memory candidates`, `/memory confirm <id>`, "
+                "`/memory reject <id>`, or `/memory show <memory-id>`."
+            )
+        else:
+            content = "No matching memories."
+    else:
+        title = "Confirmed memories" if action in {"list", "confirmed"} else "Memory candidates"
+        lines = [f"## {title}"]
+        lines.extend(
+            f"- `{record.memory_id}` · {record.scope} · {record.key} = {record.value}"
+            + (
+                f" · confidence={record.confidence:.2f}"
+                if action in {"candidates", "candidate"} and record.confidence is not None
+                else ""
+            )
+            for record in records
+        )
+        content = "\n".join(lines)
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+async def cmd_forget(ctx: CommandContext) -> OutboundMessage:
+    """Tombstone one explicit memory without rewriting its audit history."""
+
+    memory_id = ctx.args.strip()
+    if not memory_id:
+        content = "Usage: `/forget <memory-id>`"
+    elif ctx.loop.context.explicit_memory.forget(memory_id):
+        content = f"已删除记忆 `{memory_id}`。"
+    else:
+        content = f"未找到记忆 `{memory_id}`。"
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
     )
 
 
@@ -889,9 +1182,11 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
         prune_dream_sessions = MemoryStore.prune_dream_sessions
 
         store = loop.context.memory
+        explicit_store = getattr(loop.context, "explicit_memory", None)
         content = ""
         resp = None
         diff_body = ""
+        candidate_count = 0
         t0 = time.monotonic()
         try:
             result = store.build_dream_prompt()
@@ -905,6 +1200,19 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
             prompt, last_cursor = result
             key = dream_session_key()
             dream_runtime = loop.dream_runtime()
+            if dream_runtime is not None and explicit_store is not None:
+                from pawbot.agent.memory_extractor import extract_and_store_dream_candidates
+
+                try:
+                    candidate_count = await extract_and_store_dream_candidates(
+                        dream_runtime,
+                        store.read_unprocessed_history(
+                            since_cursor=store.get_last_dream_cursor(),
+                        )[:20],
+                        explicit_store,
+                    )
+                except Exception:
+                    logger.exception("Dream candidate extraction failed")
             resp = await loop.process_direct(
                 prompt,
                 session_key=key,
@@ -924,6 +1232,8 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
                     content = f"Dream completed in {elapsed:.1f}s."
                 else:
                     content = f"Dream completed in {elapsed:.1f}s; no memory changes."
+                if candidate_count:
+                    content += f" {candidate_count} memory candidate(s) await confirmation."
             else:
                 reason = MemoryStore.dream_incompletion_reason(resp)
                 content = (
@@ -1510,6 +1820,8 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.prefix("/trace ", cmd_trace)
     router.exact("/record", cmd_record)
     router.prefix("/record ", cmd_record)
+    router.exact("/eval", cmd_eval)
+    router.prefix("/eval ", cmd_eval)
     router.exact("/goal", cmd_goal)
     router.prefix("/goal ", cmd_goal)
     router.exact("/trigger", cmd_trigger)
@@ -1521,6 +1833,12 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.prefix("/dream-restore ", cmd_dream_restore)
     router.exact("/dream-prompt", cmd_dream_prompt)
     router.prefix("/dream-prompt ", cmd_dream_prompt)
+    router.exact("/remember", cmd_remember)
+    router.prefix("/remember ", cmd_remember)
+    router.exact("/memory", cmd_memory)
+    router.prefix("/memory ", cmd_memory)
+    router.exact("/forget", cmd_forget)
+    router.prefix("/forget ", cmd_forget)
     router.exact("/evaluator-prompt", cmd_evaluator_prompt)
     router.prefix("/evaluator-prompt ", cmd_evaluator_prompt)
     router.exact("/skill", cmd_skill)

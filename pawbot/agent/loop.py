@@ -8,6 +8,7 @@ import asyncio
 import dataclasses
 import inspect
 import os
+import re
 import time
 import weakref
 from collections.abc import Coroutine, Iterable, Mapping
@@ -32,6 +33,7 @@ from pawbot.agent.evaluation import (
 )
 from pawbot.agent.hook import AgentHook, AgentTurnHookFactory, CompositeHook
 from pawbot.agent.memory import Consolidator
+from pawbot.agent.memory_preferences import MemoryScope
 from pawbot.agent.model_runtime import ModelRuntimeResolver
 from pawbot.agent.observability import TraceRun, TraceStore, redact_text
 from pawbot.agent.runner import (
@@ -243,10 +245,12 @@ class AgentLoop(TurnStagesMixin):
         idle_compact_check_interval_seconds: int = 0,
         recovery_admission: RecoveryAdmission | None = None,
         blackbox: Any | None = None,
+        rolling_blackbox: Any | None = None,
         trace_store: TraceStore | None = None,
         tool_approval_callback: ToolApprovalCallback | None = None,
-        approval_capabilities: frozenset[str] | None = None,
-    ):
+         approval_capabilities: frozenset[str] | None = None,
+         memory_data_root: Path | None = None,
+     ):
         from pawbot.config.schema import ToolsConfig, _resolve_tool_config_refs
 
         if not bool(getattr(ToolsConfig, "__pydantic_complete__", True)):
@@ -334,6 +338,8 @@ class AgentLoop(TurnStagesMixin):
         self.cron_service = cron_service
         self.local_trigger_store = local_trigger_store
         self.blackbox = blackbox  # Record & Replay controller (ADR-004)
+        self._rolling_blackbox = rolling_blackbox
+        self.rolling_blackbox = rolling_blackbox
         self._blackbox_policy_active = False
         self.trace_store = trace_store
         self.tool_approval_callback = tool_approval_callback
@@ -351,7 +357,12 @@ class AgentLoop(TurnStagesMixin):
         self._extra_hooks: list[AgentHook] = hooks or []
         self._hook_factories: list[AgentTurnHookFactory] = hook_factories or []
 
-        self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills)
+        self.context = ContextBuilder(
+            workspace,
+            timezone=timezone,
+            disabled_skills=disabled_skills,
+            memory_data_root=memory_data_root,
+        )
         self.sessions = session_manager or SessionManager(workspace)
         # One file-read/write tracker per logical session. The tool registry is
         # shared by this loop, so tools resolve the active state via contextvars.
@@ -477,6 +488,8 @@ class AgentLoop(TurnStagesMixin):
         if bus is None:
             bus = MessageBus()
         defaults = config.agents.defaults
+        if "memory_data_root" not in extra:
+            extra["memory_data_root"] = config.runtime_data_dir
         if "session_manager" not in extra:
             data_dir = config.runtime_data_dir
             extra["session_manager"] = SessionManager(
@@ -518,6 +531,22 @@ class AgentLoop(TurnStagesMixin):
                 max_bytes=config.observability.max_bytes,
                 event_callback=_publish_trace_event,
             )
+        if (
+            extra.get("blackbox") is None
+            and "rolling_blackbox" not in extra
+            and config.observability.rolling_enabled
+        ):
+            from pawbot.agent.blackbox import RollingBlackboxController
+
+            data_dir = config.runtime_data_dir or get_data_dir()
+            rolling_blackbox = RollingBlackboxController(
+                data_dir / "blackbox",
+                max_turns_per_session=config.observability.rolling_turns_per_session,
+                retention_seconds=config.observability.rolling_retention_hours * 3_600,
+                max_bytes=config.observability.rolling_max_bytes,
+            )
+            extra["blackbox"] = rolling_blackbox
+            extra["rolling_blackbox"] = rolling_blackbox
         provider = extra.pop("provider", None) or make_provider(config)
         resolved = config.resolve_preset()
         model = extra.pop("model", None) or resolved.model
@@ -901,6 +930,98 @@ class AgentLoop(TurnStagesMixin):
             deferred_queues=self._deferred_automation_turns,
             publish_inbound=self.bus.publish_inbound,
             session_key=session_key,
+        )
+
+    async def _maybe_handle_memory_intent(self, ctx: TurnContext) -> OutboundMessage | None:
+        """Turn an explicit natural-language remember request into a candidate.
+
+        The fast marker check avoids an LLM request on ordinary turns.  A
+        candidate is never injected until the user confirms it in the next
+        message, so a mistaken interpretation cannot become durable preference.
+        """
+
+        if ctx.ephemeral or ctx.kind is not TurnKind.USER:
+            return None
+        session = ctx.require_session()
+        raw = ctx.msg.content.strip()
+        pending_id = session.metadata.get("_pending_memory_id")
+        if isinstance(pending_id, str) and pending_id:
+            lowered = raw.lower()
+            if lowered in {"确认", "保存", "是", "yes", "y", "ok"}:
+                record = self.context.explicit_memory.promote(pending_id)
+                session.metadata.pop("_pending_memory_id", None)
+                self.sessions.save(session)
+                if record is not None:
+                    return OutboundMessage(
+                        channel=ctx.msg.channel,
+                        chat_id=ctx.msg.chat_id,
+                        content=f"已保存为全局记忆：{record.key} = {record.value}",
+                        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+                    )
+            elif lowered in {"取消", "忽略", "不要", "no", "n", "cancel"}:
+                self.context.explicit_memory.reject(pending_id)
+                session.metadata.pop("_pending_memory_id", None)
+                self.sessions.save(session)
+                return OutboundMessage(
+                    channel=ctx.msg.channel,
+                    chat_id=ctx.msg.chat_id,
+                    content="已忽略这条候选记忆。",
+                    metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+                )
+            else:
+                # A new task supersedes an unanswered candidate.
+                self.context.explicit_memory.reject(pending_id)
+                session.metadata.pop("_pending_memory_id", None)
+                self.sessions.save(session)
+
+        if not re.search(
+            r"(?:请记住|记住|不要忘记|以后都|remember that|don't forget)",
+            raw,
+            re.IGNORECASE,
+        ):
+            return None
+
+        from pawbot.agent.memory_extractor import extract_memory_candidate
+
+        runtime = ctx.runtime or self.runtime_for_session(session)
+        try:
+            candidate = await extract_memory_candidate(runtime, raw)
+        except Exception:
+            logger.debug("Memory intent extraction failed for session {}", ctx.session_key)
+            return None
+        if candidate is None or candidate.scope == "session":
+            return None
+
+        scope: MemoryScope = cast(
+            MemoryScope,
+            candidate.scope if candidate.scope in {"global", "workspace"} else "global",
+        )
+        try:
+            record = self.context.explicit_memory.remember(
+                scope=scope,
+                kind=candidate.kind,
+                key=candidate.key,
+                value=candidate.value,
+                source="explicit",
+                status="candidate",
+                confidence=candidate.confidence,
+                evidence=candidate.evidence or "Extracted from an explicit remember request.",
+                origin_session=ctx.session_key,
+                origin_turn=ctx.turn_id,
+            )
+        except ValueError:
+            return None
+        session.metadata["_pending_memory_id"] = record.memory_id
+        self.sessions.save(session)
+        scope_label = "全局" if record.scope == "global" else "当前工作区"
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=(
+                f"我发现你可能希望长期记住：{record.key} = {record.value}\n"
+                f"回复“确认”保存为{scope_label}记忆，回复“取消”忽略。"
+            ),
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
         )
 
     def _persist_user_message_early(
@@ -1394,6 +1515,7 @@ class AgentLoop(TurnStagesMixin):
         recording_turn_id = request_ctx.turn_id or (
             f"{active_session_key or request_ctx.chat_id}:{time.time_ns()}"
         )
+
         effective_tools = tools or self.tools
         file_state_token = bind_file_states(self._file_state_store.for_session(active_session_key))
         request_token = bind_request_context(request_ctx)
@@ -1934,7 +2056,7 @@ class AgentLoop(TurnStagesMixin):
             finalize_recording_manifest(active.directory)
         clear_recording_policy(self.workspace)
         if self._blackbox_policy_active:
-            self.blackbox = None
+            self.blackbox = self._rolling_blackbox
             self._blackbox_policy_active = False
 
     def sync_recording_policy(self) -> None:
@@ -1956,10 +2078,14 @@ class AgentLoop(TurnStagesMixin):
         directory = read_recording_policy(workspace)
         if directory is None:
             if self._blackbox_policy_active:
-                self.blackbox = None
+                self.blackbox = self._rolling_blackbox
                 self._blackbox_policy_active = False
             return
-        if not self._blackbox_policy_active and self.blackbox is not None:
+        if (
+            not self._blackbox_policy_active
+            and self.blackbox is not None
+            and getattr(self.blackbox, "mode", None) != "rolling"
+        ):
             # ``--record DIR`` is a process-local explicit recording request.
             # Do not overwrite it merely because an old policy file exists.
             return
@@ -2037,10 +2163,24 @@ class AgentLoop(TurnStagesMixin):
             task_contract=task_contract or task_contract_from_metadata(msg.metadata),
             attributes=dict(attributes or {}),
         )
+
+        def _finalize_recording() -> None:
+            finalize_turn = getattr(self.blackbox, "finalize_turn", None)
+            if callable(finalize_turn):
+                finalize_turn(ctx.turn_id)
+
         if self.trace_store is not None:
             recording_directory = None
-            if getattr(self.blackbox, "mode", None) == "record":
-                candidate = getattr(self.blackbox, "directory", None)
+            if getattr(self.blackbox, "mode", None) in {"record", "rolling"}:
+                directory_for_turn = getattr(
+                    self.blackbox,
+                    "recording_directory_for_turn",
+                    None,
+                )
+                if callable(directory_for_turn):
+                    candidate = directory_for_turn(ctx.turn_id, key)
+                else:
+                    candidate = getattr(self.blackbox, "directory", None)
                 if isinstance(candidate, Path):
                     recording_directory = candidate
             provider_name = (
@@ -2056,6 +2196,7 @@ class AgentLoop(TurnStagesMixin):
                 model=runtime.model if runtime is not None else None,
                 provider=provider_name,
                 recording_directory=recording_directory,
+                mirror_recording=getattr(self.blackbox, "mode", None) == "rolling",
             )
         # A streaming callback may be present even when the final text comes from a
         # non-streaming recovery. Only the last completed segment can suppress the
@@ -2119,6 +2260,7 @@ class AgentLoop(TurnStagesMixin):
                     stop_reason=ctx.stop_reason or "cancelled",
                     outcome=ctx.outcome.to_dict() if ctx.outcome is not None else None,
                 )
+            _finalize_recording()
             raise
         except Exception as exc:
             if ctx.trace is not None:
@@ -2128,6 +2270,7 @@ class AgentLoop(TurnStagesMixin):
                     error=exc,
                     outcome=ctx.outcome.to_dict() if ctx.outcome is not None else None,
                 )
+            _finalize_recording()
             raise
         finally:
             if sender_gate is not None:
@@ -2138,6 +2281,7 @@ class AgentLoop(TurnStagesMixin):
                     stop_reason=ctx.stop_reason or "completed",
                     outcome=ctx.outcome.to_dict() if ctx.outcome is not None else None,
                 )
+            _finalize_recording()
 
     async def _acquire_sender_gate(self, msg: InboundMessage) -> asyncio.Semaphore | None:
         """Acquire the optional process-local gate for one source identity."""

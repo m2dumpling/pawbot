@@ -21,6 +21,7 @@ interface ThreadMessagesProps {
   forkBoundaryMessageCount?: number | null;
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
+  onRememberMessage?: (message: UIMessage) => Promise<void> | void;
   onQuoteSelection?: (text: string) => void;
 }
 
@@ -60,6 +61,7 @@ export function ThreadMessages({
   forkBoundaryMessageCount = null,
   onOpenFilePreview,
   onForkFromMessage,
+  onRememberMessage,
   onQuoteSelection,
 }: ThreadMessagesProps) {
   const { t } = useTranslation();
@@ -160,6 +162,7 @@ export function ThreadMessages({
             slashCommands={slashCommands}
             onOpenFilePreview={onOpenFilePreview}
             onForkFromMessage={onForkFromMessage}
+            onRememberMessage={onRememberMessage}
           />
         );
       })}
@@ -242,6 +245,7 @@ interface ThreadDisplayUnitProps {
   slashCommands: SlashCommand[];
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
+  onRememberMessage?: (message: UIMessage) => Promise<void> | void;
 }
 
 const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
@@ -261,6 +265,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   slashCommands,
   onOpenFilePreview,
   onForkFromMessage,
+  onRememberMessage,
 }: ThreadDisplayUnitProps) {
   // Introducing content-visibility after a unit has painted can move the
   // browser's scroll anchor. Only units deferred on their first render may
@@ -300,6 +305,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
             slashCommands={slashCommands}
             onOpenFilePreview={onOpenFilePreview}
             onForkFromHere={forkIndex !== undefined ? onForkFromHere : undefined}
+            onRememberMessage={onRememberMessage}
           />
         )}
       </div>
@@ -326,8 +332,9 @@ function threadDisplayUnitPropsEqual(
     && previous.cliApps === next.cliApps
     && previous.mcpPresets === next.mcpPresets
     && previous.slashCommands === next.slashCommands
-    && previous.onOpenFilePreview === next.onOpenFilePreview
-    && previous.onForkFromMessage === next.onForkFromMessage
+      && previous.onOpenFilePreview === next.onOpenFilePreview
+      && previous.onForkFromMessage === next.onForkFromMessage
+      && previous.onRememberMessage === next.onRememberMessage
   );
 }
 

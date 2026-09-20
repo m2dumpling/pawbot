@@ -47,6 +47,9 @@ def _read_pyproject_version() -> str | None:
 
 
 def _resolve_version() -> str:
+    source_version = _read_pyproject_version()
+    if source_version:
+        return source_version
     try:
         return _pkg_version("pawbot-ai")
     except PackageNotFoundError:

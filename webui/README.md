@@ -6,7 +6,7 @@ root [`README.md`](../README.md). You do not need Node.js, Bun, Vite, or
 anything in this directory unless you are changing the frontend.
 
 For the project overview and public docs map, see the root [`README.md`](../README.md)
-and [`docs/README.md`](../docs/README.md).
+and the [public GitHub README](https://github.com/m2dumpling/pawbot#readme).
 
 ## Pick a Path
 

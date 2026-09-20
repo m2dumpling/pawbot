@@ -7,6 +7,9 @@ import type {
   ChannelValidationPayload,
   ChatSummary,
   CliAppsPayload,
+  ExplicitMemoryKind,
+  ExplicitMemoryRecord,
+  ExplicitMemoryScope,
   FilePreviewPayload,
   ImageGenerationSettingsUpdate,
   McpPresetsPayload,
@@ -1133,6 +1136,10 @@ export async function updateTranscriptionSettings(
 export interface BlackboxStatus {
   recording: boolean;
   directory: string;
+  rolling_enabled?: boolean;
+  rolling_root?: string;
+  rolling_candidates?: number;
+  rolling_max_turns_per_session?: number | null;
   model: string;
   context_window_tokens: number;
   tool_count: number;
@@ -1148,6 +1155,65 @@ export interface BlackboxRecording {
   message: string;
   reason?: "missing_turn_file" | "unreadable" | "malformed" | "no_valid_turns" | string;
   sample_health?: "ready" | "recording" | "incomplete" | "corrupted" | "legacy_unverified" | string;
+}
+
+export interface BlackboxCandidate {
+  candidate_id: string;
+  source_turn_id?: string | null;
+  session_key?: string | null;
+  reasons: string[];
+  sample_health?: string;
+  created_at_ms?: number;
+  status: "candidate" | "promoted" | string;
+}
+
+export interface TaskEvalCase {
+  id: string;
+  title: string;
+  category: string;
+  description: string;
+  source?: string;
+}
+
+export interface TaskEvalReport {
+  benchmark: string;
+  version: number;
+  summary: {
+    total: number;
+    passed: number;
+    failed: number;
+    task_passed: number;
+    task_failed: number;
+    task_evaluable: number;
+    task_not_evaluable: number;
+    task_pass_rate: number | null;
+    trajectory_passed: number;
+    trajectory_pass_rate: number | null;
+    unknown_side_effects: number;
+    elapsed_ms: number;
+    status: string;
+  };
+  cases: Array<{
+    id: string;
+    title: string;
+    category: string;
+    task_status: string;
+    trajectory_status: string;
+    execution_status: string;
+    elapsed_ms: number;
+    tool_attempts: number;
+    tool_failures: number;
+    failures: string[];
+  }>;
+  custom_cases?: Array<{
+    id?: string;
+    title?: string;
+    task_status?: string;
+    trajectory_status?: string;
+    turns?: number;
+    source?: string;
+    error?: string;
+  }>;
 }
 
 export interface TurnOutcome {
@@ -1308,8 +1374,58 @@ export async function blackboxDelete(
 
 export async function blackboxList(
   transport: WebUIMutationTransport,
-): Promise<{ recordings: BlackboxRecording[]; root: string }> {
+): Promise<{ recordings: BlackboxRecording[]; roots?: string[]; root?: string }> {
   return mutation(transport, "blackbox.list");
+}
+
+export async function blackboxCandidates(
+  transport: WebUIMutationTransport,
+): Promise<{ candidates: BlackboxCandidate[] }> {
+  return mutation(transport, "blackbox.rolling.candidates");
+}
+
+export async function blackboxPromoteCandidate(
+  transport: WebUIMutationTransport,
+  candidateId: string,
+  name?: string,
+): Promise<{ promoted: boolean; directory: string; candidate_id: string }> {
+  return mutation(transport, "blackbox.rolling.promote", {
+    candidate_id: candidateId,
+    name: name ?? null,
+  });
+}
+
+export async function blackboxRejectCandidate(
+  transport: WebUIMutationTransport,
+  candidateId: string,
+): Promise<{ rejected: boolean; directory: string; candidate_id: string }> {
+  return mutation(transport, "blackbox.rolling.reject", { candidate_id: candidateId });
+}
+
+export async function blackboxAddCandidateToEval(
+  transport: WebUIMutationTransport,
+  candidateId: string,
+  title?: string,
+): Promise<{ added: boolean; case: TaskEvalCase }> {
+  return mutation(transport, "blackbox.rolling.add_to_eval", {
+    candidate_id: candidateId,
+    title: title ?? null,
+  });
+}
+
+export async function taskEvalList(
+  transport: WebUIMutationTransport,
+): Promise<{ eval_set: string; version: number; cases: TaskEvalCase[]; custom_cases?: TaskEvalCase[] }> {
+  return mutation(transport, "blackbox.eval.list");
+}
+
+export async function taskEvalRun(
+  transport: WebUIMutationTransport,
+  caseIds?: string[],
+): Promise<TaskEvalReport> {
+  return mutation<TaskEvalReport>(transport, "blackbox.eval.run", {
+    case_ids: caseIds ?? null,
+  });
 }
 
 export async function blackboxDetail(
@@ -1366,4 +1482,58 @@ export async function traceDetail(
   id: string,
 ): Promise<TraceDetail> {
   return mutation<TraceDetail>(transport, "trace.detail", { id });
+}
+
+export async function memoryList(
+  transport: WebUIMutationTransport,
+  options?: {
+    scope?: ExplicitMemoryScope;
+    status?: "confirmed" | "candidate" | "rejected";
+  },
+): Promise<{ memories: ExplicitMemoryRecord[]; global_path: string; workspace_path: string }> {
+  return mutation(transport, "memory.list", {
+    scope: options?.scope ?? null,
+    status: options?.status ?? "confirmed",
+  });
+}
+
+export async function memoryRemember(
+  transport: WebUIMutationTransport,
+  input: {
+    scope: ExplicitMemoryScope;
+    kind: ExplicitMemoryKind;
+    key: string;
+    value: unknown;
+  },
+): Promise<{ memory: ExplicitMemoryRecord }> {
+  return mutation(transport, "memory.remember", input);
+}
+
+export async function memoryRememberNote(
+  transport: WebUIMutationTransport,
+  text: string,
+  scope: ExplicitMemoryScope = "global",
+): Promise<{ memory: ExplicitMemoryRecord }> {
+  return mutation(transport, "memory.remember_note", { text, scope });
+}
+
+export async function memoryPromote(
+  transport: WebUIMutationTransport,
+  memoryId: string,
+): Promise<{ memory: ExplicitMemoryRecord }> {
+  return mutation(transport, "memory.promote", { memory_id: memoryId });
+}
+
+export async function memoryReject(
+  transport: WebUIMutationTransport,
+  memoryId: string,
+): Promise<{ memory: ExplicitMemoryRecord }> {
+  return mutation(transport, "memory.reject", { memory_id: memoryId });
+}
+
+export async function memoryForget(
+  transport: WebUIMutationTransport,
+  memoryId: string,
+): Promise<{ memory_id: string; deleted: boolean }> {
+  return mutation(transport, "memory.forget", { memory_id: memoryId });
 }

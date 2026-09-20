@@ -71,8 +71,8 @@ class SystemSettingsPayload(TypedDict):
 
 
 _DOCS_STABLE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:\.post\d+)?$")
-_LOCAL_DOCS_BASE_URL = "/docs/README.md"
-_LOCAL_CHAT_APPS_DOCS_URL = "/docs/chat-apps.md"
+_LOCAL_DOCS_BASE_URL = "https://github.com/m2dumpling/pawbot#readme"
+_LOCAL_CHAT_APPS_DOCS_URL = "https://github.com/m2dumpling/pawbot#channels-and-integrations"
 _SKIP_FIELD = object()
 
 

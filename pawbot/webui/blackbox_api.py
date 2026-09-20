@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
+from pawbot.agent.memory_preferences import MemoryPolicyError
 from pawbot.webui.session_list_index import list_webui_sessions
 from pawbot.webui.sidebar_state import read_webui_sidebar_state
 
@@ -29,6 +30,103 @@ class BlackboxActionError(Exception):
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
         self.status = status
+
+
+def _memory_store(agent: Any) -> Any:
+    context = getattr(agent, "context", None)
+    store = getattr(context, "explicit_memory", None)
+    if store is None:
+        raise BlackboxActionError(503, "Explicit memory is unavailable")
+    return store
+
+
+async def _memory_list(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    store = _memory_store(agent)
+    scope_value = payload.get("scope")
+    status_value = payload.get("status", "confirmed")
+    scope = scope_value if scope_value in {"global", "workspace"} else None
+    status = status_value if status_value in {"confirmed", "candidate", "rejected"} else None
+    records = store.list_records(scope=scope, status=status)
+    return {
+        "memories": [record.model_dump(mode="json") for record in records],
+        "global_path": str(store.global_path),
+        "workspace_path": str(store.workspace_path),
+    }
+
+
+async def _memory_remember(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    store = _memory_store(agent)
+    scope = payload.get("scope", "global")
+    kind = payload.get("kind", "preference")
+    key = payload.get("key")
+    if scope not in {"global", "workspace"}:
+        raise BlackboxActionError(400, "invalid memory scope")
+    if kind not in {"preference", "fact", "decision", "habit"}:
+        raise BlackboxActionError(400, "invalid memory kind")
+    if not isinstance(key, str) or not key.strip() or "value" not in payload:
+        raise BlackboxActionError(400, "memory remember requires key and value")
+    try:
+        record = store.remember(
+            scope=scope,
+            kind=kind,
+            key=key,
+            value=payload["value"],
+            source="explicit",
+            status="confirmed",
+            origin_session=payload.get("origin_session"),
+            origin_turn=payload.get("origin_turn"),
+        )
+    except MemoryPolicyError as exc:
+        raise BlackboxActionError(400, str(exc)) from exc
+    return {"memory": record.model_dump(mode="json")}
+
+
+async def _memory_forget(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    memory_id = payload.get("memory_id")
+    if not isinstance(memory_id, str) or not memory_id.strip():
+        raise BlackboxActionError(400, "memory_id is required")
+    removed = _memory_store(agent).forget(memory_id)
+    if not removed:
+        raise BlackboxActionError(404, "memory not found")
+    return {"memory_id": memory_id, "deleted": True}
+
+
+async def _memory_remember_note(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    text = payload.get("text")
+    scope = payload.get("scope", "global")
+    if not isinstance(text, str) or not text.strip():
+        raise BlackboxActionError(400, "memory note text is required")
+    if scope not in {"global", "workspace"}:
+        raise BlackboxActionError(400, "invalid memory scope")
+    try:
+        record = _memory_store(agent).remember_note(
+            scope=scope,
+            text=text,
+            origin_session=payload.get("origin_session"),
+            origin_turn=payload.get("origin_turn"),
+        )
+    except MemoryPolicyError as exc:
+        raise BlackboxActionError(400, str(exc)) from exc
+    return {"memory": record.model_dump(mode="json")}
+
+
+async def _memory_status_update(
+    agent: Any,
+    payload: dict[str, Any],
+    *,
+    promote: bool,
+) -> dict[str, Any]:
+    memory_id = payload.get("memory_id")
+    if not isinstance(memory_id, str) or not memory_id.strip():
+        raise BlackboxActionError(400, "memory_id is required")
+    record = (
+        _memory_store(agent).promote(memory_id)
+        if promote
+        else _memory_store(agent).reject(memory_id)
+    )
+    if record is None:
+        raise BlackboxActionError(404, "memory candidate not found")
+    return {"memory": record.model_dump(mode="json")}
 
 
 def _compact_session_label(value: Any) -> str:
@@ -561,18 +659,46 @@ async def _detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _blackbox_root(agent: Any) -> Path:
-    """The single root directory all recordings live under (matches _list)."""
+    """Return the legacy workspace root used by explicit recordings."""
     workspace = Path(getattr(agent, "workspace", "") or ".")
     return (workspace / "blackbox").resolve()
 
 
+def _rolling_blackbox(agent: Any) -> Any | None:
+    return getattr(agent, "rolling_blackbox", None) or getattr(agent, "_rolling_blackbox", None)
+
+
+def _recording_roots(agent: Any) -> tuple[Path, ...]:
+    roots: list[Path] = [_blackbox_root(agent)]
+    rolling = _rolling_blackbox(agent)
+    runtime_root = getattr(rolling, "root", None)
+    if isinstance(runtime_root, Path):
+        roots.append(runtime_root)
+    unique: list[Path] = []
+    for root in roots:
+        resolved = root.resolve()
+        if resolved not in unique:
+            unique.append(resolved)
+    return tuple(unique)
+
+
 def _resolve_directory(agent: Any, name: str) -> Path:
     """Resolve a recording name to an absolute path under the blackbox root."""
-    root = _blackbox_root(agent)
+    roots = _recording_roots(agent)
     path = Path(name)
-    resolved = (path if path.is_absolute() else root / name).resolve()
-    if resolved == root or root not in resolved.parents:
-        raise BlackboxActionError(400, "录制目录必须位于当前 workspace/blackbox 下")
+    if path.is_absolute():
+        resolved = path.resolve()
+    else:
+        candidates = [(root / name).resolve() for root in roots]
+        resolved = next(
+            (candidate for candidate in candidates if candidate.exists()),
+            candidates[0],
+        )
+    if not any(resolved != root and root in resolved.parents for root in roots):
+        raise BlackboxActionError(
+            400,
+            "录制目录必须位于 Pawbot 的受控回放目录下（workspace/blackbox 或 runtime blackbox）",
+        )
     return resolved
 
 
@@ -584,10 +710,25 @@ async def _status(agent: Any) -> dict[str, Any]:
         sync_policy()
     bb = agent.blackbox
     recording = isinstance(bb, BlackboxController)
+    rolling = _rolling_blackbox(agent)
+    list_candidates = getattr(rolling, "list_candidates", None) if rolling is not None else None
+    candidate_lister = (
+        cast(Callable[[], list[Any]], list_candidates)
+        if callable(list_candidates)
+        else None
+    )
     runtime = agent.llm_runtime()
     return {
         "recording": recording,
         "directory": str(bb.directory) if recording else "",
+        "rolling_enabled": getattr(rolling, "mode", None) == "rolling",
+        "rolling_root": str(getattr(rolling, "root", "")),
+        "rolling_candidates": (
+            len(candidate_lister())
+            if candidate_lister is not None
+            else 0
+        ),
+        "rolling_max_turns_per_session": getattr(rolling, "max_turns_per_session", None),
         "model": agent.model,
         "context_window_tokens": runtime.context_window_tokens,
         "tool_count": len(agent.tools),
@@ -623,13 +764,21 @@ async def _stop(agent: Any) -> dict[str, Any]:
 
 
 async def _list(agent: Any) -> dict[str, Any]:
-    root = _blackbox_root(agent)
     recordings: list[dict[str, Any]] = []
     names = _session_display_names(agent)
-    if root.exists():
-        for entry in sorted(root.iterdir()):
-            if not entry.is_dir():
-                continue
+    for root in _recording_roots(agent):
+        directories: list[Path] = []
+        if root == _blackbox_root(agent):
+            if root.exists():
+                directories.extend(
+                    entry for entry in root.iterdir()
+                    if entry.is_dir() and not entry.name.startswith(".")
+                )
+        else:
+            samples = root / "samples"
+            if samples.exists():
+                directories.extend(entry for entry in samples.iterdir() if entry.is_dir())
+        for entry in sorted(directories, key=lambda item: item.name):
             summary = _recording_summary(entry)
             session_names = _recording_session_names(entry, names)
             recordings.append({
@@ -638,7 +787,160 @@ async def _list(agent: Any) -> dict[str, Any]:
                 "session_names": session_names,
                 **summary,
             })
-    return {"recordings": recordings, "root": str(root)}
+    return {
+        "recordings": recordings,
+        "root": str(_blackbox_root(agent)),
+        "roots": [str(root) for root in _recording_roots(agent)],
+    }
+
+
+async def _rolling_candidates(agent: Any) -> dict[str, Any]:
+    rolling = _rolling_blackbox(agent)
+    if rolling is None or not callable(getattr(rolling, "list_candidates", None)):
+        return {"candidates": []}
+    return {"candidates": _json_safe(rolling.list_candidates())}
+
+
+async def _promote_candidate(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    rolling = _rolling_blackbox(agent)
+    candidate_id = str(payload.get("candidate_id") or "").strip()
+    if rolling is None or not callable(getattr(rolling, "promote_candidate", None)):
+        raise BlackboxActionError(503, "滚动回放缓存不可用")
+    if not candidate_id:
+        raise BlackboxActionError(400, "candidate_id is required")
+    try:
+        directory = rolling.promote_candidate(candidate_id, str(payload.get("name") or "") or None)
+    except (OSError, ValueError) as exc:
+        raise BlackboxActionError(422, f"无法保留候选样本：{exc}") from exc
+    return {"promoted": True, "directory": str(directory), "candidate_id": candidate_id}
+
+
+async def _reject_candidate(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    rolling = _rolling_blackbox(agent)
+    candidate_id = str(payload.get("candidate_id") or "").strip()
+    reject = getattr(rolling, "reject_candidate", None) if rolling is not None else None
+    if not callable(reject):
+        raise BlackboxActionError(503, "滚动回放缓存不可用")
+    if not candidate_id:
+        raise BlackboxActionError(400, "candidate_id is required")
+    try:
+        directory = reject(candidate_id)
+    except (OSError, ValueError) as exc:
+        raise BlackboxActionError(422, f"无法忽略候选样本：{exc}") from exc
+    return {"rejected": True, "directory": str(directory), "candidate_id": candidate_id}
+
+
+async def _add_candidate_to_eval(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    rolling = _rolling_blackbox(agent)
+    candidate_id = str(payload.get("candidate_id") or "").strip()
+    add_to_eval = getattr(rolling, "add_candidate_to_eval", None) if rolling is not None else None
+    if not callable(add_to_eval):
+        raise BlackboxActionError(503, "滚动回放缓存不可用")
+    if not candidate_id:
+        raise BlackboxActionError(400, "candidate_id is required")
+    try:
+        case = add_to_eval(
+            candidate_id,
+            eval_id=str(payload.get("eval_id") or "").strip() or None,
+            title=str(payload.get("title") or "").strip() or None,
+        )
+    except (OSError, ValueError) as exc:
+        raise BlackboxActionError(422, f"无法加入任务评测集：{exc}") from exc
+    return {"added": True, "case": _json_safe(case)}
+
+
+async def _eval_list(agent: Any) -> dict[str, Any]:
+    from pawbot.evals import EVAL_SET_NAME, EVAL_SET_VERSION, eval_cases
+
+    rolling = _rolling_blackbox(agent)
+    list_eval_cases = getattr(rolling, "list_eval_cases", None) if rolling is not None else None
+    eval_case_lister = (
+        cast(Callable[[], list[dict[str, Any]]], list_eval_cases)
+        if callable(list_eval_cases)
+        else None
+    )
+    custom_cases = eval_case_lister() if eval_case_lister is not None else []
+    return {
+        "eval_set": EVAL_SET_NAME,
+        "version": EVAL_SET_VERSION,
+        "cases": [case.to_dict() for case in eval_cases()],
+        "custom_cases": _json_safe(custom_cases),
+    }
+
+
+async def _eval_run(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    from pawbot.evals import run_eval
+
+    raw_cases = payload.get("case_ids")
+    case_ids = (
+        [str(value) for value in cast(list[Any], raw_cases)]
+        if isinstance(raw_cases, list)
+        else None
+    )
+    try:
+        report = await run_eval(case_ids=case_ids)
+    except ValueError as exc:
+        raise BlackboxActionError(400, str(exc)) from exc
+    result = report.to_dict()
+    rolling = _rolling_blackbox(agent)
+    list_eval_cases = getattr(rolling, "list_eval_cases", None) if rolling is not None else None
+    eval_case_lister = (
+        cast(Callable[[], list[dict[str, Any]]], list_eval_cases)
+        if callable(list_eval_cases)
+        else None
+    )
+    custom_cases = eval_case_lister() if eval_case_lister is not None else []
+    custom_results: list[dict[str, Any]] = []
+    if custom_cases:
+        from pawbot.agent.blackbox import ReplayController
+
+        for case in custom_cases:
+            sample_directory = case.get("sample_directory")
+            if not isinstance(sample_directory, str):
+                continue
+            try:
+                controller = ReplayController(sample_directory)
+                replay_rows = await agent.replay_all(controller)
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                custom_results.append({
+                    "id": case.get("id"),
+                    "title": case.get("title"),
+                    "task_status": "not_evaluable",
+                    "trajectory_status": "failed",
+                    "error": str(exc),
+                })
+                continue
+            raw_details = getattr(controller, "last_replay_details", [])
+            details = (
+                [
+                    cast(dict[str, Any], item)
+                    for item in cast(list[Any], raw_details)
+                    if isinstance(item, dict)
+                ]
+                if isinstance(raw_details, list)
+                else []
+            )
+            task_statuses = [
+                str(detail.get("task_status"))
+                for detail in details
+                if detail.get("task_status")
+            ]
+            custom_results.append({
+                "id": case.get("id"),
+                "title": case.get("title"),
+                "task_status": (
+                    "passed"
+                    if task_statuses and all(status == "passed" for status in task_statuses)
+                    else "not_evaluable"
+                ),
+                "trajectory_status": (
+                    "passed" if replay_rows and all(row[1] for row in replay_rows) else "failed"
+                ),
+                "turns": len(replay_rows),
+                "source": case.get("source"),
+            })
+    result["custom_cases"] = custom_results
+    return result
 
 
 def _trace_store(agent: Any) -> Any:
@@ -968,6 +1270,18 @@ def blackbox_action_factory(
             return await _stop(agent)
         if action == "list":
             return await _list(agent)
+        if action == "rolling.candidates":
+            return await _rolling_candidates(agent)
+        if action == "rolling.promote":
+            return await _promote_candidate(agent, payload)
+        if action == "rolling.reject":
+            return await _reject_candidate(agent, payload)
+        if action == "rolling.add_to_eval":
+            return await _add_candidate_to_eval(agent, payload)
+        if action == "eval.list":
+            return await _eval_list(agent)
+        if action == "eval.run":
+            return await _eval_run(agent, payload)
         if action == "detail":
             return await _detail(agent, payload)
         if action == "delete":
@@ -980,6 +1294,18 @@ def blackbox_action_factory(
             return await _trace_list(agent, payload)
         if action == "trace.detail":
             return await _trace_detail(agent, payload)
+        if action == "memory.list":
+            return await _memory_list(agent, payload)
+        if action == "memory.remember":
+            return await _memory_remember(agent, payload)
+        if action == "memory.remember_note":
+            return await _memory_remember_note(agent, payload)
+        if action == "memory.promote":
+            return await _memory_status_update(agent, payload, promote=True)
+        if action == "memory.reject":
+            return await _memory_status_update(agent, payload, promote=False)
+        if action == "memory.forget":
+            return await _memory_forget(agent, payload)
         raise BlackboxActionError(400, f"unknown blackbox action {action!r}")
 
     return dispatch

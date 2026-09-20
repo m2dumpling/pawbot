@@ -34,6 +34,7 @@ pawbot 最适合 Agent 开发者的能力是 **Record & Replay（录制与回放
 | 接入聊天应用 | [通道与集成](#通道与集成) |
 | 了解回放能力 | [Record & Replay](#record--replay录制与回放) |
 | 验证 AI 修改后的代码 | [Agent Harness Benchmark](#agent-harness-benchmark) |
+| 查看完整使用方法 | [使用指南](docs/usage.zh-CN.md) |
 | 修改 Agent 或增加工具 | [开发](#开发) |
 
 ## pawbot 能做什么？
@@ -41,9 +42,14 @@ pawbot 最适合 Agent 开发者的能力是 **Record & Replay（录制与回放
 - 使用文件、Shell、网页搜索、网页抓取、文档、图片等工具；
 - 连接 MCP Server，并通过扩展增加能力；
 - 跨对话保存 Session History 和长期记忆；
+- 使用 `/remember` 立即保存全局或工作区偏好，不依赖 Dream 或上下文压缩；
 - 执行长期任务和定时自动化；
 - 使用 Anthropic、OpenAI 兼容端点、本地模型、Fallback 和 Model Preset；
 - 通过 WebUI、CLI/TUI、API 或聊天通道访问同一个 Agent；
+
+需要长期保存偏好时，可以使用 `/remember global reply_language=zh-CN`，也可以在
+WebUI 的用户消息上点击“保存为记忆”。自然语言“请记住……”会先提取为待确认候选，
+Dream 自动发现的内容也不会在确认前直接生效。
 - 提供 Python SDK 和 OpenAI 兼容 API，方便集成到自己的应用。
 
 ## 一次回合是怎样执行的？
@@ -253,6 +259,9 @@ Pawbot 把三个容易混淆的用途分开：
 
 - **实时执行记录**：每个回合自动生成，只展示阶段、耗时、状态和错误，
   不复制完整 Prompt 或工具返回值。
+- **滚动回放留证**：默认在本机保留每个会话最近 20 个回合的完整回放材料。
+  工具失败、模型错误、取消、预算耗尽或副作用未知的回合会自动保留为候选问题，
+  不会因为没有提前点击录制而立即丢失。
 - **回归样本**：用户主动保存一次完整执行，包含请求、模型响应、工具调用和
   工具返回；从开始保存到停止期间，所有会话都会写入同一份样本。
 - **离线验证**：使用回归样本重走当前 Agent 编排，不请求供应商、不执行真实工具，
@@ -296,7 +305,13 @@ uv run pawbot record stop
 uv run pawbot record list
 uv run pawbot trace list --filter errors
 uv run pawbot trace show <trace-id>
+uv run pawbot eval list
+uv run pawbot eval run --json
 ```
+
+WebUI 中也可以使用同一套入口：输入 `/record candidates` 查看最近自动保留的问题回合，
+用 `/record keep <candidate-id>` 把其中一个永久保存为回归样本；输入 `/eval run` 运行不请求
+真实 Provider 的任务评测集。
 
 离线验证后，展开任意回合即可看到可读的执行过程：用户请求、Provider 实际返回的模型思考
 记录、模型决策、工具调用、工具返回预览和最终回答，并且按实际发生顺序排列。长参数和
@@ -312,8 +327,8 @@ uv run pawbot agent \
 ```
 
 录制文件包含模型响应轨、工具观测轨和 Turn Envelope。回放会检查工具顺序、
-工具结果插入、上下文治理、Continuation 和最终消息结构。详见
-[docs/record-replay.md](docs/record-replay.md)。
+工具结果插入、上下文治理、Continuation 和最终消息结构。分享录制文件前，
+请检查其中的 Prompt、工具结果和本地路径。
 
 ### 任务验收与安全恢复
 
@@ -379,8 +394,22 @@ uv run --no-sync python scripts/quality_gate.py
 ```
 
 Harness 已将执行轨迹检查和简单任务契约（最终内容、要求成功的 Tool）分开；更复杂的
-领域评测器属于下一阶段。因此，回放或 Harness 变绿都不是通用的模型回答质量评分。详见
-[Agent Harness Benchmark 指南](docs/agent-harness.md)。
+领域评测器属于下一阶段。因此，回放或 Harness 变绿都不是通用的模型回答质量评分。
+
+### Agent 任务评测集
+
+任务评测集是在 Harness 之上的一层小型、确定性评测。当前包含 6 个固定任务和边界场景，
+分别观察任务结果、执行轨迹和回合状态。它使用脚本化 Provider 和内存 Tool，不请求网络，
+也不触碰真实 Workspace，可以直接接入 CI：
+
+```bash
+pawbot eval list
+pawbot eval run --json
+```
+
+报告会分别统计 `task_passed`、`trajectory_passed`、`not_evaluable`、工具失败、模型请求次数
+和耗时。这是代码和编排的回归门禁，不是通用模型准确率评分。滚动缓存中的真实失败回合，
+在确认其中没有不应保留的敏感内容后，也可以提升为永久回归样本。
 
 WebUI 使用“工作区访问”时，写入、执行和网络 Tool 会在真正运行前等待明确批准；
 “完全访问”仍表示用户主动授予这些 Tool 直接执行权限。原生 TUI 使用同一套确认协议。
@@ -388,7 +417,7 @@ WebUI 使用“工作区访问”时，写入、执行和网络 Tool 会在真�
 在 **设置 → 模型** 中选择模型时，pawbot 会优先读取提供商 `/models` 返回的能力信息，
 但对于已知模型 ID，内置能力目录会覆盖提供商返回的过时或通用值；未知模型才使用
 接口提供的信息，并保留手动设置入口。上下文长度和支持的思考档位会在保存前显示。
-详见[模型能力目录](docs/model-capabilities.md)。
+模型能力目录维护在 `pawbot/providers/registry.py`，并由 WebUI 的能力设置展示。
 
 在 TUI 中，`/model` 会列出当前提供商探查到的模型，并显示已知的上下文长度和思考档位。
 `/model <model-id>` 会把已探查或手动输入的模型固定到当前会话，`/model default` 恢复
@@ -442,11 +471,6 @@ Provider + ToolRegistry + MCP
 
 ## 文档
 
-- [文档索引](docs/README.md)
-- [Record & Replay](docs/record-replay.md)
-- [Agent Harness Benchmark](docs/agent-harness.md)
-- [发布说明](docs/release-notes/0.5.1.md)
-- [发布与 PyPI 指南](docs/publishing.md)
 - [变更记录](CHANGELOG.md)
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)

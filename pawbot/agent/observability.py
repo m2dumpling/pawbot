@@ -62,6 +62,17 @@ class TraceWriterLike(Protocol):
     def append(self, event: dict[str, Any]) -> None:
         ...
 
+
+class MultiTraceWriter:
+    """Mirror a trace event to the normal index and a replay sample."""
+
+    def __init__(self, writers: list[TraceWriterLike]) -> None:
+        self._writers = writers
+
+    def append(self, event: dict[str, Any]) -> None:
+        for writer in self._writers:
+            writer.append(event)
+
 _SECRET_RE = re.compile(
     r"(?i)(bearer\s+|(?:api[-_ ]?key|access[-_ ]?token|password|secret|token)\s*[:=]\s*)([^\s,;]+)"
 )
@@ -1381,15 +1392,17 @@ class TraceStore:
         model: str | None = None,
         provider: str | None = None,
         recording_directory: Path | None = None,
+        mirror_recording: bool = False,
     ) -> TraceRun | None:
         if not self.enabled:
             return None
         self.cleanup()
         trace_file_id: str | None = None
         on_finish: TraceFinishCallback | None = None
+        writers: list[TraceWriterLike] = []
         if recording_directory is not None:
-            path = recording_directory / TRACE_EVENTS_FILENAME
-        else:
+            writers.append(TraceWriter(recording_directory / TRACE_EVENTS_FILENAME))
+        if recording_directory is None or mirror_recording:
             path = self._trace_path(session_key, turn_id)
             trace_file_id = path.relative_to(self.root).as_posix()
             self._active_trace_ids.add(trace_file_id)
@@ -1401,8 +1414,11 @@ class TraceStore:
                 self._append_index(summary)
 
             on_finish = _finish_index
+            writers.append(TraceWriter(path))
+        if not writers:
+            return None
         trace = TraceRun(
-            writer=TraceWriter(path),
+            writer=MultiTraceWriter(writers),
             trace_id=f"trace:{_safe_component(turn_id, 'turn')}",
             session_key=session_key,
             turn_id=turn_id,

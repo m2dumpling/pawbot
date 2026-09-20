@@ -71,6 +71,7 @@ htmlcov/
 # machine; they are not part of the public source distribution.
 docs/interview/
 docs/courses/
+docs/面试话术稿.md
 interview-prep/
 
 # Local analysis/design workspaces and generated notes.

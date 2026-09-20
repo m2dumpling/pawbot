@@ -102,6 +102,29 @@ class ObservabilityConfig(Base):
         validation_alias=AliasChoices("maxBytes", "max_bytes"),
         serialization_alias="maxBytes",
     )
+    rolling_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("rollingEnabled", "rolling_enabled"),
+        serialization_alias="rollingEnabled",
+    )
+    rolling_turns_per_session: int = Field(
+        default=20,
+        ge=1,
+        validation_alias=AliasChoices("rollingTurnsPerSession", "rolling_turns_per_session"),
+        serialization_alias="rollingTurnsPerSession",
+    )
+    rolling_retention_hours: int = Field(
+        default=24,
+        ge=0,
+        validation_alias=AliasChoices("rollingRetentionHours", "rolling_retention_hours"),
+        serialization_alias="rollingRetentionHours",
+    )
+    rolling_max_bytes: int = Field(
+        default=256 * 1024 * 1024,
+        ge=0,
+        validation_alias=AliasChoices("rollingMaxBytes", "rolling_max_bytes"),
+        serialization_alias="rollingMaxBytes",
+    )
 
 
 class InlineFallbackConfig(Base):

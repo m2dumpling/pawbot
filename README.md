@@ -35,6 +35,7 @@ without another model request, another token bill, or real tool side effects.
 | Connect a chat app | [Channels](#channels-and-integrations) |
 | Understand the replay feature | [Record & Replay](#record--replay) |
 | Verify an AI-assisted code change | [Agent Harness Benchmark](#agent-harness-benchmark) |
+| Learn how to use all execution and evaluation features | [Usage guide](docs/usage.md) |
 | Change the agent or add a tool | [Development](#development) |
 
 ## What can pawbot do?
@@ -43,10 +44,16 @@ without another model request, another token bill, or real tool side effects.
   and other tools.
 - Connect to MCP servers and load extensions without changing the core agent.
 - Keep session history and long-term memory across conversations.
+- Save explicit global or workspace preferences immediately with `/remember`, independently of Dream or context compaction.
 - Run long tasks and scheduled automations.
 - Use Anthropic, OpenAI-compatible endpoints, local models, fallbacks, and
   model presets.
 - Reach the same agent from the WebUI, CLI/TUI, API, or supported chat channels.
+
+For durable preferences, use `/remember global reply_language=zh-CN` or save a user
+message as memory from the WebUI. Natural-language remember requests are extracted
+into reviewable candidates first; Dream suggestions remain candidates until you
+confirm them.
 - Expose a Python SDK and an OpenAI-compatible API for your own applications.
 
 ## How a turn works
@@ -271,6 +278,10 @@ Pawbot separates three jobs that are easy to confuse:
 - **Live execution records** are created automatically for every turn. They
   show stages, timing, status, and failures without copying full prompts or
   tool results.
+- **Rolling replay evidence** keeps a bounded recent window of full replay rails
+  locally (20 turns per conversation by default). Failed, cancelled, budget-
+  limited, or uncertain turns become candidate problem runs instead of being
+  silently rotated away.
 - **Regression samples** are saved manually when you want to keep one complete
   run. They include the request, model responses, tool calls, and tool results
   across every session until capture is stopped.
@@ -319,7 +330,14 @@ uv run pawbot record stop
 uv run pawbot record list
 uv run pawbot trace list --filter errors
 uv run pawbot trace show <trace-id>
+uv run pawbot eval list
+uv run pawbot eval run --json
 ```
+
+You can review the same automatic evidence in the WebUI. Type `/record
+candidates` to list abnormal recent turns, `/record keep <candidate-id>` to
+keep one as a regression sample, or `/eval run` to run the provider-free task
+evaluation set.
 
 After offline validation, expand a turn to see a readable execution trace: the user's
 request, model thinking when the provider returned it, model decisions, tool
@@ -338,9 +356,8 @@ uv run pawbot agent \
 
 The recording contains the provider-response rail, the tool-observation rail,
 and the turn envelope. Replay checks tool ordering, result insertion, context
-governance, continuation, and the final message structure. See
-[docs/record-replay.md](docs/record-replay.md) for the format and privacy
-boundary.
+governance, continuation, and the final message structure. Review prompts,
+tool results, and local paths before sharing a recording.
 
 ### Verify completion and recover safely
 
@@ -415,8 +432,26 @@ uv run --no-sync python scripts/quality_gate.py
 
 The Harness separates trajectory checks from simple task contracts such as final
 content and required successful tools. Domain-specific evaluators are a separate
-next step; a green replay or Harness result is not a general model-quality score. See the
-[Agent Harness Benchmark guide](docs/agent-harness.md).
+next step; a green replay or Harness result is not a general model-quality score.
+
+### Agent Task Eval Set
+
+The task evaluation set is a small, deterministic layer above the Harness. It
+checks six fixed task and boundary cases across three axes: task outcome,
+trajectory behavior, and execution status. It uses scripted providers and
+in-memory tools, so it is safe to run in CI without a network request or a real
+workspace side effect:
+
+```bash
+pawbot eval list
+pawbot eval run --json
+```
+
+The report keeps `task_passed`, `trajectory_passed`, `not_evaluable`, tool
+failures, model requests, and elapsed time separate. This is a regression gate,
+not a general model-accuracy score. A real failure can be promoted from the
+rolling replay buffer into a permanent sample after reviewing its sensitive
+content.
 
 When a WebUI chat uses **Workspace access**, write, execute, and network-capable
 Tools pause for an explicit approval. **Full access** remains the opt-in mode
@@ -427,9 +462,9 @@ When choosing a model in **Settings → Models**, pawbot also reads capability
 metadata from the provider's `/models` response when available. For known model
 IDs, the curated capability registry wins over stale or generic provider values;
 unknown models use provider metadata and remain manually editable. Context
-length and supported reasoning levels are shown before saving. See the curated
-[model capability registry](docs/model-capabilities.md) for the fallback table
-and context-window migration rules.
+length and supported reasoning levels are shown before saving. The fallback
+registry is maintained in `pawbot/providers/registry.py` and exposed through
+the WebUI capability settings.
 
 Inside the TUI, `/model` lists the current provider's discovered models and
 their known context/reasoning metadata. `/model <model-id>` pins a discovered
@@ -490,11 +525,6 @@ The core source is organized around:
 
 ## Documentation
 
-- [Documentation index](docs/README.md)
-- [Record & Replay](docs/record-replay.md)
-- [Agent Harness Benchmark](docs/agent-harness.md)
-- [Release notes](docs/release-notes/0.5.1.md)
-- [Publishing guide](docs/publishing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)

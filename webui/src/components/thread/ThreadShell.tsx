@@ -29,6 +29,7 @@ import {
   fetchReasoningEffortValues,
   fetchSettings,
   listSlashCommands,
+  memoryRememberNote,
   updateModelConfiguration,
   updateSettings,
 } from "@/lib/api";
@@ -731,6 +732,11 @@ export function ThreadShell({
     forkBoundaryMessageCount,
   } = useSessionHistory(historyKey);
   const { client, getToken, ingressLimits, modelName, token } = useClient();
+
+  const handleRememberMessage = useCallback(async (message: UIMessage) => {
+    if (message.role !== "user" || !message.content.trim()) return;
+    await memoryRememberNote(client, message.content, "global");
+  }, [client]);
   const pickWorkspaceFolder = useCallback(async (): Promise<string | null> => {
     const response = await client.requestMutation<{ path: unknown }>(
       "workspace.pick_folder",
@@ -1801,6 +1807,7 @@ export function ThreadShell({
             onLoadOlder={loadOlder}
             onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
             onForkFromMessage={onForkChat ? handleForkFromMessage : undefined}
+            onRememberMessage={session ? handleRememberMessage : undefined}
             onQuoteSelection={session ? handleQuoteSelection : undefined}
           />
         </FilePreviewAvailabilityProvider>

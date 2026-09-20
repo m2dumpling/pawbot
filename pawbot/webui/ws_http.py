@@ -193,12 +193,24 @@ _WEBUI_MUTATION_PATHS = {
     "blackbox.start": "/api/blackbox/start",
     "blackbox.stop": "/api/blackbox/stop",
     "blackbox.list": "/api/blackbox/list",
+    "blackbox.rolling.candidates": "/api/blackbox/rolling/candidates",
+    "blackbox.rolling.promote": "/api/blackbox/rolling/promote",
+    "blackbox.rolling.reject": "/api/blackbox/rolling/reject",
+    "blackbox.rolling.add_to_eval": "/api/blackbox/rolling/add-to-eval",
+    "blackbox.eval.list": "/api/blackbox/eval/list",
+    "blackbox.eval.run": "/api/blackbox/eval/run",
     "blackbox.detail": "/api/blackbox/detail",
     "blackbox.delete": "/api/blackbox/delete",
     "blackbox.replay": "/api/blackbox/replay",
     "blackbox.tokens": "/api/blackbox/tokens",
     "trace.list": "/api/trace/list",
     "trace.detail": "/api/trace/detail",
+    "memory.list": "/api/memory/list",
+    "memory.remember": "/api/memory/remember",
+    "memory.remember_note": "/api/memory/remember-note",
+    "memory.promote": "/api/memory/promote",
+    "memory.reject": "/api/memory/reject",
+    "memory.forget": "/api/memory/forget",
 }
 
 _WEBUI_CHANNEL_CONNECT_ACTIONS = {
@@ -483,7 +495,11 @@ class GatewayHTTPHandler:
             return True
         if path == "/api/webui/tool-approval/resolve":
             return True
-        if re.match(r"^/api/blackbox/(status|start|stop|list|detail|delete|replay|tokens)$", path):
+        if re.match(
+            r"^/api/(?:blackbox/(status|start|stop|list|detail|delete|replay|tokens)|"
+            r"memory/(list|remember|remember-note|promote|reject|forget))$",
+            path,
+        ):
             return True
         if re.match(r"^/api/trace/(list|detail)$", path):
             return True
@@ -816,14 +832,18 @@ class GatewayHTTPHandler:
             path,
         )
         if match is None:
-            trace_match = re.fullmatch(r"/api/trace/(list|detail)", path)
-            if trace_match is None:
-                return None
-            action = f"trace.{trace_match.group(1)}"
+            memory_match = re.fullmatch(r"/api/memory/(list|remember|remember-note|promote|reject|forget)", path)
+            if memory_match is not None:
+                action = f"memory.{memory_match.group(1)}"
+            else:
+                trace_match = re.fullmatch(r"/api/trace/(list|detail)", path)
+                if trace_match is None:
+                    return None
+                action = f"trace.{trace_match.group(1)}"
         else:
             action = match.group(1)
         if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
-            return _http_error(405, "Blackbox actions require an authenticated WebSocket")
+            return _http_error(405, "Memory and trace actions require an authenticated WebSocket")
         if self.blackbox_action is None:
             return _http_error(503, "Blackbox is unavailable")
         payload = _mutation_payload(request) or {}

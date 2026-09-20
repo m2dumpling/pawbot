@@ -10,6 +10,7 @@ import pytest
 
 from pawbot.agent.approval import ToolApprovalRequest, ToolApprovalResult
 from pawbot.agent.blackbox.recorder import BlackboxController
+from pawbot.agent.blackbox.rolling import RollingBlackboxController
 from pawbot.agent.hook import AgentHookContext, AgentRunHookContext
 from pawbot.agent.loop import AgentLoop
 from pawbot.agent.observability import TraceStore
@@ -149,6 +150,24 @@ def test_recording_trace_uses_recording_directory(tmp_path: Path) -> None:
     assert not (tmp_path / "traces" / "cli_direct" / "turn-1.jsonl").exists()
 
 
+def test_rolling_recording_mirrors_trace_into_lightweight_store(tmp_path: Path) -> None:
+    recording = tmp_path / "blackbox" / "rolling" / "session" / "turn-1"
+    store = TraceStore(tmp_path / "traces")
+    trace = store.start_turn(
+        session_key="cli:direct",
+        turn_id="turn-1",
+        channel="cli",
+        chat_id="direct",
+        recording_directory=recording,
+        mirror_recording=True,
+    )
+
+    assert trace is not None
+    trace.finish(status="completed", stop_reason="completed")
+    assert (recording / "events.jsonl").exists()
+    assert (tmp_path / "traces" / "cli_direct" / "turn-1.jsonl").exists()
+
+
 @pytest.mark.asyncio
 async def test_agent_loop_trace_covers_outer_stages_and_react_response(tmp_path: Path) -> None:
     provider = MagicMock(spec=LLMProvider)
@@ -229,6 +248,36 @@ async def test_recorded_agent_turn_places_trace_next_to_blackbox_rails(tmp_path:
     ]
     assert "llm.response" in event_names
     assert event_names[-1] == "turn.completed"
+
+
+@pytest.mark.asyncio
+async def test_rolling_agent_turn_keeps_replay_rails_and_light_trace(tmp_path: Path) -> None:
+    provider = MagicMock(spec=LLMProvider)
+    provider.provider_name = "fake"
+    provider.get_default_model.return_value = "fake-model"
+    provider.generation = GenerationSettings(max_tokens=512)
+    provider.chat_with_retry = AsyncMock(
+        return_value=LLMResponse(content="done", finish_reason="stop"),
+    )
+    rolling = RollingBlackboxController(tmp_path / "runtime" / "blackbox")
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=tmp_path,
+        model="fake-model",
+        blackbox=rolling,
+        rolling_blackbox=rolling,
+        trace_store=TraceStore(tmp_path / "traces"),
+    )
+
+    await loop._process_message(
+        InboundMessage(channel="cli", sender_id="user", chat_id="direct", content="hello"),
+    )
+
+    rolling_turns = list((tmp_path / "runtime" / "blackbox" / "rolling").rglob("turns.jsonl"))
+    assert len(rolling_turns) == 1
+    assert (rolling_turns[0].parent / "events.jsonl").exists()
+    assert list((tmp_path / "traces").rglob("*.jsonl"))
 
 
 @pytest.mark.asyncio

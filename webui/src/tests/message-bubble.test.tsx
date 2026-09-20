@@ -113,6 +113,22 @@ describe("MessageBubble", () => {
     expect(screen.queryByRole("button", { name: "Fork" })).not.toBeInTheDocument();
   });
 
+  it("offers saving a user message as a memory", async () => {
+    const message: UIMessage = {
+      id: "u-memory",
+      role: "user",
+      content: "Please remember that I prefer concise answers.",
+      createdAt: Date.now(),
+    };
+    const onRememberMessage = vi.fn().mockResolvedValue(undefined);
+
+    render(<MessageBubble message={message} onRememberMessage={onRememberMessage} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save as memory" }));
+    await waitFor(() => expect(onRememberMessage).toHaveBeenCalledWith(message));
+    expect(screen.getByRole("button", { name: "Saved as memory" })).toBeDisabled();
+  });
+
   it("renders cross-session input with its public handle", () => {
     const message: UIMessage = {
       id: "session-message:message-1",
