@@ -129,6 +129,13 @@ interface PendingChatRequest extends PendingRequest<string> {
   temporary: boolean;
 }
 
+type GatewayInboundEvent = InboundEvent & {
+  event_id?: string;
+  stream_id?: string;
+  seq?: number;
+  replayed?: boolean;
+};
+
 const SYSTEM_COMMAND_TURN_PREFIX = "webui-system:";
 const TURN_REJECTION_DETAILS = new Set([
   "access_denied",
@@ -234,6 +241,9 @@ export class PawbotClient {
   private currentUrl: string;
   private status_: ConnectionStatus = "idle";
   private readyChatId: string | null = null;
+  private gatewayClientId: string | null = null;
+  private gatewaySeqByStream = new Map<string, number>();
+  private gatewayResumeRequests = new Set<string>();
   // Set by ``close()`` so the onclose handler knows the drop was intentional
   // and must not schedule a reconnect or flip status back to "reconnecting".
   private intentionallyClosed = false;
@@ -787,12 +797,59 @@ export class PawbotClient {
     if (this.socket && this.socket.readyState < WS_CLOSING) return;
     this.intentionallyClosed = false;
     this.setStatus("connecting");
-    const sock = this.socketFactory(this.currentUrl);
+    const sock = this.socketFactory(this.gatewayProtocolUrl(this.currentUrl));
     this.socket = sock;
     sock.onopen = () => this.handleOpen();
     sock.onmessage = (ev) => this.handleMessage(ev);
     sock.onerror = () => this.setStatus("error");
     sock.onclose = (ev) => this.handleClose(ev);
+  }
+
+  private gatewayProtocolUrl(url: string): string {
+    if (url.startsWith(HOST_SOCKET_URL_PREFIX) || /[?&]gateway_protocol=/.test(url)) {
+      return url;
+    }
+    const hashIndex = url.indexOf("#");
+    const base = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
+    const hash = hashIndex >= 0 ? url.slice(hashIndex) : "";
+    return `${base}${base.includes("?") ? "&" : "?"}gateway_protocol=1${hash}`;
+  }
+
+  private gatewayStreamId(chatId: string): string | null {
+    return this.gatewayClientId ? `${this.gatewayClientId}:${chatId}` : null;
+  }
+
+  private requestGatewayResume(chatId: string): void {
+    const streamId = this.gatewayStreamId(chatId);
+    if (!streamId || this.socket?.readyState !== WS_OPEN) return;
+    const afterSeq = this.gatewaySeqByStream.get(streamId);
+    if (afterSeq === undefined || this.gatewayResumeRequests.has(streamId)) return;
+    this.gatewayResumeRequests.add(streamId);
+    this.rawSend({ type: "resume", stream_id: streamId, after_seq: afterSeq });
+  }
+
+  private acceptGatewayEvent(event: GatewayInboundEvent): boolean {
+    const streamId = event.stream_id;
+    const sequence = event.seq;
+    if (typeof streamId !== "string" || typeof sequence !== "number") return true;
+    if (!Number.isInteger(sequence) || sequence < 1) return true;
+    const previous = this.gatewaySeqByStream.get(streamId);
+    if (previous !== undefined) {
+      if (sequence <= previous) return false;
+      if (sequence !== previous + 1) {
+        if (!this.gatewayResumeRequests.has(streamId)) {
+          this.gatewayResumeRequests.add(streamId);
+          this.rawSend({ type: "resume", stream_id: streamId, after_seq: previous });
+        }
+        return false;
+      }
+    }
+    this.gatewaySeqByStream.set(streamId, sequence);
+    if ((event as { event?: string }).event === "gateway_replay_complete") {
+      const target = (event as unknown as { replay_stream_id?: unknown }).replay_stream_id;
+      if (typeof target === "string") this.gatewayResumeRequests.delete(target);
+    }
+    return true;
   }
 
   close(): void {
@@ -809,6 +866,9 @@ export class PawbotClient {
       // ignore
     }
     this.clearTemporaryChats();
+    this.gatewaySeqByStream.clear();
+    this.gatewayResumeRequests.clear();
+    this.gatewayClientId = null;
     this.setStatus("closed");
   }
 
@@ -1069,6 +1129,7 @@ export class PawbotClient {
     // Re-attach every known chat_id so deliveries continue routing after a drop.
     for (const chatId of this.knownChats) {
       this.rawSend({ type: "attach", chat_id: chatId });
+      this.requestGatewayResume(chatId);
     }
     for (const pending of this.pendingWebUIRequests.values()) {
       this.rawSendSerialized(pending.serializedFrame);
@@ -1079,9 +1140,9 @@ export class PawbotClient {
   }
 
   private handleMessage(ev: MessageEvent): void {
-    let parsed: InboundEvent;
+    let parsed: GatewayInboundEvent;
     try {
-      parsed = JSON.parse(typeof ev.data === "string" ? ev.data : "") as InboundEvent;
+      parsed = JSON.parse(typeof ev.data === "string" ? ev.data : "") as GatewayInboundEvent;
     } catch {
       if (wsInboundDebugEnabled()) {
         const raw = typeof ev.data === "string" ? ev.data : String(ev.data);
@@ -1092,6 +1153,8 @@ export class PawbotClient {
       }
       return;
     }
+
+    if (!this.acceptGatewayEvent(parsed)) return;
 
     if (wsInboundDebugEnabled()) {
       console.log("[pawbot ws inbound]", summarizeInboundWsPayload(parsed));
@@ -1177,6 +1240,7 @@ export class PawbotClient {
 
     if (parsed.event === "ready") {
       this.readyChatId = parsed.chat_id;
+      this.gatewayClientId = parsed.client_id;
       this.knownChats.add(parsed.chat_id);
       return;
     }

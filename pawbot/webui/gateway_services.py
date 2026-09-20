@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from loguru import logger as default_logger
 
 from pawbot.config.loader import get_config_path
+from pawbot.gateway.protocol import GatewayEventJournal, GatewayOperationLedger
 from pawbot.webui.gateway_endpoint import WebUIGatewayEndpoint
 from pawbot.webui.gateway_tokens import GatewayTokenStore
 from pawbot.webui.ingress_policy import DEFAULT_WEBUI_INGRESS_POLICY, WebUIIngressPolicy
@@ -49,6 +50,8 @@ class GatewayServices:
     cron_pending_job_ids: Callable[[str], set[str]] | None
     local_trigger_pending_ids: Callable[[str], set[str]] | None
     tool_approval_pending: Callable[[str], list[dict[str, Any]]] | None
+    event_journal: GatewayEventJournal
+    operation_ledger: GatewayOperationLedger
 
 
 def build_gateway_services(
@@ -90,6 +93,9 @@ def build_gateway_services(
         refresh_runtime_config=refresh_runtime_config,
     )
     tokens = GatewayTokenStore()
+    runtime_root = (config_path or get_config_path()).expanduser().resolve(strict=False).parent / "run"
+    event_journal = GatewayEventJournal(runtime_root / "gateway.events.jsonl")
+    operation_ledger = GatewayOperationLedger(runtime_root / "gateway.operations.json")
     ingress = DEFAULT_WEBUI_INGRESS_POLICY
     minimum_frame_bytes = ingress.minimum_full_policy_frame_bytes()
     if config.max_message_bytes < minimum_frame_bytes:
@@ -164,4 +170,6 @@ def build_gateway_services(
         cron_pending_job_ids=cron_pending_job_ids,
         local_trigger_pending_ids=local_trigger_pending_ids,
         tool_approval_pending=tool_approval_pending,
+        event_journal=event_journal,
+        operation_ledger=operation_ledger,
     )

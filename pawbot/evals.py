@@ -90,6 +90,7 @@ class EvalReport:
                 "tool_attempts": result.tool_attempts,
                 "tool_failures": result.tool_failures,
                 "failures": list(result.failures),
+                "task_assertions": [dict(item) for item in result.task_assertions],
             }
             for result in self.harness.results
         ]

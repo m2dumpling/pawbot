@@ -71,6 +71,89 @@ afterEach(() => {
 });
 
 describe("PawbotClient", () => {
+  it("negotiates the additive Gateway event protocol in the socket URL", () => {
+    const client = new PawbotClient({
+      url: "ws://test?token=abc",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+
+    client.connect();
+
+    expect(lastSocket().url).toBe("ws://test?token=abc&gateway_protocol=1");
+  });
+
+  it("requests a replay when a Gateway event sequence has a gap", () => {
+    const client = new PawbotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    const received: number[] = [];
+    client.onChat("chat-x", (event) => {
+      const seq = (event as { seq?: unknown }).seq;
+      if (event.event === "message" && typeof seq === "number") {
+        received.push(seq);
+      }
+    });
+    client.connect();
+    const socket = lastSocket();
+    socket.fakeOpen();
+    socket.fakeMessage({
+      event: "ready",
+      chat_id: "default-chat",
+      client_id: "client-1",
+      event_id: "evt-ready",
+      stream_id: "client-1:default-chat",
+      seq: 1,
+      gateway_protocol: 1,
+    });
+    socket.fakeMessage({
+      event: "message",
+      chat_id: "chat-x",
+      text: "one",
+      event_id: "evt-1",
+      stream_id: "client-1:chat-x",
+      seq: 1,
+    });
+    socket.fakeMessage({
+      event: "message",
+      chat_id: "chat-x",
+      text: "three",
+      event_id: "evt-3",
+      stream_id: "client-1:chat-x",
+      seq: 3,
+    });
+
+    expect(received).toEqual([1]);
+    expect(socket.sent.map((raw) => JSON.parse(raw))).toContainEqual({
+      type: "resume",
+      stream_id: "client-1:chat-x",
+      after_seq: 1,
+    });
+
+    socket.fakeMessage({
+      event: "message",
+      chat_id: "chat-x",
+      text: "two",
+      event_id: "evt-2",
+      stream_id: "client-1:chat-x",
+      seq: 2,
+      replayed: true,
+    });
+    socket.fakeMessage({
+      event: "message",
+      chat_id: "chat-x",
+      text: "three",
+      event_id: "evt-3",
+      stream_id: "client-1:chat-x",
+      seq: 3,
+      replayed: true,
+    });
+
+    expect(received).toEqual([1, 2, 3]);
+  });
+
   it("reconciles simultaneous client submissions to the gateway-owned turn", () => {
     const client = new PawbotClient({
       url: "ws://test",
@@ -443,7 +526,7 @@ describe("PawbotClient", () => {
     });
 
     client.connect();
-    expect(lastSocket().url).toBe("browser:ws://test");
+    expect(lastSocket().url).toBe("browser:ws://test?gateway_protocol=1");
     client.close();
     client.updateUrl("pawbot-host://engine/", hostFactory);
     client.connect();

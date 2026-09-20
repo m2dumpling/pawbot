@@ -3760,6 +3760,53 @@ async def test_end_to_end_client_receives_ready_and_agent_sees_inbound(bus: Magi
 
 
 @pytest.mark.asyncio
+async def test_gateway_protocol_negotiates_event_sequence_and_resume_route(bus: MagicMock) -> None:
+    port = 29879
+    channel = _ch(bus, port=port)
+    server_task = asyncio.create_task(channel.start())
+
+    try:
+        client = await asyncio.wait_for(
+            _connect_when_ready(
+                f"ws://127.0.0.1:{port}/ws?client_id=protocol-client&gateway_protocol=1"
+            ),
+            timeout=5,
+        )
+        async with client:
+            ready = json.loads(await client.recv())
+            assert ready["event"] == "ready"
+            assert ready["gateway_protocol"] == 1
+            assert ready["seq"] == 1
+            assert ready["stream_id"].startswith("protocol-client:")
+
+            await client.send(json.dumps({"type": "new_chat"}))
+            attached = json.loads(await asyncio.wait_for(client.recv(), timeout=5))
+            assert attached["event"] == "attached"
+            assert attached["gateway_protocol"] == 1
+            assert attached["seq"] == 1
+            metadata_update = json.loads(await asyncio.wait_for(client.recv(), timeout=5))
+            assert metadata_update["event"] == "session_updated"
+
+            stream_id = attached["stream_id"]
+            await client.send(json.dumps({
+                "type": "resume",
+                "stream_id": stream_id,
+                "after_seq": 0,
+            }))
+            replay = json.loads(await asyncio.wait_for(client.recv(), timeout=5))
+            assert replay["event"] == "attached"
+            assert replay["replayed"] is True
+            replayed_metadata = json.loads(await asyncio.wait_for(client.recv(), timeout=5))
+            assert replayed_metadata["event"] == "session_updated"
+            complete = json.loads(await asyncio.wait_for(client.recv(), timeout=5))
+            assert complete["event"] == "gateway_replay_complete"
+            assert complete["replay_stream_id"] == stream_id
+    finally:
+        await channel.stop()
+        await server_task
+
+
+@pytest.mark.asyncio
 async def test_token_rejects_handshake_when_mismatch(bus: MagicMock) -> None:
     port = 29877
     channel = _ch(bus, port=port, path="/", token="secret")

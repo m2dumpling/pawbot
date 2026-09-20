@@ -60,6 +60,13 @@ class WebUIRequestResult:
     status: int | None = None
     message: str | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "result": self.result,
+            "status": self.status,
+            "message": self.message,
+        }
+
 
 @dataclass
 class WebUIRequestOperation:
@@ -84,6 +91,8 @@ class WebUICommandTransport(Protocol):
 
     def webui_clear_connection_default(self, connection: ServerConnection) -> None: ...
 
+    def webui_protocol_enabled(self, connection: ServerConnection) -> bool: ...
+
     def webui_clear_stream_buffers(self, chat_id: str) -> None: ...
 
     async def webui_hydrate(self, chat_id: str) -> None: ...
@@ -101,6 +110,7 @@ class WebUICommandTransport(Protocol):
         raw: str,
         *,
         label: str = "",
+        journal: bool = True,
     ) -> None: ...
 
     async def webui_dispatch_message(
@@ -138,6 +148,7 @@ class WebUICommandRouter:
         self._temporary_chats = gateway.temporary_chats
         self._session_projection = gateway.session_projection
         self._webui_connections = gateway.endpoint.webui_connections
+        self._operation_ledger = gateway.operation_ledger
         self._session_access = (
             WebuiSessionAccess(gateway.session_manager)
             if gateway.session_manager is not None
@@ -777,6 +788,8 @@ class WebUICommandRouter:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).digest()
+        payload_digest_hex = payload_digest.hex()
+        durable_operations = self._transport.webui_protocol_enabled(connection)
         self.prune_request_operations()
         operation = self.request_operations.get(request_id)
         is_replay = operation is not None
@@ -790,7 +803,44 @@ class WebUICommandRouter:
                 message="request_id was already used for a different WebUI mutation",
             )
             return
+        if operation is None and durable_operations:
+            durable = self._operation_ledger.get(request_id)
+            if durable is not None:
+                if durable.action != action or durable.payload_digest != payload_digest_hex:
+                    await self.send_webui_response(
+                        connection,
+                        request_id,
+                        status=409,
+                        message="request_id was already used for a different WebUI mutation",
+                    )
+                    return
+                if durable.status == "completed" and isinstance(durable.result, dict):
+                    await self.send_webui_response(
+                        connection,
+                        request_id,
+                        result=durable.result.get("result"),
+                        status=durable.result.get("status"),
+                        message=(
+                            str(durable.result.get("message"))
+                            if durable.result.get("message") is not None
+                            else None
+                        ),
+                    )
+                    return
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=409,
+                    message=(
+                        "operation state is unknown; do not retry automatically"
+                        if durable.status == "unknown_side_effect"
+                        else "operation is still running in another Gateway process"
+                    ),
+                )
+                return
         if operation is None:
+            if durable_operations:
+                self._operation_ledger.begin(request_id, action, payload_digest_hex)
             operation_task = asyncio.create_task(
                 self.execute_webui_request(
                     connection,
@@ -811,6 +861,16 @@ class WebUICommandRouter:
                 if current is not new_operation:
                     return
                 new_operation.completed_at = time.monotonic()
+                if durable_operations:
+                    if _task.cancelled():
+                        self._operation_ledger.unknown(request_id)
+                    else:
+                        try:
+                            result = _task.result()
+                        except BaseException:
+                            self._operation_ledger.unknown(request_id)
+                        else:
+                            self._operation_ledger.complete(request_id, result.to_dict())
                 self.prune_request_operations()
 
             operation_task.add_done_callback(mark_complete)
@@ -964,6 +1024,9 @@ class WebUICommandRouter:
         """Cancel command work and release application-owned gateway state."""
         delivery_tasks = tuple(self.request_tasks.values())
         operation_tasks = tuple(operation.task for operation in self.request_operations.values())
+        for request_id, operation in self.request_operations.items():
+            if not operation.task.done() and self._operation_ledger.get(request_id) is not None:
+                self._operation_ledger.unknown(request_id)
         for task in (*delivery_tasks, *operation_tasks):
             task.cancel()
         if delivery_tasks:

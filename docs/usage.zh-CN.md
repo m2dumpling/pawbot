@@ -1,5 +1,7 @@
 # pawbot 使用指南
 
+当前文档对应 `v0.5.2`。
+
 这篇文档面向已经安装 Pawbot 的用户，集中说明 CLI、WebUI、Trace、滚动回放、Record & Replay、Task Eval Set 和 Harness 的实际用法。
 
 如果只想开始聊天，先记住两条命令：
@@ -311,6 +313,30 @@ pawbot agent \
 
 普通 WebUI 自由对话目前不会自动生成 TaskContract，但可以显示已有样本中的任务验收结果。
 
+### `must / must_not / ordered`
+
+需要表达执行边界时，可以增加断言：
+
+```json
+{
+  "id": "research-summary",
+  "must": [
+    {"id": "search", "kind": "tool_called", "tool": "web_search"},
+    {"id": "sources", "kind": "evidence_sources", "min_count": 3}
+  ],
+  "must_not": [
+    {"id": "no_write", "kind": "tool_called", "tool": "write_file"}
+  ],
+  "ordered": [
+    {"before": "search", "after": "sources"}
+  ]
+}
+```
+
+`must` 表示必须满足，`must_not` 表示禁止行为，`ordered` 只约束部分顺序，允许并行搜索
+和重试。系统逐条返回证据和原因。未知的语义断言返回 `not_evaluable`，不会交给 Agent
+自己宣布通过。
+
 ## 9. Agent Task Eval Set
 
 任务评测集用一批固定任务比较当前 Agent 编排是否退化。它不请求真实 Provider，也不执行真实工具。
@@ -382,7 +408,23 @@ python scripts/quality_gate.py
 
 质量门禁会组合静态检查、契约测试、Harness、Task Eval Set、Replay Fixture 和其他关键测试。
 
-## 11. 常用斜杠命令
+## 11. Gateway 事件恢复与 Doctor
+
+WebUI 会自动协商 Gateway protocol v1。事件会带有 `event_id`、`stream_id` 和 `seq`；客户端
+发现缺口时会发送 `resume`，Gateway 从本地 Event Journal 补发。WebUI mutation 在协议 v1
+下使用 request_id 幂等账本，状态未知时不会自动重复提交。
+
+部署前可以运行：
+
+```bash
+pawbot doctor
+pawbot doctor --json
+```
+
+Doctor 只读检查 Python、配置、workspace、Gateway、事件序列、操作账本和 WebUI 构建产物，
+默认不向真实 Provider 发请求。
+
+## 12. 常用斜杠命令
 
 ```text
 /trace
@@ -412,7 +454,7 @@ python scripts/quality_gate.py
 /help
 ```
 
-## 12. 数据和隐私
+## 13. 数据和隐私
 
 默认数据都留在本机：
 
@@ -434,7 +476,7 @@ Session：运行数据目录/sessions
 - `blackbox/`；
 - 个人 Prompt 和工具返回值。
 
-## 13. 快速排查
+## 14. 快速排查
 
 ```text
 看不到 Trace：检查 Trace 是否启用，并确认当前会话已发送任务。

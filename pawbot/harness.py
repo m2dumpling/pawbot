@@ -269,6 +269,7 @@ class HarnessResult:
     trajectory_failures: tuple[str, ...] = ()
     task_failures: tuple[str, ...] = ()
     task_reason: str | None = None
+    task_assertions: tuple[dict[str, Any], ...] = ()
     failures: tuple[str, ...] = ()
     outcome: dict[str, Any] | None = None
 
@@ -287,6 +288,7 @@ class HarnessResult:
                 "completed": self.task_completed,
                 "reason": self.task_reason,
                 "failures": list(self.task_failures),
+                "assertions": [dict(item) for item in self.task_assertions],
             },
             "execution_status": self.execution_status,
             "outcome": self.outcome,
@@ -1023,6 +1025,9 @@ async def run_case(case: HarnessCase) -> HarnessResult:
         trajectory_failures=tuple(trajectory_failures),
         task_failures=tuple(task_failures),
         task_reason=task_evaluation.reason,
+        task_assertions=tuple(
+            assertion.to_dict() for assertion in task_evaluation.assertions
+        ),
         failures=tuple(failures),
         outcome=outcome,
     )

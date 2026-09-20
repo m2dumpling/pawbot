@@ -380,6 +380,8 @@ class WebSocketChannel(BaseChannel):
 
         self._stream_text_buffers: dict[tuple[str, str], list[str]] = {}
         self._reasoning_text_buffers: dict[tuple[str, str], list[str]] = {}
+        self._connection_client_ids: dict[ServerConnection, str] = {}
+        self._connection_protocol_enabled: set[ServerConnection] = set()
 
     # -- Subscription bookkeeping -------------------------------------------
 
@@ -398,6 +400,9 @@ class WebSocketChannel(BaseChannel):
 
     def webui_clear_connection_default(self, connection: ServerConnection) -> None:
         self._conn_default.pop(connection, None)
+
+    def webui_protocol_enabled(self, connection: ServerConnection) -> bool:
+        return connection in self._connection_protocol_enabled
 
     def webui_clear_stream_buffers(self, chat_id: str) -> None:
         self._clear_stream_buffers(chat_id)
@@ -419,8 +424,9 @@ class WebSocketChannel(BaseChannel):
         raw: str,
         *,
         label: str = "",
+        journal: bool = True,
     ) -> None:
-        await self._safe_send_to(connection, raw, label=label)
+        await self._safe_send_to(connection, raw, label=label, journal=journal)
 
     async def webui_dispatch_message(
         self,
@@ -473,6 +479,8 @@ class WebSocketChannel(BaseChannel):
     async def _cleanup_connection(self, connection: ServerConnection) -> None:
         """Remove *connection* from every subscription set; safe to call multiple times."""
         await self._commands.cleanup_connection(connection)
+        self._connection_client_ids.pop(connection, None)
+        self._connection_protocol_enabled.discard(connection)
 
     async def _hydrate_after_subscribe(self, chat_id: str) -> None:
         """Replay persisted or actively running per-chat state after subscribe."""
@@ -489,7 +497,7 @@ class WebSocketChannel(BaseChannel):
         payload.update(fields)
         raw = json.dumps(payload, ensure_ascii=False)
         try:
-            await connection.send(raw)
+            await self._safe_send_to(connection, raw, label=f" {event} ")
         except ConnectionClosed:
             await self._cleanup_connection(connection)
         except Exception as e:
@@ -740,6 +748,8 @@ class WebSocketChannel(BaseChannel):
         path_part = request.path if request else "/"
         _, query = _parse_request_path(path_part)
         client_id_raw = _query_first(query, "client_id")
+        if _query_first(query, "gateway_protocol") == "1":
+            self._connection_protocol_enabled.add(connection)
         client_id = client_id_raw.strip() if client_id_raw else ""
         if not client_id:
             client_id = f"anon-{uuid.uuid4().hex[:12]}"
@@ -748,9 +758,11 @@ class WebSocketChannel(BaseChannel):
             client_id = client_id[:128]
 
         default_chat_id = str(uuid.uuid4())
+        self._connection_client_ids[connection] = client_id
 
         try:
-            await connection.send(
+            await self._safe_send_to(
+                connection,
                 json.dumps(
                     {
                         "event": "ready",
@@ -758,7 +770,8 @@ class WebSocketChannel(BaseChannel):
                         "client_id": client_id,
                     },
                     ensure_ascii=False,
-                )
+                ),
+                label=" ready ",
             )
             # Register only after ready is successfully sent to avoid out-of-order sends
             self._conn_default[connection] = default_chat_id
@@ -805,7 +818,82 @@ class WebSocketChannel(BaseChannel):
         envelope: dict[str, Any],
     ) -> None:
         """Delegate one typed envelope to the WebUI application router."""
+        await self._dispatch_envelope_impl(connection, client_id, envelope)
+
+    async def _dispatch_envelope_impl(
+        self,
+        connection: ServerConnection,
+        client_id: str,
+        envelope: dict[str, Any],
+    ) -> None:
+        if envelope.get("type") == "resume":
+            await self._resume_gateway_events(connection, envelope)
+            return
+        if envelope.get("type") == "hello":
+            if envelope.get("gateway_protocol") == 1:
+                self._connection_protocol_enabled.add(connection)
+                await self._send_event(connection, "gateway_hello", gateway_protocol=1)
+            else:
+                await self._send_event(connection, "error", detail="unsupported gateway protocol")
+            return
         await self._commands.dispatch(connection, client_id, envelope)
+
+    async def _resume_gateway_events(
+        self,
+        connection: ServerConnection,
+        envelope: dict[str, Any],
+    ) -> None:
+        stream_id = envelope.get("stream_id")
+        after_seq = envelope.get("after_seq", 0)
+        if (
+            connection not in self._connection_protocol_enabled
+            or
+            not isinstance(stream_id, str)
+            or not stream_id.strip()
+            or len(stream_id) > 512
+            or isinstance(after_seq, bool)
+            or not isinstance(after_seq, int)
+            or after_seq < 0
+        ):
+            await self._send_event(connection, "error", detail="invalid gateway resume request")
+            return
+        replay = self.gateway.event_journal.replay(stream_id, after_seq)
+        if replay.gap:
+            await self._send_event(
+                connection,
+                "gateway_gap",
+                replay_stream_id=stream_id,
+                after_seq=after_seq,
+                oldest_seq=replay.oldest_seq,
+                latest_seq=replay.latest_seq,
+            )
+        for event in replay.events:
+            payload = event.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            frame = dict(cast(dict[str, Any], payload))
+            frame.update({
+                "event_id": event.get("event_id"),
+                "stream_id": event.get("stream_id"),
+                "seq": event.get("seq"),
+                "gateway_protocol": 1,
+                "replayed": True,
+            })
+            await self.webui_send_raw(
+                connection,
+                json.dumps(frame, ensure_ascii=False),
+                label=" gateway replay ",
+                journal=False,
+            )
+        await self._send_event(
+            connection,
+            "gateway_replay_complete",
+            replay_stream_id=stream_id,
+            after_seq=after_seq,
+            latest_seq=replay.latest_seq,
+            replayed=len(replay.events),
+            gap=replay.gap,
+        )
 
     def _prune_webui_request_operations(self) -> None:
         """Compatibility hook for request-cache boundary tests."""
@@ -836,6 +924,8 @@ class WebSocketChannel(BaseChannel):
         self._subs.clear()
         self._conn_chats.clear()
         self._conn_default.clear()
+        self._connection_client_ids.clear()
+        self._connection_protocol_enabled.clear()
 
     async def _safe_send_to(
         self,
@@ -843,10 +933,42 @@ class WebSocketChannel(BaseChannel):
         raw: str,
         *,
         label: str = "",
+        journal: bool = True,
     ) -> None:
         """Send a raw frame to one connection, cleaning up on ConnectionClosed."""
         try:
-            await connection.send(raw)
+            outgoing = raw
+            if journal and connection in self._connection_protocol_enabled:
+                try:
+                    value = json.loads(raw)
+                except json.JSONDecodeError:
+                    value = None
+                payload_value = cast(dict[str, Any], value) if isinstance(value, dict) else None
+                if payload_value is not None and isinstance(payload_value.get("event"), str):
+                    client_id = self._connection_client_ids.get(
+                        connection,
+                        f"connection-{id(connection)}",
+                    )
+                    chat_id = payload_value.get("chat_id")
+                    stream_id = (
+                        f"{client_id}:{chat_id}"
+                        if isinstance(chat_id, str)
+                        else f"{client_id}:control"
+                    )
+                    event = self.gateway.event_journal.append(
+                        stream_id,
+                        cast(str, payload_value["event"]),
+                        payload_value,
+                    )
+                    outgoing_payload: dict[str, Any] = dict(payload_value)
+                    outgoing_payload.update({
+                        "event_id": event["event_id"],
+                        "stream_id": event["stream_id"],
+                        "seq": event["seq"],
+                        "gateway_protocol": 1,
+                    })
+                    outgoing = json.dumps(outgoing_payload, ensure_ascii=False)
+            await connection.send(outgoing)
         except ConnectionClosed:
             await self._cleanup_connection(connection)
             self.logger.warning("connection gone{}", label)

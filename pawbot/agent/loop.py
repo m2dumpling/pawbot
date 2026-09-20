@@ -1002,10 +1002,11 @@ class AgentLoop(TurnStagesMixin):
                 kind=candidate.kind,
                 key=candidate.key,
                 value=candidate.value,
-                source="explicit",
+                source="natural_language",
                 status="candidate",
                 confidence=candidate.confidence,
                 evidence=candidate.evidence or "Extracted from an explicit remember request.",
+                evidence_refs=[f"session:{ctx.session_key}", f"turn:{ctx.turn_id}"],
                 origin_session=ctx.session_key,
                 origin_turn=ctx.turn_id,
             )

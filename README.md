@@ -90,6 +90,19 @@ flowchart LR
 The result is one execution unit with explicit resource limits, recovery
 checkpoints, tool side-effect boundaries, and an offline evidence trail.
 
+### Reliability boundaries
+
+The current runtime also makes three boundaries explicit:
+
+- **Memory provenance:** confirmed preferences, Dream candidates, and external
+  tool/web content have different trust levels and source references.
+- **Task assertions:** `TaskContract` can express `must`, `must_not`, and
+  partial `ordered` constraints, returning `passed`, `failed`, or
+  `not_evaluable` per assertion.
+- **Gateway recovery:** negotiated WebSocket protocol v1 adds event sequence
+  numbers, replay after a gap, idempotent WebUI mutations, and `pawbot doctor`
+  diagnostics. Older clients remain compatible.
+
 ## Why pawbot?
 
 ### One agent, several ways to use it
@@ -164,19 +177,19 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.2/scripts/install.sh | sh
 ```
 
 If `curl` is not available, use `wget` instead:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.1/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.2/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.1/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.2/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a

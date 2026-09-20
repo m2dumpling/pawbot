@@ -1,5 +1,7 @@
 # pawbot Usage Guide
 
+This guide corresponds to `v0.5.2`.
+
 This guide explains how to use the released Pawbot features from the CLI and WebUI: Trace, the rolling replay buffer, Record & Replay, TaskContract, the Task Eval Set, and the Agent Harness.
 
 If you only want to start chatting, remember:
@@ -215,6 +217,31 @@ You can check final text, required files, file content, tool-result content, and
 
 If a check fails, the failed assertions are fed back to the Agent while budget remains. If there is not enough evidence, the result is `not_evaluable`. Ordinary free-form WebUI chats do not automatically create a TaskContract.
 
+### `must`, `must_not`, and `ordered`
+
+Use typed assertions when a task has explicit execution conditions:
+
+```json
+{
+  "id": "research-summary",
+  "must": [
+    {"id": "search", "kind": "tool_called", "tool": "web_search"},
+    {"id": "sources", "kind": "evidence_sources", "min_count": 3}
+  ],
+  "must_not": [
+    {"id": "no_write", "kind": "tool_called", "tool": "write_file"}
+  ],
+  "ordered": [
+    {"before": "search", "after": "sources"}
+  ]
+}
+```
+
+`must` defines required conditions, `must_not` defines forbidden behavior, and
+`ordered` defines a partial order while still allowing parallel searches and
+retries. Each assertion returns evidence and a reason. Unsupported semantic
+checks return `not_evaluable` instead of trusting the Agent's own completion claim.
+
 ## 9. Run the Agent Task Eval Set
 
 The built-in Task Eval Set is a small provider-free regression suite above the Harness:
@@ -256,7 +283,25 @@ Run the complete local quality gate with:
 python scripts/quality_gate.py
 ```
 
-## 11. Common slash commands
+## 11. Gateway event recovery and Doctor
+
+WebUI clients automatically negotiate Gateway protocol v1. Events carry
+`event_id`, `stream_id`, and `seq`; a client that detects a gap sends `resume`,
+and the Gateway replays the missing local events. Protocol-v1 WebUI mutations
+also use a request idempotency ledger and fail closed when an operation's state
+is unknown.
+
+Run the read-only diagnostics before troubleshooting a deployment:
+
+```bash
+pawbot doctor
+pawbot doctor --json
+```
+
+Doctor checks Python, configuration, workspace, Gateway health, event sequence,
+operation ledger, and the WebUI bundle. It does not contact a real Provider by default.
+
+## 12. Common slash commands
 
 ```text
 /trace
@@ -286,7 +331,7 @@ python scripts/quality_gate.py
 /help
 ```
 
-## 12. Data and privacy
+## 13. Data and privacy
 
 By default, data stays on the local machine:
 
@@ -301,7 +346,7 @@ permanent samples: runtime data directory/blackbox/samples
 
 Rolling capture redacts common credential fields and does not persist raw HTTP cassettes. Manual samples may contain sensitive content. Never commit configuration, credentials, sessions, traces, blackbox data, personal prompts, or private tool results.
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 ```text
 No Trace: verify observability is enabled and send a task in the current session.

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from pawbot.agent.evaluation import TaskContract, evaluate_task
+from pawbot.agent.evaluation import (
+    TaskAssertion,
+    TaskContract,
+    TaskOrderConstraint,
+    evaluate_task,
+)
 from pawbot.agent.hook import AgentHook
 from pawbot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
 from pawbot.agent.tools.base import ToolResult
@@ -76,6 +81,90 @@ def test_task_contract_round_trip_caps_untrusted_declarative_values() -> None:
     assert contract.final_content_contains == ("done", "x" * 1_000)
     assert contract.tool_result_contains == (("read", "ready"),)
     assert TaskContract.from_dict({"id": ""}) is None
+
+
+def test_task_contract_supports_must_must_not_and_partial_order() -> None:
+    contract = TaskContract.from_dict({
+        "id": "research",
+        "must": [
+            {"id": "search", "kind": "tool_called", "tool": "web_search"},
+            {"id": "sources", "kind": "evidence_sources", "min_count": 1},
+        ],
+        "must_not": [
+            {"id": "no_write", "kind": "tool_called", "tool": "write_file"},
+        ],
+        "ordered": [{"before": "search", "after": "sources"}],
+    })
+
+    assert contract is not None
+    assert [item.id for item in contract.must] == ["search", "sources"]
+    assert contract.must_not[0].tool == "write_file"
+    assert contract.ordered[0].before == "search"
+    round_trip = TaskContract.from_dict(contract.to_dict())
+    assert round_trip is not None
+    assert round_trip.to_dict()["ordered"] == [{"before": "search", "after": "sources"}]
+
+
+def test_task_evaluation_reports_assertions_and_order(tmp_path) -> None:
+    result = AgentRunResult(
+        final_content="Here are today's sources.",
+        messages=[
+            {
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call-search",
+                    "function": {"name": "web_search", "arguments": "{}"},
+                }],
+            },
+            {
+                "role": "tool",
+                "name": "web_search",
+                "tool_call_id": "call-search",
+                "content": "https://example.test/news",
+            },
+        ],
+        tools_used=["web_search"],
+        tool_states=[{"call_id": "call-search", "side_effect": "none"}],
+        stop_reason="completed",
+    )
+    evaluation = evaluate_task(
+        TaskContract(
+            id="research",
+            must=(
+                TaskAssertion("search", "tool_called", tool="web_search"),
+                TaskAssertion("sources", "evidence_sources", min_count=1),
+            ),
+            must_not=(
+                TaskAssertion("no_write", "tool_called", tool="write_file"),
+            ),
+            ordered=(TaskOrderConstraint("search", "sources"),),
+        ),
+        result,
+        execution_status="completed",
+        workspace=tmp_path,
+    )
+
+    assert evaluation.status == "passed"
+    assert {item.id for item in evaluation.assertions} == {
+        "search",
+        "sources",
+        "no_write",
+        "order:search->sources",
+    }
+
+
+def test_task_evaluation_does_not_treat_unknown_assertion_as_success() -> None:
+    evaluation = evaluate_task(
+        TaskContract(
+            id="unknown",
+            must=(TaskAssertion("custom", "semantic_quality"),),
+        ),
+            AgentRunResult(messages=[], final_content="done", stop_reason="completed"),
+        execution_status="completed",
+    )
+
+    assert evaluation.status == "not_evaluable"
+    assert evaluation.completed is False
 
 
 def test_task_evaluation_checks_tool_results_and_custom_validator(tmp_path) -> None:

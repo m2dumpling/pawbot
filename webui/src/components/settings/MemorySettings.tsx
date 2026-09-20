@@ -174,9 +174,16 @@ export function MemorySettings() {
                 {record.key} = {String(record.value)}
               </div>
               <div className="text-xs text-settings-muted">
-                {record.scope} · {record.source} · {record.memory_id}
+                {record.scope} · {record.source} · {record.trust} · {record.memory_id}
               </div>
-              {view === "candidate" ? (
+              {record.origin_session || record.origin_turn || record.evidence_refs?.length ? (
+                <div className="mt-1 text-xs text-settings-muted">
+                  {record.origin_session ? `session ${record.origin_session}` : ""}
+                  {record.origin_turn ? ` · turn ${record.origin_turn}` : ""}
+                  {record.evidence_refs?.length ? ` · ${record.evidence_refs.length} evidence ref(s)` : ""}
+                </div>
+              ) : null}
+              {record.evidence || record.evidence_refs?.length || view === "candidate" ? (
                 <div className="mt-1 text-xs text-settings-muted">
                   {record.confidence != null ? `confidence ${record.confidence.toFixed(2)}` : ""}
                   {record.evidence ? ` · ${record.evidence}` : ""}

@@ -119,6 +119,10 @@ async def test_natural_language_memory_requires_confirmation_and_survives_sessio
 
     assert candidate_response is not None
     candidate = store.list_records(status="candidate")[0]
+    assert candidate.source == "natural_language"
+    assert candidate.trust == "candidate"
+    assert "session:cli:memory" in candidate.evidence_refs
+    assert "turn:turn-1" in candidate.evidence_refs
     assert "回复“确认”" in candidate_response.content
     assert session.metadata["_pending_memory_id"] == candidate.memory_id
 

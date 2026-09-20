@@ -56,6 +56,7 @@ from pawbot.agent.tools.mcp import MCPProvider  # noqa: E402
 from pawbot.agent.tools.registry import ToolRegistry  # noqa: E402
 from pawbot.cli import terminal as cli_terminal  # noqa: E402
 from pawbot.cli.agent import agent  # noqa: E402
+from pawbot.cli.doctor import collect_doctor_report, render_doctor_report  # noqa: E402
 from pawbot.cli.eval import eval_app  # noqa: E402
 from pawbot.cli.gateway import create_gateway_app  # noqa: E402
 from pawbot.cli.gateway_runtime import _run_gateway  # noqa: E402
@@ -106,6 +107,28 @@ def version_callback(value: bool):
     if value:
         console.print(f"{__logo__} pawbot v{__version__}")
         raise typer.Exit()
+
+
+@app.command()
+def doctor(
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+    check_provider: bool = typer.Option(
+        False,
+        "--check-provider",
+        help="Report that an explicit provider probe was requested; doctor remains read-only",
+    ),
+) -> None:
+    """Run read-only installation, storage, and Gateway diagnostics."""
+    report = collect_doctor_report(
+        config_path=Path(config).expanduser().resolve(strict=False) if config else None,
+        workspace=Path(workspace).expanduser().resolve(strict=False) if workspace else None,
+        check_provider=check_provider,
+    )
+    console.print(render_doctor_report(report, as_json=json_output))
+    if report.status == "failed":
+        raise typer.Exit(1)
 
 
 @app.callback(invoke_without_command=True)

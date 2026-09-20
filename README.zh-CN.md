@@ -85,6 +85,16 @@ flowchart LR
 因此，一次执行不再只是一个无边界的 `while` 循环，而是一个具备资源
 上限、恢复 checkpoint、工具副作用边界和离线证据链的执行单元。
 
+### 可靠性边界
+
+当前运行时还明确了三条边界：
+
+- **记忆来源：** 用户确认的偏好、Dream 候选和外部 Tool/网页内容拥有不同的信任级别和来源引用；
+- **任务断言：** `TaskContract` 支持 `must`、`must_not` 和部分 `ordered` 约束，逐条返回
+  `passed`、`failed` 或 `not_evaluable`；
+- **Gateway 恢复：** 协商后的 WebSocket protocol v1 提供事件序列号、缺口回放、WebUI
+  mutation 幂等和 `pawbot doctor` 诊断；旧客户端仍保持兼容。
+
 ## 为什么是 pawbot？
 
 ### 一个 Agent，多种入口
@@ -152,19 +162,19 @@ v0.4.2 开始，`pawbot update` 会把升级交给辅助进程，等当前启动
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.2/scripts/install.sh | sh
 ```
 
 如果系统没有 `curl`，也可以使用 `wget`：
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.1/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.2/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.1/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.5.2/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的

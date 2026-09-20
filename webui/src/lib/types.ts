@@ -1324,6 +1324,15 @@ export interface SlashCommand {
 export type ExplicitMemoryScope = "global" | "workspace";
 export type ExplicitMemoryKind = "preference" | "fact" | "decision" | "habit";
 export type ExplicitMemoryStatus = "confirmed" | "candidate" | "rejected";
+export type ExplicitMemorySource =
+  | "explicit"
+  | "natural_language"
+  | "dream"
+  | "system"
+  | "session"
+  | "tool"
+  | "external";
+export type ExplicitMemoryTrust = "trusted" | "candidate" | "untrusted";
 
 export interface ExplicitMemoryRecord {
   memory_id: string;
@@ -1332,13 +1341,17 @@ export interface ExplicitMemoryRecord {
   key: string;
   value: unknown;
   status: ExplicitMemoryStatus;
-  source: "explicit" | "dream" | "system";
+  source: ExplicitMemorySource;
+  trust: ExplicitMemoryTrust;
   created_at: string;
   updated_at: string;
   origin_session?: string | null;
   origin_turn?: string | null;
   confidence?: number | null;
   evidence?: string | null;
+  evidence_refs?: string[];
+  content_hash?: string;
+  supersedes?: string | null;
   expires_at?: string | null;
 }
 
@@ -1358,6 +1371,24 @@ interface InboundTurnMetadata {
 
 export type InboundEvent =
   | { event: "ready"; chat_id: string; client_id: string }
+  | { event: "gateway_hello"; gateway_protocol: 1 }
+  | {
+      event: "gateway_gap";
+      stream_id: string;
+      replay_stream_id?: string;
+      after_seq: number;
+      oldest_seq?: number | null;
+      latest_seq: number;
+    }
+  | {
+      event: "gateway_replay_complete";
+      stream_id: string;
+      replay_stream_id?: string;
+      after_seq: number;
+      latest_seq: number;
+      replayed: number;
+      gap: boolean;
+    }
   | {
       event: "attached";
       chat_id: string;
@@ -1595,6 +1626,7 @@ export interface FilePreviewPayload {
 }
 
 export type Outbound =
+  | { type: "resume"; stream_id: string; after_seq: number }
   | { type: "new_chat"; workspace_scope?: WorkspaceScopePayload }
   | { type: "new_temporary_chat" }
   | {

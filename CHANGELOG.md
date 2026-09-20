@@ -3,6 +3,36 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.5.2 - 2026-09-20
+
+### Added
+
+- Added memory provenance fields for source, trust, origin, evidence references,
+  content fingerprints, and superseding records. External, Tool, and Dream
+  content cannot silently become trusted memory.
+- Added deterministic `TaskContract` assertions for `must`, `must_not`, and
+  partial `ordered` constraints, with per-assertion evidence and
+  `passed`/`failed`/`not_evaluable` results.
+- Added a local Gateway event journal with `event_id`, `stream_id`, and
+  monotonic sequence numbers, plus protocol-v1 resume after an event gap.
+- Added a durable idempotency ledger for protocol-v1 WebUI mutations.
+- Added the read-only `pawbot doctor` command for configuration, workspace,
+  Gateway, event journal, operation ledger, and WebUI bundle diagnostics.
+
+### Changed
+
+- WebUI clients automatically negotiate Gateway protocol v1 while older clients
+  continue to use the compatible event shape.
+- Task Eval and Harness reports now include assertion-level task evidence.
+- WebUI and Dream prompts explicitly treat historical, Tool, web, MCP, and file
+  content as reference data rather than higher-priority instructions.
+
+### Verification
+
+- Python: 6913 passed, 54 skipped.
+- WebUI: 1126 passed.
+- Agent Harness: 9/9 passed; Task Eval Set: 6/6 passed.
+
 ## Unreleased
 
 No unreleased changes.

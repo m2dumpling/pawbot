@@ -30,7 +30,16 @@ from pawbot.utils.helpers import ensure_dir
 MemoryScope = Literal["global", "workspace"]
 MemoryKind = Literal["preference", "fact", "decision", "habit"]
 MemoryStatus = Literal["confirmed", "candidate", "rejected"]
-MemorySource = Literal["explicit", "dream", "system"]
+MemorySource = Literal[
+    "explicit",
+    "natural_language",
+    "dream",
+    "system",
+    "session",
+    "tool",
+    "external",
+]
+MemoryTrust = Literal["trusted", "candidate", "untrusted"]
 MemoryValue = Any
 
 _SENSITIVE_KEY_RE = re.compile(
@@ -45,6 +54,8 @@ _SECRET_VALUE_RE = re.compile(
 )
 _MAX_KEY_LENGTH = 120
 _MAX_VALUE_LENGTH = 2_000
+_MAX_EVIDENCE_REFS = 64
+_MAX_EVIDENCE_REF_LENGTH = 240
 
 
 class MemoryPolicyError(ValueError):
@@ -63,12 +74,16 @@ class MemoryRecord(BaseModel):
     value: MemoryValue
     status: MemoryStatus
     source: MemorySource
+    trust: MemoryTrust = "candidate"
     created_at: str
     updated_at: str
     origin_session: str | None = None
     origin_turn: str | None = None
     confidence: float | None = None
     evidence: str | None = None
+    evidence_refs: tuple[str, ...] = ()
+    content_hash: str = ""
+    supersedes: str | None = None
     expires_at: str | None = None
 
 
@@ -142,6 +157,51 @@ def _contains_sensitive_data(key: str, value: MemoryValue) -> bool:
     return False
 
 
+def _default_trust(source: MemorySource, status: MemoryStatus) -> MemoryTrust:
+    """Derive trust from the admission lane, never from model output."""
+
+    if source in {"tool", "external", "session"}:
+        return "untrusted"
+    if status == "confirmed" and source in {"explicit", "system"}:
+        return "trusted"
+    return "candidate"
+
+
+def _normalize_evidence_refs(raw: Any) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)):
+        raise MemoryPolicyError("memory evidence_refs must be a list")
+    refs: list[str] = []
+    values = cast(list[Any] | tuple[Any, ...], raw)
+    for item in values[:_MAX_EVIDENCE_REFS]:
+        if not isinstance(item, str):
+            raise MemoryPolicyError("memory evidence_refs must contain strings")
+        value = item.strip()
+        if not value:
+            continue
+        if len(value) > _MAX_EVIDENCE_REF_LENGTH:
+            raise MemoryPolicyError("memory evidence reference is too long")
+        refs.append(value)
+    return tuple(dict.fromkeys(refs))
+
+
+def _content_hash(
+    *,
+    scope: MemoryScope,
+    kind: MemoryKind,
+    key: str,
+    value: MemoryValue,
+) -> str:
+    payload = json.dumps(
+        {"scope": scope, "kind": kind, "key": key, "value": value},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 class ExplicitMemoryStore:
     """Persist confirmed and candidate memories outside the project checkout.
 
@@ -205,7 +265,24 @@ class ExplicitMemoryStore:
             if operation != "upsert" or not isinstance(event.get("record"), dict):
                 continue
             try:
-                record = MemoryRecord.model_validate(event["record"])
+                raw_record = dict(cast(dict[str, Any], event["record"]))
+                # Upgrade records written before provenance fields existed.
+                # Confirmed explicit records retain their old meaning rather
+                # than silently becoming candidate memory.
+                # Trust is derived on every read.  A serialized record or an
+                # LLM-proposed payload cannot self-upgrade by setting
+                # ``trust=trusted``.
+                raw_record["trust"] = _default_trust(
+                    cast(MemorySource, raw_record.get("source", "explicit")),
+                    cast(MemoryStatus, raw_record.get("status", "candidate")),
+                )
+                raw_record["content_hash"] = _content_hash(
+                    scope=cast(MemoryScope, raw_record.get("scope", "workspace")),
+                    kind=cast(MemoryKind, raw_record.get("kind", "fact")),
+                    key=str(raw_record.get("key", "")),
+                    value=raw_record.get("value"),
+                )
+                record = MemoryRecord.model_validate(raw_record)
             except Exception as exc:
                 logger.warning("Ignoring invalid explicit memory record {}: {}", memory_id, exc)
                 continue
@@ -240,6 +317,8 @@ class ExplicitMemoryStore:
         origin_turn: str | None = None,
         confidence: float | None = None,
         evidence: str | None = None,
+        evidence_refs: list[str] | tuple[str, ...] | None = None,
+        supersedes: str | None = None,
         memory_id: str | None = None,
         expires_at: str | None = None,
     ) -> MemoryRecord:
@@ -247,6 +326,17 @@ class ExplicitMemoryStore:
         normalized_value = _normalize_value(normalized_key, value)
         if _contains_sensitive_data(normalized_key, normalized_value):
             raise MemoryPolicyError("explicit memory cannot contain secrets or credentials")
+        if source in {"tool", "external", "session"} and status == "confirmed":
+            raise MemoryPolicyError("untrusted content cannot become confirmed memory")
+
+        normalized_evidence_refs = _normalize_evidence_refs(evidence_refs)
+        trust = _default_trust(source, status)
+        digest = _content_hash(
+            scope=scope,
+            kind=kind,
+            key=normalized_key,
+            value=normalized_value,
+        )
 
         now = _now()
         previous = (
@@ -254,8 +344,19 @@ class ExplicitMemoryStore:
             if memory_id is not None
             else self._find_by_key(scope, kind, normalized_key)
         )
+        supersedes_id = supersedes
+        if previous is not None and previous.trust == "untrusted" and status == "confirmed":
+            if memory_id is not None:
+                raise MemoryPolicyError(
+                    "untrusted memory must be re-expressed before confirmation"
+                )
+            # A new explicit record may replace untrusted evidence, but it
+            # must receive a new identity and retain the lineage.
+            supersedes_id = supersedes_id or previous.memory_id
+            previous = None
         if previous is not None and status != "confirmed" and previous.status == "confirmed":
             # Auto or pending candidates must never overwrite an explicit fact.
+            supersedes_id = supersedes_id or previous.memory_id
             previous = None
         record = MemoryRecord(
             memory_id=previous.memory_id if previous is not None else memory_id or f"mem_{uuid4().hex}",
@@ -265,12 +366,16 @@ class ExplicitMemoryStore:
             value=normalized_value,
             status=status,
             source=source,
+            trust=trust,
             created_at=previous.created_at if previous is not None else now,
             updated_at=now,
             origin_session=origin_session,
             origin_turn=origin_turn,
             confidence=confidence if confidence is not None else (1.0 if status == "confirmed" else None),
             evidence=evidence,
+            evidence_refs=normalized_evidence_refs,
+            content_hash=digest,
+            supersedes=supersedes_id,
             expires_at=expires_at,
         )
         self._append_event(
@@ -356,6 +461,8 @@ class ExplicitMemoryStore:
             origin_turn=current.origin_turn,
             confidence=current.confidence,
             evidence=current.evidence,
+            evidence_refs=current.evidence_refs,
+            supersedes=current.supersedes,
             memory_id=memory_id,
             expires_at=current.expires_at,
         )
@@ -366,6 +473,10 @@ class ExplicitMemoryStore:
             None,
         )
         if current is None:
+            return None
+        if current.trust == "untrusted":
+            # External/tool/session evidence is never promoted directly.  It
+            # must first be re-expressed and explicitly confirmed by the user.
             return None
         return self.remember(
             scope=current.scope,
@@ -378,6 +489,8 @@ class ExplicitMemoryStore:
             origin_turn=current.origin_turn,
             confidence=1.0,
             evidence=current.evidence,
+            evidence_refs=current.evidence_refs,
+            supersedes=current.supersedes,
             memory_id=memory_id,
             expires_at=current.expires_at,
         )
@@ -407,7 +520,11 @@ class ExplicitMemoryStore:
     def confirmed_for_prompt(self, *, max_items: int = 64, max_chars: int = 4_000) -> str:
         """Render confirmed memories with workspace records overriding global ones."""
 
-        records = [record for record in self.list_records(status="confirmed")]
+        records = [
+            record
+            for record in self.list_records(status="confirmed")
+            if record.trust == "trusted"
+        ]
         selected: dict[str, MemoryRecord] = {}
         for record in records:
             current = selected.get(record.key)
@@ -415,7 +532,8 @@ class ExplicitMemoryStore:
                 selected[record.key] = record
 
         lines = [
-            f"- {record.key}: {record.value}"
+            f"- {record.key}: {record.value} "
+            f"[scope={record.scope}; source={record.source}; trust={record.trust}]"
             for record in sorted(selected.values(), key=lambda item: item.key)[:max_items]
         ]
         rendered = "\n".join(lines)

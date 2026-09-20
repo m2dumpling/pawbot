@@ -185,6 +185,19 @@ async def extract_and_store_dream_candidates(
             candidate.scope if candidate.scope in {"global", "workspace"} else "workspace",
         )
         try:
+            evidence_refs = tuple(
+                f"history:{entry['cursor']}"
+                for entry in history_entries
+                if isinstance(entry.get("cursor"), int)
+            )
+            origin_turn = next(
+                (
+                    entry.get("turn_id")
+                    for entry in history_entries
+                    if isinstance(entry.get("turn_id"), str)
+                ),
+                None,
+            )
             store.remember(
                 scope=scope,
                 kind=candidate.kind,
@@ -195,6 +208,8 @@ async def extract_and_store_dream_candidates(
                 confidence=candidate.confidence,
                 evidence=candidate.evidence or "Extracted from a Dream history batch.",
                 origin_session=origin_session,
+                origin_turn=origin_turn,
+                evidence_refs=evidence_refs,
             )
         except MemoryPolicyError:
             continue
