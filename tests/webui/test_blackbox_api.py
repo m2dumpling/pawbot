@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -278,6 +279,31 @@ async def test_trace_surfaces_the_webui_conversation_name(monkeypatch, tmp_path:
     )
     recordings = await _list(agent)
     assert recordings["recordings"][0]["session_names"] == ["洛杉矶天气与本地新闻"]
+
+
+@pytest.mark.asyncio
+async def test_token_estimation_runs_off_the_gateway_event_loop(monkeypatch) -> None:
+    calling_thread = threading.get_ident()
+    worker_threads: list[int] = []
+
+    def count_tokens(*_args: Any, **_kwargs: Any) -> int:
+        worker_threads.append(threading.get_ident())
+        return 12
+
+    monkeypatch.setattr("pawbot.agent.token_estimation.count_prompt_tokens", count_tokens)
+    agent = SimpleNamespace(
+        model="fake-model",
+        tools=SimpleNamespace(get_definitions=lambda: []),
+        llm_runtime=lambda: SimpleNamespace(context_window_tokens=100),
+    )
+    sessions = SimpleNamespace(
+        get_or_create=lambda _key: SimpleNamespace(messages=[{"role": "user", "content": "hi"}]),
+    )
+
+    result = await blackbox_api._tokens(agent, sessions, {"session_key": "websocket:chat-1"})
+
+    assert result["estimated_tokens"] == 12
+    assert worker_threads and worker_threads[0] != calling_thread
 
 
 def test_turn_diagnostics_separates_replay_health_from_original_errors() -> None:

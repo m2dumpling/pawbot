@@ -3,6 +3,24 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.6.4 - 2026-09-21
+
+### Fixed
+
+- Prevented Token estimation, recording detail, status, rolling candidates, and
+  evaluation-set reads from blocking the Gateway event loop during long Agent
+  tasks.
+- Added missing WebUI routes for rolling replay candidates and task evaluation
+  actions.
+- Made the execution and regression page load each panel independently, so one
+  slow diagnostic request no longer leaves the entire page empty.
+
+### Verification
+
+- Python: 6930 passed, 54 skipped.
+- WebUI: 1126 passed; production build passed.
+- Ruff and basedpyright passed.
+
 ## 0.6.3 - 2026-09-21
 
 ### Fixed

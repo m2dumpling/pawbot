@@ -1359,25 +1359,30 @@ export function EnhancementsSettings() {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    try {
-      const [nextStatus, nextRecordings, nextCandidates, nextTokens] = await Promise.all([
+    const [statusResult, recordingsResult, candidatesResult, tokensResult, tracesResult, evalResult] =
+      await Promise.allSettled([
         blackboxStatus(client),
         blackboxList(client),
-        blackboxCandidates(client).catch(() => ({ candidates: [] })),
+        blackboxCandidates(client),
         blackboxTokens(client, null),
+        traceList(client, { filter: traceFilter }),
+        taskEvalList(client),
       ]);
-      const nextTraces = await traceList(client, { filter: traceFilter }).catch(() => ({ traces: [], root: "" }));
-      const nextEval = await taskEvalList(client).catch(() => ({ eval_set: "", version: 0, cases: [] }));
-      setStatus(nextStatus);
-      setRecordings(nextRecordings.recordings);
-      setCandidates(nextCandidates.candidates);
-      setTokens(nextTokens);
-      setTraces(nextTraces.traces);
-      setEvalCases(nextEval.cases);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
+
+    const errors: string[] = [];
+    if (statusResult.status === "fulfilled") setStatus(statusResult.value);
+    else errors.push(statusResult.reason instanceof Error ? statusResult.reason.message : String(statusResult.reason));
+    if (recordingsResult.status === "fulfilled") setRecordings(recordingsResult.value.recordings);
+    else errors.push(recordingsResult.reason instanceof Error ? recordingsResult.reason.message : String(recordingsResult.reason));
+    if (candidatesResult.status === "fulfilled") setCandidates(candidatesResult.value.candidates);
+    else errors.push(candidatesResult.reason instanceof Error ? candidatesResult.reason.message : String(candidatesResult.reason));
+    if (tokensResult.status === "fulfilled") setTokens(tokensResult.value);
+    else errors.push(tokensResult.reason instanceof Error ? tokensResult.reason.message : String(tokensResult.reason));
+    if (tracesResult.status === "fulfilled") setTraces(tracesResult.value.traces);
+    else errors.push(tracesResult.reason instanceof Error ? tracesResult.reason.message : String(tracesResult.reason));
+    if (evalResult.status === "fulfilled") setEvalCases(evalResult.value.cases);
+    else errors.push(evalResult.reason instanceof Error ? evalResult.reason.message : String(evalResult.reason));
+    setError(errors.length > 0 ? errors[0] : null);
   }, [client, traceFilter]);
 
   useEffect(() => {

@@ -1,6 +1,6 @@
 # pawbot 使用指南
 
-当前文档对应 `v0.6.3`。
+当前文档对应 `v0.6.4`。
 
 这篇文档面向已经安装 Pawbot 的用户，集中说明 CLI、WebUI、Trace、滚动回放、Record & Replay、Task Eval Set 和 Harness 的实际用法。
 

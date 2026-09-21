@@ -627,7 +627,7 @@ def _turn_diagnostics(turn: dict[str, Any], events: list[dict[str, Any]]) -> dic
     }
 
 
-async def _detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+def _detail_sync(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
     """Return the raw rails for one turn without re-running the agent."""
     directory_name = str(payload.get("directory") or "")
     turn_id = str(payload.get("turn_id") or "")
@@ -697,6 +697,11 @@ async def _detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Read one recording detail without blocking the Gateway event loop."""
+    return await asyncio.to_thread(_detail_sync, agent, payload)
+
+
 def _blackbox_root(agent: Any) -> Path:
     """Return the legacy workspace root used by explicit recordings."""
     workspace = Path(getattr(agent, "workspace", "") or ".")
@@ -741,7 +746,7 @@ def _resolve_directory(agent: Any, name: str) -> Path:
     return resolved
 
 
-async def _status(agent: Any) -> dict[str, Any]:
+def _status_sync(agent: Any) -> dict[str, Any]:
     from pawbot.agent.blackbox import BlackboxController
 
     sync_policy = getattr(agent, "sync_recording_policy", None)
@@ -772,6 +777,11 @@ async def _status(agent: Any) -> dict[str, Any]:
         "context_window_tokens": runtime.context_window_tokens,
         "tool_count": len(agent.tools),
     }
+
+
+async def _status(agent: Any) -> dict[str, Any]:
+    """Build the status snapshot off the Gateway event loop."""
+    return await asyncio.to_thread(_status_sync, agent)
 
 
 async def _start(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -839,11 +849,16 @@ async def _list(agent: Any) -> dict[str, Any]:
     return await asyncio.to_thread(_list_sync, agent)
 
 
-async def _rolling_candidates(agent: Any) -> dict[str, Any]:
+def _rolling_candidates_sync(agent: Any) -> dict[str, Any]:
     rolling = _rolling_blackbox(agent)
     if rolling is None or not callable(getattr(rolling, "list_candidates", None)):
         return {"candidates": []}
     return {"candidates": _json_safe(rolling.list_candidates())}
+
+
+async def _rolling_candidates(agent: Any) -> dict[str, Any]:
+    """Read rolling candidates without blocking WebSocket control traffic."""
+    return await asyncio.to_thread(_rolling_candidates_sync, agent)
 
 
 async def _promote_candidate(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -894,7 +909,7 @@ async def _add_candidate_to_eval(agent: Any, payload: dict[str, Any]) -> dict[st
     return {"added": True, "case": _json_safe(case)}
 
 
-async def _eval_list(agent: Any) -> dict[str, Any]:
+def _eval_list_sync(agent: Any) -> dict[str, Any]:
     from pawbot.evals import EVAL_SET_NAME, EVAL_SET_VERSION, eval_cases
 
     rolling = _rolling_blackbox(agent)
@@ -911,6 +926,11 @@ async def _eval_list(agent: Any) -> dict[str, Any]:
         "cases": [case.to_dict() for case in eval_cases()],
         "custom_cases": _json_safe(custom_cases),
     }
+
+
+async def _eval_list(agent: Any) -> dict[str, Any]:
+    """Read the fixed and custom evaluation sets off the event loop."""
+    return await asyncio.to_thread(_eval_list_sync, agent)
 
 
 async def _eval_run(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1035,12 +1055,13 @@ async def _trace_detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
         # Detail reads can include a complete active trace.  Keep file I/O and
         # JSON decoding off the async control plane.
         summary, events = await asyncio.to_thread(store.detail, identifier)
+        names = await asyncio.to_thread(_session_display_names, agent)
     except FileNotFoundError as exc:
         raise BlackboxActionError(404, "执行追踪不存在") from exc
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         raise BlackboxActionError(422, f"无法读取执行追踪：{exc}") from exc
     return {
-        "summary": _json_safe(_attach_session_name(agent, summary)),
+        "summary": _json_safe(_attach_session_name(agent, summary, names)),
         "events": _json_safe(events),
     }
 
@@ -1266,7 +1287,7 @@ async def _replay(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _tokens(
+def _tokens_sync(
     agent: Any,
     session_manager: Any,
     payload: dict[str, Any],
@@ -1302,6 +1323,15 @@ async def _tokens(
         "context_window_tokens": context_window,
         "usage_ratio": round(estimated / context_window, 4) if context_window > 0 else None,
     }
+
+
+async def _tokens(
+    agent: Any,
+    session_manager: Any,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Estimate context usage without blocking the Gateway event loop."""
+    return await asyncio.to_thread(_tokens_sync, agent, session_manager, payload)
 
 
 def blackbox_action_factory(
