@@ -66,6 +66,31 @@ def test_save_config_writes_context_window_tokens_but_not_memory_window(tmp_path
     assert "memoryWindow" not in defaults
 
 
+def test_save_config_removes_retired_langfuse_credentials(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "observability": {
+                    "langfuseEnabled": True,
+                    "langfusePublicKey": "pk-old",
+                    "langfuseSecretKey": "sk-old",
+                    "langfuseBaseUrl": "https://langfuse.example",
+                    "retentionDays": 7,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+    save_config(config, config_path)
+    observability = json.loads(config_path.read_text(encoding="utf-8"))["observability"]
+
+    assert observability["retentionDays"] == 7
+    assert not any(key.lower().startswith("langfuse") for key in observability)
+
+
 def test_onboard_does_not_crash_with_legacy_memory_window(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
     workspace = tmp_path / "workspace"

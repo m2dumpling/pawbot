@@ -116,9 +116,7 @@ export function SettingsPage({
     imageGenerationDirty,
     imageGenerationForm,
     imageGenerationSaving,
-    installCapabilities,
     loading,
-    langfuseSaving,
     localPrefs,
     mcpConfigImport,
     mcpError,
@@ -162,7 +160,6 @@ export function SettingsPage({
     restartViaSettingsSurface,
     runProviderOAuth,
     saveImageGenerationSettings,
-    saveLangfuseSettings,
     saveModelSettings,
     saveNetworkSafetySettings,
     saveProvider,
@@ -495,14 +492,8 @@ export function SettingsPage({
             apiServiceLoading={apiServiceLoading}
             apiServiceAction={apiServiceAction}
             apiServiceError={apiServiceError}
-            langfuseFeature={featureCatalog.find((feature) => feature.name === "langfuse")}
-            capabilitiesLoading={pawbotFeaturesLoading}
-            capabilityAction={pawbotFeatureAction}
             capabilityError={pawbotFeaturesError}
-            langfuseSaving={langfuseSaving}
             onApiServiceAction={handleApiServiceAction}
-            onInstallCapability={(name) => void installCapabilities([name])}
-            onSaveLangfuse={saveLangfuseSettings}
           />
         );
       case "advanced":

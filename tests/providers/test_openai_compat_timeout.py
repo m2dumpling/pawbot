@@ -1,6 +1,5 @@
 from unittest.mock import patch, sentinel
 
-from pawbot.providers import openai_compat_provider
 from pawbot.providers.openai_compat_provider import OpenAICompatProvider
 from pawbot.providers.registry import ProviderSpec
 
@@ -60,22 +59,3 @@ async def test_openai_compat_provider_timeout_can_be_overridden_by_env(monkeypat
         await provider._ensure_client()
 
     assert mock_async_openai.call_args.kwargs["timeout"] == 45.0
-
-
-async def test_missing_langfuse_warning_recommends_plugin_command(monkeypatch) -> None:
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "secret")
-    monkeypatch.setattr(openai_compat_provider, "AsyncOpenAI", None)
-
-    with (
-        patch("importlib.util.find_spec", return_value=None),
-        patch("openai.AsyncOpenAI") as mock_async_openai,
-        patch("pawbot.providers.openai_compat_provider.logger.warning") as mock_warning,
-    ):
-        provider = OpenAICompatProvider(api_key="test-key", api_base="https://example.com/v1")
-        await provider._ensure_client()
-
-    mock_warning.assert_called_once_with(
-        "LANGFUSE_SECRET_KEY is set but langfuse is not installed; "
-        "run `pawbot plugins enable langfuse` to enable tracing"
-    )
-    mock_async_openai.assert_called_once()

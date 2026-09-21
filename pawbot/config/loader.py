@@ -377,6 +377,32 @@ def _env_replace(match: re.Match[str]) -> str:
 
 def _migrate_config(data: dict[str, Any]) -> dict[str, Any]:
     """Migrate old config formats to current."""
+    # Langfuse was removed in favor of the local Trace/Replay inspection
+    # surface. Drop its old persisted settings before validation so a later
+    # save also removes obsolete credentials from config.json.
+    observability_value = data.get("observability")
+    if isinstance(observability_value, dict):
+        observability = cast(dict[str, Any], observability_value)
+        for key in (
+            "langfuseEnabled",
+            "langfusePublicKey",
+            "langfuseSecretKey",
+            "langfuseBaseUrl",
+            "langfuseEnvironment",
+            "langfuseSampleRate",
+            "langfuseCapturePrompts",
+            "langfuseCaptureToolResults",
+            "langfuse_enabled",
+            "langfuse_public_key",
+            "langfuse_secret_key",
+            "langfuse_base_url",
+            "langfuse_environment",
+            "langfuse_sample_rate",
+            "langfuse_capture_prompts",
+            "langfuse_capture_tool_results",
+        ):
+            observability.pop(key, None)
+
     # Move tools.exec.restrictToWorkspace → tools.restrictToWorkspace
     tools_value = data.get("tools", {})
     if not isinstance(tools_value, dict):

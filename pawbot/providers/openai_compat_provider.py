@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -518,7 +517,6 @@ class OpenAICompatProvider(LLMProvider):
         extra_query: dict[str, str] | None = None,
         proxy: str | None = None,
         provider_name: str = "openai",
-        use_langfuse_wrapper: bool = True,
     ):
         super().__init__(api_key, api_base, provider_name=provider_name)
         self.default_model = default_model
@@ -528,12 +526,6 @@ class OpenAICompatProvider(LLMProvider):
         self._api_type = api_type if spec and spec.name == "openai" else "auto"
         self._extra_query = extra_query or {}
         self._proxy = proxy or None
-        # The native Agent-level exporter owns the complete Trace when it is
-        # enabled.  Keep the legacy OpenAI wrapper available for direct SDK
-        # users and for environments where the native exporter is unavailable,
-        # but do not create duplicate Langfuse generations in the normal
-        # configured runtime.
-        self._use_langfuse_wrapper = use_langfuse_wrapper
         self._native_compaction_available = True
 
         effective_base = api_base or (spec.default_api_base if spec else None) or None
@@ -620,19 +612,7 @@ class OpenAICompatProvider(LLMProvider):
                 return self._client
             global AsyncOpenAI
             if AsyncOpenAI is None:
-                if (
-                    self._use_langfuse_wrapper
-                    and os.environ.get("LANGFUSE_SECRET_KEY")
-                    and importlib.util.find_spec("langfuse")
-                ):
-                    from langfuse.openai import AsyncOpenAI as _AsyncOpenAI
-                else:
-                    if self._use_langfuse_wrapper and os.environ.get("LANGFUSE_SECRET_KEY"):
-                        logger.warning(
-                            "LANGFUSE_SECRET_KEY is set but langfuse is not installed; "
-                            "run `pawbot plugins enable langfuse` to enable tracing"
-                        )
-                    from openai import AsyncOpenAI as _AsyncOpenAI
+                from openai import AsyncOpenAI as _AsyncOpenAI
                 AsyncOpenAI = _AsyncOpenAI
 
             self._build_client()

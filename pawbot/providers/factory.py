@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from pawbot.agent.langfuse import langfuse_exporter_available
 from pawbot.config.schema import Config, InlineFallbackConfig, ModelPresetConfig, ProviderConfig
 from pawbot.providers.base import GenerationSettings, LLMProvider
 from pawbot.providers.fallback_provider import FallbackProvider
@@ -235,7 +234,6 @@ def _make_provider_core(
             extra_query=p.extra_query if p else None,
             proxy=p.proxy if p else None,
             provider_name=provider_name,
-            use_langfuse_wrapper=not langfuse_exporter_available(config),
         )
 
     provider.generation = preset.to_generation_settings()

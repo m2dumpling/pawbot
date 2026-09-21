@@ -68,9 +68,11 @@ export function settingsPayload(): SettingsPayload {
       api_key_hint: null,
     },
     observability: {
-      provider: "langfuse",
-      configured: false,
-      base_url: "https://cloud.langfuse.com",
+      provider: "local",
+      local_trace_enabled: true,
+      local_trace_retention_days: 14,
+      local_trace_max_traces: 500,
+      local_trace_max_bytes: 256 * 1024 * 1024,
     },
     image_generation: {
       enabled: false,

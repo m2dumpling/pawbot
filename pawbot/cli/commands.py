@@ -61,7 +61,6 @@ from pawbot.cli.eval import eval_app  # noqa: E402
 from pawbot.cli.gateway import create_gateway_app  # noqa: E402
 from pawbot.cli.gateway_runtime import _run_gateway  # noqa: E402
 from pawbot.cli.harness import harness_app  # noqa: E402
-from pawbot.cli.langfuse import langfuse_app  # noqa: E402
 from pawbot.cli.log_control import _set_pawbot_logs  # noqa: E402
 from pawbot.cli.process_identity import set_cli_process_identity  # noqa: E402
 from pawbot.cli.provider import provider_app  # noqa: E402
@@ -532,14 +531,6 @@ app.add_typer(
 
 
 app.add_typer(harness_app, name="harness")
-
-# ============================================================================
-# Langfuse Observability
-# ============================================================================
-
-
-app.add_typer(langfuse_app, name="langfuse")
-
 
 # ============================================================================
 # Agent Task Evaluation Set

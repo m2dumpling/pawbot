@@ -16,8 +16,7 @@ import { Input } from "@/components/ui/input";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { isLoopbackHost } from "@/lib/network";
 import { getRuntimeHost, isNativeRuntime } from "@/lib/runtime";
-import type { ApiServicePayload, PawbotFeatureInfo, SettingsPayload } from "@/lib/types";
-import type { LangfuseSettingsUpdate } from "@/lib/types";
+import type { ApiServicePayload, SettingsPayload } from "@/lib/types";
 
 export function RuntimeSettings({
   form,
@@ -29,14 +28,8 @@ export function RuntimeSettings({
   apiServiceLoading,
   apiServiceAction,
   apiServiceError,
-  langfuseFeature,
-  capabilitiesLoading,
-  capabilityAction,
   capabilityError,
-  langfuseSaving,
   onApiServiceAction,
-  onInstallCapability,
-  onSaveLangfuse,
 }: {
   form: AgentSettingsDraft;
   settings: SettingsPayload;
@@ -47,17 +40,11 @@ export function RuntimeSettings({
   apiServiceLoading: boolean;
   apiServiceAction: "start" | "stop" | null;
   apiServiceError: string | null;
-  langfuseFeature?: PawbotFeatureInfo;
-  capabilitiesLoading: boolean;
-  capabilityAction: string | null;
   capabilityError: string | null;
-  langfuseSaving: boolean;
   onApiServiceAction: (
     action: "start" | "stop",
     values?: { host: string; port: number; timeout: number; apiKey?: string },
   ) => void;
-  onInstallCapability: (name: string) => void;
-  onSaveLangfuse: (update: LangfuseSettingsUpdate) => void;
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
@@ -94,26 +81,6 @@ export function RuntimeSettings({
   const [apiPort, setApiPort] = useState(apiDefaults.port);
   const [apiKey, setApiKey] = useState("");
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
-  const [langfuseBaseUrl, setLangfuseBaseUrl] = useState(
-    settings.observability?.base_url ?? "https://cloud.langfuse.com",
-  );
-  const [langfuseEnvironment, setLangfuseEnvironment] = useState(
-    settings.observability?.environment ?? "production",
-  );
-  const [langfusePublicKey, setLangfusePublicKey] = useState("");
-  const [langfuseSecretKey, setLangfuseSecretKey] = useState("");
-  const [langfuseSampleRate, setLangfuseSampleRate] = useState(
-    String(settings.observability?.sample_rate ?? 1),
-  );
-  const [langfuseEnabled, setLangfuseEnabled] = useState(
-    settings.observability?.enabled ?? false,
-  );
-  const [langfuseCapturePrompts, setLangfuseCapturePrompts] = useState(
-    settings.observability?.capture_prompts ?? false,
-  );
-  const [langfuseCaptureToolResults, setLangfuseCaptureToolResults] = useState(
-    settings.observability?.capture_tool_results ?? false,
-  );
   useEffect(() => {
     if (!apiService) return;
     setApiHost(apiService.host);
@@ -121,18 +88,6 @@ export function RuntimeSettings({
     setApiKey("");
     setApiKeyVisible(false);
   }, [apiService]);
-  useEffect(() => {
-    const observability = settings.observability;
-    if (!observability) return;
-    setLangfuseBaseUrl(observability.base_url ?? "https://cloud.langfuse.com");
-    setLangfuseEnvironment(observability.environment ?? "production");
-    setLangfuseSampleRate(String(observability.sample_rate ?? 1));
-    setLangfuseEnabled(observability.enabled ?? false);
-    setLangfuseCapturePrompts(observability.capture_prompts ?? false);
-    setLangfuseCaptureToolResults(observability.capture_tool_results ?? false);
-    setLangfusePublicKey("");
-    setLangfuseSecretKey("");
-  }, [settings.observability]);
   const apiNetworkAccess = !isLoopbackHost(apiHost);
   const apiMissingNetworkKey = apiNetworkAccess && !apiKey.trim() && !apiDefaults.api_key_hint;
   const engineState = isRestarting
@@ -391,108 +346,6 @@ export function RuntimeSettings({
                   : "—"}
               </span>
             </SettingsRow>
-          ) : null}
-          <SettingsRow
-            title="Langfuse"
-            description={
-              settings.observability?.configured
-                ? undefined
-                : tx(
-                    "settings.observability.environment",
-                    "Set LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY, then restart pawbot.",
-                  )
-            }
-          >
-            {capabilitiesLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
-            ) : langfuseFeature?.installed ? (
-              <StatusPill tone={settings.observability?.configured ? "success" : "neutral"}>
-                {settings.observability?.configured
-                  ? tx("settings.values.ready", "Ready")
-                  : tx("settings.values.needsSetup", "Needs setup")}
-              </StatusPill>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={capabilityAction === "enable:langfuse"}
-                onClick={() => onInstallCapability("langfuse")}
-                className="rounded-full"
-              >
-                {capabilityAction === "enable:langfuse" ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
-                ) : null}
-                {capabilityAction === "enable:langfuse"
-                  ? tx("settings.capabilities.installing", "Installing support...")
-                  : tx("settings.observability.enable", "Enable tracing support")}
-              </Button>
-            )}
-          </SettingsRow>
-          {langfuseFeature?.installed ? (
-            <div className="space-y-3 border-t border-border/60 px-3 py-3">
-              <div className="grid gap-2 sm:grid-cols-2">
-                <label className="space-y-1 text-[12px] text-muted-foreground">
-                  <span>{tx("settings.observability.baseUrl", "Base URL")}</span>
-                  <Input value={langfuseBaseUrl} onChange={(event) => setLangfuseBaseUrl(event.target.value)} />
-                </label>
-                <label className="space-y-1 text-[12px] text-muted-foreground">
-                  <span>{tx("settings.observability.environmentLabel", "Environment")}</span>
-                  <Input value={langfuseEnvironment} onChange={(event) => setLangfuseEnvironment(event.target.value)} />
-                </label>
-                <label className="space-y-1 text-[12px] text-muted-foreground">
-                  <span>{tx("settings.observability.publicKey", "Public key")}{settings.observability?.public_key_hint ? ` (${settings.observability.public_key_hint})` : ""}</span>
-                  <Input value={langfusePublicKey} onChange={(event) => setLangfusePublicKey(event.target.value)} placeholder={tx("settings.observability.publicKeyPlaceholder", "pk-...")} />
-                </label>
-                <label className="space-y-1 text-[12px] text-muted-foreground">
-                  <span>{tx("settings.observability.secretKey", "Secret key")}{settings.observability?.secret_key_hint ? ` (${settings.observability.secret_key_hint})` : ""}</span>
-                  <Input type="password" value={langfuseSecretKey} onChange={(event) => setLangfuseSecretKey(event.target.value)} placeholder={tx("settings.observability.secretKeyPlaceholder", "sk-...")} />
-                </label>
-                <label className="space-y-1 text-[12px] text-muted-foreground">
-                  <span>{tx("settings.observability.sampleRate", "Sample rate")}</span>
-                  <Input type="number" min="0" max="1" step="0.05" value={langfuseSampleRate} onChange={(event) => setLangfuseSampleRate(event.target.value)} />
-                </label>
-              </div>
-              <div className="grid gap-2 text-[12px] text-muted-foreground sm:grid-cols-3">
-                <label className="inline-flex items-center gap-2">
-                  <input type="checkbox" checked={langfuseEnabled} onChange={(event) => setLangfuseEnabled(event.target.checked)} />
-                  {tx("settings.observability.enabled", "Enable exporter")}
-                </label>
-                <label className="inline-flex items-center gap-2">
-                  <input type="checkbox" checked={langfuseCapturePrompts} onChange={(event) => setLangfuseCapturePrompts(event.target.checked)} />
-                  {tx("settings.observability.capturePrompts", "Capture prompt previews")}
-                </label>
-                <label className="inline-flex items-center gap-2">
-                  <input type="checkbox" checked={langfuseCaptureToolResults} onChange={(event) => setLangfuseCaptureToolResults(event.target.checked)} />
-                  {tx("settings.observability.captureToolResults", "Capture Tool results")}
-                </label>
-              </div>
-              <div className="flex items-center gap-3">
-                <Button
-                  size="sm"
-                  disabled={langfuseSaving}
-                  onClick={() => onSaveLangfuse({
-                    enabled: langfuseEnabled,
-                    publicKey: langfusePublicKey,
-                    secretKey: langfuseSecretKey,
-                    baseUrl: langfuseBaseUrl,
-                    environment: langfuseEnvironment,
-                    sampleRate: Number(langfuseSampleRate),
-                    capturePrompts: langfuseCapturePrompts,
-                    captureToolResults: langfuseCaptureToolResults,
-                  })}
-                >
-                  {langfuseSaving
-                    ? tx("settings.observability.saving", "Saving...")
-                    : tx("settings.observability.save", "Save Langfuse")}
-                </Button>
-                <span className="text-[12px] text-muted-foreground">
-                  {tx(
-                    "settings.observability.restartHint",
-                    "Restart pawbot after saving to apply the exporter.",
-                  )}
-                </span>
-              </div>
-            </div>
           ) : null}
         </SettingsGroup>
         {capabilityError ? <p className="mt-2 text-[12px] text-destructive">{capabilityError}</p> : null}

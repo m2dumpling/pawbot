@@ -6,9 +6,7 @@ import asyncio
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict
-from urllib.parse import urlparse
 
-from pawbot.agent.langfuse import langfuse_sdk_installed, resolve_langfuse_settings
 from pawbot.agent.tools.web import SEARCH_PROVIDER_OPTIONS
 from pawbot.api.runtime import ApiRuntime, ApiStartOptions
 from pawbot.audio.transcription import resolve_transcription_config
@@ -59,7 +57,6 @@ class CapabilitySettingsOperations:
     update_image: SettingsOperation
     update_transcription: SettingsOperation
     update_network: SettingsOperation
-    update_observability: SettingsOperation
     pawbot_features_action: SettingsOperation
     api_runtime: Callable[[], ApiRuntime]
     reload_image: Callable[[], Awaitable[dict[str, Any]]]
@@ -169,7 +166,6 @@ def capability_settings_payload(
         ),
         None,
     )
-    langfuse = resolve_langfuse_settings(config)
     return {
         "web_search": {
             "provider": search_provider,
@@ -198,17 +194,7 @@ def capability_settings_payload(
             "api_key_hint": mask_secret_hint(config.api.api_key),
         },
         "observability": {
-            "provider": "langfuse",
-            "configured": langfuse.configured,
-            "enabled": langfuse.enabled,
-            "installed": langfuse_sdk_installed(),
-            "public_key_hint": mask_secret_hint(langfuse.public_key),
-            "secret_key_hint": mask_secret_hint(langfuse.secret_key),
-            "base_url": langfuse.base_url,
-            "environment": langfuse.environment,
-            "sample_rate": langfuse.sample_rate,
-            "capture_prompts": langfuse.capture_prompts,
-            "capture_tool_results": langfuse.capture_tool_results,
+            "provider": "local",
             "local_trace_enabled": config.observability.enabled,
             "local_trace_retention_days": config.observability.retention_days,
             "local_trace_max_traces": config.observability.max_traces,
@@ -238,87 +224,6 @@ def capability_settings_payload(
             "providers": _transcription_provider_rows(config),
         },
     }
-
-
-def update_observability_settings(
-    config: Config,
-    query: QueryParams,
-) -> bool:
-    """Update the optional Langfuse exporter without exposing stored secrets."""
-    def first(*keys: str) -> str | None:
-        for key in keys:
-            value = query_first(query, key)
-            if value is not None:
-                return value
-        return None
-
-    changed = False
-    raw_enabled = first("enabled", "langfuse_enabled", "langfuseEnabled")
-    if raw_enabled is not None:
-        enabled = parse_bool(raw_enabled, "enabled")
-        if config.observability.langfuse_enabled != enabled:
-            config.observability.langfuse_enabled = enabled
-            changed = True
-
-    clear_keys = first("clear_keys", "clearKeys")
-    if clear_keys is not None and parse_bool(clear_keys, "clear_keys"):
-        if config.observability.langfuse_public_key or config.observability.langfuse_secret_key:
-            config.observability.langfuse_public_key = ""
-            config.observability.langfuse_secret_key = ""
-            changed = True
-
-    for field_name, aliases in (
-        ("langfuse_public_key", ("public_key", "publicKey")),
-        ("langfuse_secret_key", ("secret_key", "secretKey")),
-        ("langfuse_base_url", ("base_url", "baseUrl")),
-        ("langfuse_environment", ("environment",)),
-    ):
-        raw = first(*aliases)
-        if raw is None:
-            continue
-        value = raw.strip()
-        if field_name in {"langfuse_public_key", "langfuse_secret_key"} and not value:
-            # Empty secret fields mean "keep the existing value" in WebUI.
-            continue
-        if field_name == "langfuse_base_url":
-            parsed = urlparse(value)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise WebUISettingsError("Langfuse base URL must be an http(s) URL")
-            value = value.rstrip("/")
-        if getattr(config.observability, field_name) != value:
-            setattr(config.observability, field_name, value)
-            changed = True
-
-    raw_sample_rate = query_first_alias(query, "sample_rate", "sampleRate")
-    if raw_sample_rate is not None:
-        try:
-            sample_rate = float(raw_sample_rate)
-        except ValueError:
-            raise WebUISettingsError("Langfuse sample rate must be a number") from None
-        if not 0 <= sample_rate <= 1:
-            raise WebUISettingsError("Langfuse sample rate must be between 0 and 1")
-        if config.observability.langfuse_sample_rate != sample_rate:
-            config.observability.langfuse_sample_rate = sample_rate
-            changed = True
-
-    for field_name, aliases in (
-        ("langfuse_capture_prompts", ("capture_prompts", "capturePrompts")),
-        ("langfuse_capture_tool_results", ("capture_tool_results", "captureToolResults")),
-    ):
-        raw = first(*aliases)
-        if raw is None:
-            continue
-        value = parse_bool(raw, field_name)
-        if getattr(config.observability, field_name) != value:
-            setattr(config.observability, field_name, value)
-            changed = True
-
-    settings = resolve_langfuse_settings(config)
-    if config.observability.langfuse_enabled and not settings.configured:
-        raise WebUISettingsError(
-            "Langfuse requires both a public key and a secret key before it can be enabled"
-        )
-    return changed
 
 
 def update_network_safety_settings(
@@ -752,11 +657,6 @@ class CapabilitySettingsHandler:
             ),
             "network-update": (
                 operations.update_network,
-                "runtime",
-                False,
-            ),
-            "observability-update": (
-                operations.update_observability,
                 "runtime",
                 False,
             ),

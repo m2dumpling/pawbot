@@ -34,7 +34,6 @@ pawbot 最适合 Agent 开发者的能力是 **Record & Replay（录制与回放
 | 接入聊天应用 | [通道与集成](#通道与集成) |
 | 了解回放能力 | [Record & Replay](#record--replay录制与回放) |
 | 验证 AI 修改后的代码 | [Agent Harness Benchmark](#agent-harness-benchmark) |
-| 将执行追踪发送到 Langfuse | [Langfuse 可观测性](#langfuse-可观测性) |
 | 查看完整使用方法 | [使用指南](docs/usage.zh-CN.md) |
 | 修改 Agent 或增加工具 | [开发](#开发) |
 
@@ -86,7 +85,6 @@ flowchart LR
     N --> O[离线回放 + 结构化 diff]
     D --> R[Trace + 滚动回放证据]
     R --> N
-    R --> S[可选 Langfuse 导出]
     D --> P[回合投递 / UI 事件]
 ```
 
@@ -172,19 +170,19 @@ v0.4.2 开始，`pawbot update` 会把升级交给辅助进程，等当前启动
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.4/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.5/scripts/install.sh | sh
 ```
 
 如果系统没有 `curl`，也可以使用 `wget`：
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.4/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.5/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.4/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.5/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
@@ -457,28 +455,6 @@ Provider 契约测试都放在同一条测试链路中。其他 Provider 使用�
 `PAWBOT_MAX_CONCURRENT_REQUESTS`、`PAWBOT_MAX_CONCURRENT_PER_SENDER`、
 `PAWBOT_PROVIDER_MAX_INFLIGHT` 和 `PAWBOT_PROVIDER_RPM`。也可以使用 Provider 专属变量，
 例如 `PAWBOT_DEEPSEEK_RPM`，它会覆盖通用值。这些限制只在当前进程内生效，不是分布式限流服务。
-
-## Langfuse 可观测性
-
-Pawbot 的本地 Trace、Record & Replay 和 CI 评测不依赖外部服务。安装可选的
-Langfuse 支持后，同一套 Agent 事件也可以发送到 Langfuse，用于共享看板、耗时、
-Token/成本分析和线上评测。
-
-可以通过 CLI 配置：
-
-```bash
-pawbot plugins enable langfuse
-pawbot langfuse configure \
-  --public-key pk-... \
-  --secret-key sk-... \
-  --base-url https://cloud.langfuse.com
-pawbot langfuse test
-```
-
-WebUI 中也可以在 **设置 → 系统 → 可观测性** 填写相同参数。保存后重启 pawbot。
-Langfuse 上报是旁路且故障隔离的：即使 Langfuse 不可用，本地 Trace 仍然有效。
-由于 Prompt 和工具结果可能包含项目隐私，二者默认不上传，需要时可以在设置中主动开启。
-使用自托管 Langfuse 时，将 `--base-url` 换成自己的服务地址。
 
 ## 通道与集成
 

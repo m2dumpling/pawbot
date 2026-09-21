@@ -1,6 +1,6 @@
 [project]
 name = "pawbot-ai"
-version = "0.6.4"
+version = "0.6.5"
 description = "A replayable, self-hosted AI agent"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
@@ -78,9 +78,6 @@ documents = [
     "python-docx>=1.1.0,<2.0.0",
     "openpyxl>=3.1.0,<4.0.0",
     "python-pptx>=1.0.0,<2.0.0",
-]
-langfuse = [
-    "langfuse>=4.7.0,<5.0.0",
 ]
 pdf = [
     # Compatibility extra: PDF reading is bundled since v0.2.3.

@@ -35,7 +35,6 @@ without another model request, another token bill, or real tool side effects.
 | Connect a chat app | [Channels](#channels-and-integrations) |
 | Understand the replay feature | [Record & Replay](#record--replay) |
 | Verify an AI-assisted code change | [Agent Harness Benchmark](#agent-harness-benchmark) |
-| Send execution traces to Langfuse | [Langfuse observability](#langfuse-observability) |
 | Learn how to use all execution and evaluation features | [Usage guide](docs/usage.md) |
 | Change the agent or add a tool | [Development](#development) |
 
@@ -92,7 +91,6 @@ flowchart LR
     N --> O[Offline replay + structural diff]
     D --> R[Trace + rolling replay evidence]
     R --> N
-    R --> S[Optional Langfuse exporter]
     D --> P[Turn delivery / UI events]
 ```
 
@@ -189,19 +187,19 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.4/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.5/scripts/install.sh | sh
 ```
 
 If `curl` is not available, use `wget` instead:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.4/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.5/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.4/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.5/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a
@@ -515,31 +513,6 @@ For a busy self-hosted process, optional local guardrails are available through
 `PAWBOT_PROVIDER_MAX_INFLIGHT`, and `PAWBOT_PROVIDER_RPM` (provider-specific
 overrides such as `PAWBOT_DEEPSEEK_RPM` take precedence). These limits are
 process-local safety controls, not a distributed quota service.
-
-## Langfuse observability
-
-Pawbot keeps local Trace, Record & Replay, and CI evaluation independent of
-external services. When the optional Langfuse support is installed, the same
-Agent events can also be exported to Langfuse for shared dashboards, latency,
-Token/cost analysis, and online evaluation.
-
-Install the optional client and configure it from the CLI:
-
-```bash
-pawbot plugins enable langfuse
-pawbot langfuse configure \
-  --public-key pk-... \
-  --secret-key sk-... \
-  --base-url https://cloud.langfuse.com
-pawbot langfuse test
-```
-
-The WebUI exposes the same fields under **Settings → System → Observability**.
-Save the settings and restart pawbot. The exporter is asynchronous and
-failure-isolated: local Trace remains available if Langfuse is unreachable.
-Prompt previews and Tool results are opt-in because they may contain private
-project data. For a self-hosted Langfuse instance, replace `--base-url` with
-the instance URL.
 
 ## Channels and integrations
 

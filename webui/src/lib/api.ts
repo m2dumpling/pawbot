@@ -13,7 +13,6 @@ import type {
   PersonalizationPayload,
   FilePreviewPayload,
   ImageGenerationSettingsUpdate,
-  LangfuseSettingsUpdate,
   McpPresetsPayload,
   McpOAuthFlowPayload,
   MarketplaceProvider,
@@ -1095,23 +1094,6 @@ export async function updateNetworkSafetySettings(
       webui_default_access_mode: update.webuiDefaultAccessMode,
     },
   );
-}
-
-export async function updateLangfuseSettings(
-  transport: WebUIMutationTransport,
-  update: LangfuseSettingsUpdate,
-): Promise<SettingsPayload> {
-  return mutation<SettingsPayload>(transport, "settings.observability.update", {
-    enabled: update.enabled,
-    ...(update.publicKey ? { public_key: update.publicKey } : {}),
-    ...(update.secretKey ? { secret_key: update.secretKey } : {}),
-    ...(update.clearKeys ? { clear_keys: true } : {}),
-    base_url: update.baseUrl,
-    environment: update.environment,
-    sample_rate: update.sampleRate,
-    capture_prompts: update.capturePrompts,
-    capture_tool_results: update.captureToolResults,
-  });
 }
 
 export async function updateImageGenerationSettings(

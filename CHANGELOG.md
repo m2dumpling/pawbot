@@ -3,6 +3,17 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.6.5 - 2026-09-21
+
+### Changed
+
+- Removed the optional Langfuse exporter, configuration, CLI, WebUI settings,
+  provider wrapper, and dependency.
+- Local Trace is now the only observability source; Record & Replay, rolling
+  evidence, Task Eval, Harness, personalization, and memory remain available.
+- Removed the external exporter from the Agent turn path so Trace callbacks
+  cannot perform external network work.
+
 ## 0.6.4 - 2026-09-21
 
 ### Fixed
