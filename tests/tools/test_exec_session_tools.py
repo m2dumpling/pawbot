@@ -347,7 +347,9 @@ def test_exec_session_can_close_stdin(tmp_path):
             session_id=sid,
             input="payload",
             close_stdin=True,
-            timeout_ms=1500,
+            # Windows may need a few extra seconds to tear down the
+            # PowerShell/Job Object wrapper after EOF reaches the child.
+            timeout_ms=5000,
         )
         return initial, result
 
