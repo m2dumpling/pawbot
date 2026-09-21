@@ -3,6 +3,24 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.6.2 - 2026-09-21
+
+### Fixed
+
+- Prevented long Replay/Eval operations from blocking Trace, execution, and
+  personalization controls on the same WebUI connection.
+- Moved synchronous Trace and recording-file scans off the Gateway event loop.
+- Added action-scoped WebUI request locks for fast queries and short local
+  memory/personalization mutations.
+- Added regression coverage for Trace and personalization requests during a
+  long-running WebUI mutation.
+
+### Verification
+
+- Python: 6928 passed, 54 skipped; coverage 82.73%.
+- WebUI: 1126 passed; lint and production build passed.
+- Ruff and basedpyright passed.
+
 ## 0.6.1 - 2026-09-21
 
 ### Fixed

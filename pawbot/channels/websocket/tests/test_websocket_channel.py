@@ -1094,6 +1094,63 @@ async def test_webui_mutations_preserve_request_and_response_order(bus: MagicMoc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fast_action", ["trace.list", "personalization.update"])
+async def test_fast_webui_actions_do_not_wait_for_long_mutation(
+    bus: MagicMock,
+    fast_action: str,
+) -> None:
+    """Trace/settings controls remain usable while Replay/Eval holds its lane."""
+    channel = _ch(bus)
+    conn = AsyncMock()
+    channel._webui_connections.add(conn)
+    long_started = asyncio.Event()
+    release_long = asyncio.Event()
+    fast_finished = asyncio.Event()
+    dispatch_order: list[str] = []
+
+    async def dispatch(
+        _connection: object,
+        action: str,
+        _payload: dict[str, object],
+    ) -> Any:
+        dispatch_order.append(action)
+        if action == "blackbox.replay":
+            long_started.set()
+            await release_long.wait()
+        elif action == fast_action:
+            fast_finished.set()
+        return _http_json_response({"action": action})
+
+    channel.gateway.http.dispatch_webui_mutation = dispatch
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {
+            "type": "webui_request",
+            "request_id": "long-replay",
+            "action": "blackbox.replay",
+            "payload": {"directory": "sample"},
+        },
+    )
+    await long_started.wait()
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {
+            "type": "webui_request",
+            "request_id": "fast-control",
+            "action": fast_action,
+            "payload": {},
+        },
+    )
+    await asyncio.wait_for(fast_finished.wait(), timeout=1)
+    assert dispatch_order == ["blackbox.replay", fast_action]
+
+    release_long.set()
+    await asyncio.gather(*tuple(channel._webui_request_tasks.values()))
+
+
+@pytest.mark.asyncio
 async def test_webui_request_survives_disconnect_and_preserves_reconnect_order(
     bus: MagicMock,
 ) -> None:

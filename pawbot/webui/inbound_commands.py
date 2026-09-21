@@ -53,6 +53,31 @@ from pawbot.webui.transcription_ws import webui_transcription_event
 _WEBUI_REQUEST_CACHE_TTL_S = 5 * 60.0
 _WEBUI_REQUEST_CACHE_MAX = 256
 
+# Read-only panels and short local state mutations must not wait behind a long
+# replay/evaluation operation on the same WebSocket connection.  They still
+# get an action-scoped lock, so two refreshes of the same action are ordered.
+_WEBUI_FAST_ACTIONS = frozenset(
+    {
+        "trace.list",
+        "trace.detail",
+        "blackbox.status",
+        "blackbox.list",
+        "blackbox.rolling.candidates",
+        "blackbox.tokens",
+        "blackbox.eval.list",
+        "memory.list",
+        "memory.remember",
+        "memory.remember-note",
+        "memory.promote",
+        "memory.reject",
+        "memory.forget",
+        "memory.clear",
+        "personalization.get",
+        "personalization.update",
+        "personalization.clear",
+    }
+)
+
 
 @dataclass(frozen=True)
 class WebUIRequestResult:
@@ -159,7 +184,11 @@ class WebUICommandRouter:
             asyncio.Task[None],
         ] = {}
         self.request_operations: dict[str, WebUIRequestOperation] = {}
+        # Long/exclusive mutations keep the historical connection-wide lock.
         self.request_locks: dict[ServerConnection, asyncio.Lock] = {}
+        # Fast queries and small local state updates only serialize with the
+        # same action, so trace refreshes cannot wait behind replay/eval.
+        self.request_action_locks: dict[tuple[ServerConnection, str], asyncio.Lock] = {}
 
     def workspace_controls_available(self, connection: ServerConnection) -> bool:
         return self._http_router.workspace_controls_available(connection)
@@ -914,6 +943,19 @@ class WebUICommandRouter:
         if any(task_connection is connection for task_connection, _ in self.request_tasks):
             return
         self.request_locks.pop(connection, None)
+        for key in tuple(self.request_action_locks):
+            if key[0] is connection:
+                self.request_action_locks.pop(key, None)
+
+    def _lock_for_action(
+        self,
+        connection: ServerConnection,
+        action: str,
+    ) -> asyncio.Lock:
+        if action in _WEBUI_FAST_ACTIONS:
+            key = (connection, action)
+            return self.request_action_locks.setdefault(key, asyncio.Lock())
+        return self.request_locks.setdefault(connection, asyncio.Lock())
 
     async def deliver_webui_request(
         self,
@@ -955,7 +997,7 @@ class WebUICommandRouter:
         payload: dict[str, Any],
     ) -> WebUIRequestResult:
         try:
-            lock = self.request_locks.setdefault(connection, asyncio.Lock())
+            lock = self._lock_for_action(connection, action)
             async with lock:
                 response = await self._http_router.dispatch_webui_mutation(
                     connection,
@@ -1035,6 +1077,7 @@ class WebUICommandRouter:
             await asyncio.gather(*operation_tasks, return_exceptions=True)
         self.request_tasks.clear()
         self.request_locks.clear()
+        self.request_action_locks.clear()
         self.request_operations.clear()
         self.gateway.tokens.clear()
         self.gateway.endpoint.clear()

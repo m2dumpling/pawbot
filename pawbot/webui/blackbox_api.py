@@ -12,6 +12,7 @@ composition layer wires the rest of the WebUI surface) and an optional
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import shutil
@@ -801,7 +802,7 @@ async def _stop(agent: Any) -> dict[str, Any]:
     return {"recording": False}
 
 
-async def _list(agent: Any) -> dict[str, Any]:
+def _list_sync(agent: Any) -> dict[str, Any]:
     recordings: list[dict[str, Any]] = []
     names = _session_display_names(agent)
     for root in _recording_roots(agent):
@@ -830,6 +831,12 @@ async def _list(agent: Any) -> dict[str, Any]:
         "root": str(_blackbox_root(agent)),
         "roots": [str(root) for root in _recording_roots(agent)],
     }
+
+
+async def _list(agent: Any) -> dict[str, Any]:
+    # Recording summaries read several JSONL files.  Keep the WebUI control
+    # plane responsive while the execution/replay page refreshes.
+    return await asyncio.to_thread(_list_sync, agent)
 
 
 async def _rolling_candidates(agent: Any) -> dict[str, Any]:
@@ -999,14 +1006,20 @@ async def _trace_list(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
     chat_id = payload.get("chat_id")
     if not isinstance(chat_id, str) or not chat_id:
         chat_id = None
-    summaries = store.list_summaries(
-        limit=limit,
-        session_key=session_key,
-        chat_id=chat_id,
-        issues_only=payload.get("filter") == "issues",
-        slow_only=payload.get("filter") == "slow",
+    # TraceStore performs synchronous JSONL/index scans.  Do not run them on
+    # the Gateway event loop: a long or growing trace must not freeze WebUI
+    # mutations, WebSocket heartbeats, or streaming events.
+    summaries, names = await asyncio.gather(
+        asyncio.to_thread(
+            store.list_summaries,
+            limit=limit,
+            session_key=session_key,
+            chat_id=chat_id,
+            issues_only=payload.get("filter") == "issues",
+            slow_only=payload.get("filter") == "slow",
+        ),
+        asyncio.to_thread(_session_display_names, agent),
     )
-    names = _session_display_names(agent)
     return {
         "traces": _json_safe([_attach_session_name(agent, row, names) for row in summaries]),
         "root": str(store.root),
@@ -1019,7 +1032,9 @@ async def _trace_detail(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
         raise BlackboxActionError(400, "id is required for trace detail")
     store = _trace_store(agent)
     try:
-        summary, events = store.detail(identifier)
+        # Detail reads can include a complete active trace.  Keep file I/O and
+        # JSON decoding off the async control plane.
+        summary, events = await asyncio.to_thread(store.detail, identifier)
     except FileNotFoundError as exc:
         raise BlackboxActionError(404, "执行追踪不存在") from exc
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
