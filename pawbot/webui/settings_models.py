@@ -1087,12 +1087,18 @@ def reasoning_effort_values_for(provider_name: str, model: str) -> list[str]:
 
 def reasoning_effort_values_payload(
     query: QueryParams,
+    *,
+    config_path: Path | None = None,
 ) -> dict[str, Any]:
     """Resolve reasoning-effort options for an arbitrary provider+model pair.
 
     Lets the UI refresh the effort picker whenever the selected model changes,
-    without hard-coding the vocabulary in the frontend.
+    without hard-coding the vocabulary in the frontend.  ``config_path`` is
+    accepted because the shared settings service passes the gateway's
+    path-scoped config to every read operation; this pure lookup does not need
+    to load the file.
     """
+    del config_path
     provider = query_first(query, "provider") or ""
     model = query_first(query, "model") or ""
     return {

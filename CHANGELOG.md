@@ -3,6 +3,15 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.6.3 - 2026-09-21
+
+### Fixed
+
+- Fixed the WebUI model settings query that loaded reasoning-effort options
+  with the gateway's path-scoped settings service.
+- Added a regression test for this settings route so the pure lookup remains
+  compatible with the shared path-aware read wrapper.
+
 ## 0.6.2 - 2026-09-21
 
 ### Fixed

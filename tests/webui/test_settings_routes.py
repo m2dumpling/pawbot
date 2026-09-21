@@ -139,6 +139,25 @@ async def test_full_settings_query_runs_off_the_event_loop(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reasoning_effort_values_query_accepts_path_scoped_settings_read() -> None:
+    route = "/api/settings/reasoning-effort-values"
+    request = SimpleNamespace(
+        path=f"{route}?provider=deepseek&model=deepseek-v4-flash",
+        headers=Headers(),
+    )
+
+    response = await _router().dispatch(None, request, route)
+
+    assert response is not None
+    assert response.status_code == 200
+    assert json.loads(response.body) == {
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
+        "values": ["", "low", "high", "max"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_mcp_reload_callback_is_bounded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
