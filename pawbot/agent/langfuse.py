@@ -11,9 +11,9 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, Generator, Protocol, cast
 
 from loguru import logger
 
@@ -119,6 +119,44 @@ def _stable_trace_id(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()[:32]
 
 
+def _session_id(value: Any) -> str | None:
+    """Return a Langfuse-compatible, stable session id.
+
+    Langfuse session ids must be printable US-ASCII strings of at most 200
+    characters. Most Pawbot channel/session keys already satisfy that rule;
+    hash unusual keys instead of silently losing session aggregation.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if len(raw) <= 200 and all(32 <= ord(char) < 127 for char in raw):
+        return raw
+    return f"pawbot-session-{hashlib.sha256(raw.encode('utf-8')).hexdigest()}"
+
+
+@contextmanager
+def _session_attributes(session_id: str | None) -> Generator[None, None, None]:
+    """Propagate a session id to every observation created in the context.
+
+    ``propagate_attributes`` is intentionally imported lazily because
+    Langfuse is an optional dependency. The context is entered separately for
+    each observation because the exporter receives one normalized Trace event
+    at a time rather than owning the Agent's async call stack.
+    """
+    if not session_id:
+        yield
+        return
+    try:
+        from langfuse import propagate_attributes
+    except ImportError:
+        # The exporter normally cannot be constructed without the optional
+        # SDK, but keep the boundary defensive for lightweight test doubles.
+        yield
+        return
+    with propagate_attributes(session_id=session_id):
+        yield
+
+
 def _status_level(status: Any) -> str:
     normalized = str(status or "").lower()
     if normalized in {"error", "failed", "blocked", "cancelled", "incomplete"}:
@@ -184,6 +222,7 @@ class LangfuseExporter:
         self.client = client
         self.settings = settings
         self._roots: dict[str, Any] = {}
+        self._session_ids: dict[str, str | None] = {}
         self._generations: dict[tuple[str, int], Any] = {}
         self._tools: dict[tuple[str, str], Any] = {}
         self._failed = False
@@ -226,50 +265,48 @@ class LangfuseExporter:
         root = self._roots.get(langfuse_trace_id)
         if root is not None:
             return langfuse_trace_id, root
-        root = self.client.start_observation(
-            trace_context=_trace_context(langfuse_trace_id),
-            name=(
-                "pawbot.replay.turn"
-                if str(event.get("channel") or "") == "replay"
-                else "pawbot.agent.turn"
-            ),
-            as_type="agent",
-            input={
-                "session_key": event.get("session_key"),
-                "channel": event.get("channel"),
-                "chat_id": event.get("chat_id"),
-            },
-            metadata={
-                "pawbot_trace_id": pawbot_trace_id,
-                "turn_id": event.get("turn_id"),
-                "provider": event.get("provider"),
-                "model": event.get("model"),
-            },
-            version=__version__,
-        )
-        self._roots[langfuse_trace_id] = root
-        with suppress(Exception):
-            root.update_trace(
-                session_id=str(event.get("session_key") or event.get("turn_id") or ""),
+        session_id = _session_id(event.get("session_key") or event.get("turn_id"))
+        with _session_attributes(session_id):
+            root = self.client.start_observation(
+                trace_context=_trace_context(langfuse_trace_id),
+                name=(
+                    "pawbot.replay.turn"
+                    if str(event.get("channel") or "") == "replay"
+                    else "pawbot.agent.turn"
+                ),
+                as_type="agent",
+                input={
+                    "session_key": event.get("session_key"),
+                    "channel": event.get("channel"),
+                    "chat_id": event.get("chat_id"),
+                },
+                metadata={
+                    "pawbot_trace_id": pawbot_trace_id,
+                    "turn_id": event.get("turn_id"),
+                    "provider": event.get("provider"),
+                    "model": event.get("model"),
+                },
                 version=__version__,
-                metadata={"channel": event.get("channel")},
             )
+        self._roots[langfuse_trace_id] = root
+        self._session_ids[langfuse_trace_id] = session_id
         return langfuse_trace_id, root
 
     def _create_event(self, trace_id: str, root: Any, event: dict[str, Any]) -> None:
         name = str(event.get("event") or "agent.event")
-        self.client.create_event(
-            trace_context=_trace_context(trace_id, getattr(root, "id", None)),
-            name=name,
-            input={
-                "status": event.get("status"),
-                "iteration": event.get("iteration"),
-            },
-            output=event.get("outcome"),
-            metadata=_event_metadata(event),
-            level=_status_level(event.get("status")),
-            status_message=redact_text(event.get("error")) if event.get("error") else None,
-        )
+        with _session_attributes(self._session_ids.get(trace_id)):
+            self.client.create_event(
+                trace_context=_trace_context(trace_id, getattr(root, "id", None)),
+                name=name,
+                input={
+                    "status": event.get("status"),
+                    "iteration": event.get("iteration"),
+                },
+                output=event.get("outcome"),
+                metadata=_event_metadata(event),
+                level=_status_level(event.get("status")),
+                status_message=redact_text(event.get("error")) if event.get("error") else None,
+            )
 
     def _emit_generation(self, trace_id: str, root: Any, event: dict[str, Any]) -> None:
         event_name = str(event.get("event") or "")
@@ -286,15 +323,16 @@ class LangfuseExporter:
             }
             if self.settings.capture_prompts and event.get("messages_preview") is not None:
                 input_payload["messages"] = event.get("messages_preview")
-            generation = self.client.start_observation(
-                trace_context=_trace_context(trace_id, getattr(root, "id", None)),
-                name=f"llm.iteration.{iteration}",
-                as_type="generation",
-                input=input_payload,
-                model=event.get("model"),
-                metadata=_event_metadata(event),
-                version=__version__,
-            )
+            with _session_attributes(self._session_ids.get(trace_id)):
+                generation = self.client.start_observation(
+                    trace_context=_trace_context(trace_id, getattr(root, "id", None)),
+                    name=f"llm.iteration.{iteration}",
+                    as_type="generation",
+                    input=input_payload,
+                    model=event.get("model"),
+                    metadata=_event_metadata(event),
+                    version=__version__,
+                )
             self._generations[key] = generation
             return
         generation = self._generations.pop(key, None)
@@ -327,14 +365,15 @@ class LangfuseExporter:
             input_payload: Any = {"tool_name": event.get("tool_name")}
             if self.settings.capture_tool_results:
                 input_payload["arguments"] = event.get("arguments_preview")
-            tool = self.client.start_observation(
-                trace_context=_trace_context(trace_id, getattr(root, "id", None)),
-                name=f"tool.{event.get('tool_name') or 'unknown'}",
-                as_type="tool",
-                input=input_payload,
-                metadata=_event_metadata(event),
-                version=__version__,
-            )
+            with _session_attributes(self._session_ids.get(trace_id)):
+                tool = self.client.start_observation(
+                    trace_context=_trace_context(trace_id, getattr(root, "id", None)),
+                    name=f"tool.{event.get('tool_name') or 'unknown'}",
+                    as_type="tool",
+                    input=input_payload,
+                    metadata=_event_metadata(event),
+                    version=__version__,
+                )
             self._tools[key] = tool
             return
         tool = self._tools.pop(key, None)
@@ -411,6 +450,7 @@ class LangfuseExporter:
                     )
                     root.end()
                 self._roots.pop(trace_id, None)
+                self._session_ids.pop(trace_id, None)
         except Exception:
             self._failed = True
             if not self._failure_logged:

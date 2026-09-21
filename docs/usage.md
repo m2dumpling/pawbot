@@ -1,6 +1,6 @@
 # pawbot Usage Guide
 
-This guide corresponds to `v0.6.0`.
+This guide corresponds to `v0.6.1`.
 
 This guide explains how to use the released Pawbot features from the CLI and WebUI: Trace, the rolling replay buffer, Record & Replay, TaskContract, the Task Eval Set, and the Agent Harness.
 

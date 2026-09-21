@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any
 
+import pytest
+
+import pawbot.agent.langfuse as langfuse_module
 from pawbot.agent.langfuse import LangfuseExporter, LangfuseSettings
 
 
@@ -13,9 +17,6 @@ class _Observation:
 
     def update(self, **kwargs: Any) -> None:
         self.updates.append(kwargs)
-
-    def update_trace(self, **kwargs: Any) -> None:
-        self.updates.append({"trace": kwargs})
 
     def end(self, **_kwargs: Any) -> None:
         self.ended = True
@@ -139,6 +140,97 @@ def test_exporter_maps_agent_llm_tool_and_task_events() -> None:
     assert client.scores[0]["name"] == "task_status"
     assert client.scores[0]["value"] == "passed"
     assert all(observation.ended for _kind, observation in client.observations)
+
+
+def test_exporter_propagates_langfuse_session_id_to_created_observations(
+    monkeypatch: Any,
+) -> None:
+    client = _Client()
+    seen: list[str | None] = []
+
+    @contextmanager
+    def capture_session(session_id: str | None):
+        seen.append(session_id)
+        yield
+
+    monkeypatch.setattr(langfuse_module, "_session_attributes", capture_session)
+    exporter = LangfuseExporter(client, _settings(capture_prompts=False, capture_tool_results=False))
+
+    exporter.emit(_event("turn.accepted", status="accepted"))
+    exporter.emit(
+        _event(
+            "llm.request_started",
+            status="running",
+            iteration=1,
+            message_count=1,
+        )
+    )
+    exporter.emit(_event("llm.response", status="received", iteration=1))
+    exporter.emit(
+        _event(
+            "tool.started",
+            status="running",
+            call_id="call-1",
+            tool_name="list_dir",
+        )
+    )
+    exporter.emit(
+        _event(
+            "tool.finished",
+            status="succeeded",
+            call_id="call-1",
+            tool_name="list_dir",
+        )
+    )
+    exporter.emit(_event("turn.completed", status="completed", outcome={"ok": True}))
+
+    assert seen
+    assert set(seen) == {"websocket:chat-1"}
+
+
+def test_session_id_is_hashed_when_key_is_not_langfuse_compatible() -> None:
+    assert langfuse_module._session_id("websocket:chat-1") == "websocket:chat-1"
+    hashed = langfuse_module._session_id("会话-" + "x" * 240)
+    assert hashed is not None
+    assert hashed.startswith("pawbot-session-")
+    assert len(hashed) <= 200
+
+
+def test_langfuse_sdk_observations_receive_session_id() -> None:
+    langfuse = pytest.importorskip("langfuse")
+    try:
+        from opentelemetry.sdk.trace.export import InMemorySpanExporter
+    except ImportError:
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+    sink = InMemorySpanExporter()
+    client = langfuse.Langfuse(
+        public_key="pk-test",
+        secret_key="sk-test",
+        tracing_enabled=True,
+        flush_at=512,
+        flush_interval=999999,
+        span_exporter=sink,
+    )
+    exporter = LangfuseExporter(client, _settings(capture_prompts=False, capture_tool_results=False))
+    exporter.emit(_event("turn.accepted", status="accepted"))
+    trace_id = next(iter(exporter._roots))
+    root = exporter._roots[trace_id]
+    exporter.emit(
+        _event(
+            "llm.request_started",
+            status="running",
+            iteration=1,
+            message_count=1,
+        )
+    )
+    generation = exporter._generations[(trace_id, 1)]
+
+    assert root._otel_span.attributes["session.id"] == "websocket:chat-1"
+    assert generation._otel_span.attributes["session.id"] == "websocket:chat-1"
+    exporter.close()
 
 
 def test_exporter_failure_does_not_escape_to_agent() -> None:

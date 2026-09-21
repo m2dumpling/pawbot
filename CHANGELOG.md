@@ -3,6 +3,21 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.6.1 - 2026-09-21
+
+### Fixed
+
+- Fixed Langfuse Session aggregation by propagating the Pawbot session key as
+  the SDK's first-class `sessionId` on root and child observations.
+- Replaced the unsupported Langfuse v3-style trace update call with the
+  Langfuse 4.x observation attribute propagation API.
+- Added regression coverage for WebSocket and non-ASCII/overlong session keys.
+
+### Verification
+
+- Confirmed live Langfuse v2 Observations contain the same `sessionId` on Agent,
+  LLM, Tool, and completion observations.
+
 ## 0.6.0 - 2026-09-21
 
 ### Added
