@@ -1079,8 +1079,21 @@
       "localTraceDisabled": "Disabled",
       "localTraceRetention": "Keeps {{days}} days · {{count}} trace files",
       "configured": "Tracing credentials are available to pawbot.",
-      "environment": "Set LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY, then restart pawbot.",
-      "enable": "Enable tracing support"
+      "environment": "Configure the fields below or use environment variables, then restart pawbot.",
+      "enable": "Enable tracing support",
+      "baseUrl": "Base URL",
+      "environmentLabel": "Environment",
+      "publicKey": "Public key",
+      "secretKey": "Secret key",
+      "sampleRate": "Sample rate",
+      "capturePrompts": "Capture prompt previews",
+      "captureToolResults": "Capture Tool results",
+      "enabled": "Enable exporter",
+      "save": "Save Langfuse",
+      "saving": "Saving...",
+      "restartHint": "Restart pawbot after saving to apply the exporter.",
+      "publicKeyPlaceholder": "pk-...",
+      "secretKeyPlaceholder": "sk-..."
     },
     "apps": {
       "description": "Add tools to pawbot, then @ them in chat.",

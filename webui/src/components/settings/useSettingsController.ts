@@ -31,14 +31,14 @@ import { createSystemSettingsActions } from "@/components/settings/system/create
 import { useSystemSettingsEffects } from "@/components/settings/system/useSystemSettingsEffects";
 import { useSystemSettingsState } from "@/components/settings/system/useSystemSettingsState";
 import { usePageVisibility } from "@/hooks/usePageVisibility";
-import { fetchSettings, fetchSettingsUsage } from "@/lib/api";
+import { fetchSettings, fetchSettingsUsage, updateLangfuseSettings } from "@/lib/api";
 import {
   readLocalPreferences,
   writeLocalPreferences,
   type LocalPreferences,
 } from "@/lib/local-preferences";
 import { isLoopbackHost } from "@/lib/network";
-import type { SettingsPayload } from "@/lib/types";
+import type { LangfuseSettingsUpdate, SettingsPayload } from "@/lib/types";
 import { useClient } from "@/providers/ClientProvider";
 
 interface SettingsControllerOptions {
@@ -88,6 +88,7 @@ export function useSettingsController({
   const [pendingRestartSections, setPendingRestartSections] = useState<PendingRestartSections>(
     EMPTY_PENDING_RESTART_SECTIONS,
   );
+  const [langfuseSaving, setLangfuseSaving] = useState(false);
   const [localPrefs, setLocalPrefs] = useState<LocalPreferences>(() => readLocalPreferences());
   const modelState = useModelSettingsState(initialSettings);
   const {
@@ -375,6 +376,21 @@ export function useSettingsController({
     },
     [applyPayload, onNativeEngineRestart, settings],
   );
+  const saveLangfuseSettings = useCallback(
+    async (update: LangfuseSettingsUpdate) => {
+      setLangfuseSaving(true);
+      try {
+        const payload = await updateLangfuseSettings(client, update);
+        applyPayload(payload);
+        setError(null);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setLangfuseSaving(false);
+      }
+    },
+    [applyPayload, client],
+  );
   const systemActions = createSystemSettingsActions({
     state: systemState,
     featureCatalog,
@@ -517,6 +533,7 @@ export function useSettingsController({
     imageGenerationSaving,
     installCapabilities,
     loading,
+    langfuseSaving,
     localPrefs,
     mcpConfigImport,
     mcpError,
@@ -560,6 +577,7 @@ export function useSettingsController({
     restartViaSettingsSurface,
     runProviderOAuth,
     saveImageGenerationSettings,
+    saveLangfuseSettings,
     saveModelSettings,
     saveNetworkSafetySettings,
     saveProvider,

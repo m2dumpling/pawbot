@@ -3,6 +3,32 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.6.0 - 2026-09-21
+
+### Added
+
+- Added a provider-independent Langfuse observation exporter for Agent turns,
+  LLM generations, Tool observations, task verification, and replay comparison.
+- Added `pawbot langfuse status`, `configure`, and `test` commands.
+- Added WebUI configuration for Langfuse endpoint, environment, sampling, and
+  bounded Prompt/Tool previews.
+- Upgraded the optional Langfuse dependency to Python SDK 4.7+ for the current
+  Observations API and OTEL ingestion path.
+
+### Fixed
+
+- Fixed WebUI mutation routing for personalization and memory clear actions;
+  saving personalization, memory switches, and clearing memory no longer
+  returns `unknown WebUI mutation action`.
+
+### Verification
+
+- Python: 6923 passed, 54 skipped.
+- WebUI: 1126 passed; production build and lint passed.
+- Ruff and basedpyright passed.
+- Live Langfuse verification confirmed Agent, LLM, Tool, stage, checkpoint,
+  and turn-completion observations under one Trace ID.
+
 ## 0.5.3 - 2026-09-20
 
 ### Added

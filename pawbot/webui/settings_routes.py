@@ -53,6 +53,7 @@ from pawbot.webui.settings_api import (
     update_model_call_order,
     update_model_configuration,
     update_network_safety_settings,
+    update_observability_settings,
     update_provider_settings,
     update_transcription_settings,
     update_web_search_settings,
@@ -124,6 +125,7 @@ _CAPABILITY_ROUTES = {
     "/api/settings/image-generation/update": "image-update",
     "/api/settings/transcription/update": "transcription-update",
     "/api/settings/network-safety/update": "network-update",
+    "/api/settings/observability/update": "observability-update",
 }
 
 _SYSTEM_ROUTES = {
@@ -166,6 +168,7 @@ _SETTINGS_MUTATION_PATHS = frozenset({
     "/api/settings/image-generation/update",
     "/api/settings/transcription/update",
     "/api/settings/network-safety/update",
+    "/api/settings/observability/update",
     "/api/settings/cli-apps/install",
     "/api/settings/cli-apps/update",
     "/api/settings/cli-apps/uninstall",
@@ -457,6 +460,7 @@ class WebUISettingsRouter:
             update_image=update_image_generation_settings,
             update_transcription=update_transcription_settings,
             update_network=update_network_safety_settings,
+            update_observability=update_observability_settings,
             pawbot_features_action=pawbot_features_action,
             api_runtime=self._api_runtime,
             reload_image=lambda: request_image_generation_reload(self.bus),

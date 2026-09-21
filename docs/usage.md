@@ -1,6 +1,6 @@
 # pawbot Usage Guide
 
-This guide corresponds to `v0.5.3`.
+This guide corresponds to `v0.6.0`.
 
 This guide explains how to use the released Pawbot features from the CLI and WebUI: Trace, the rolling replay buffer, Record & Replay, TaskContract, the Task Eval Set, and the Agent Harness.
 
@@ -73,6 +73,30 @@ stages
 Use it to answer which stage was slow, which provider request failed, which tool was rejected or failed, and whether an uncertain side effect remains.
 
 Trace is a bounded diagnostic record. It is not the complete raw Prompt and tool-output archive.
+
+## 2a. Optional Langfuse observability
+
+Langfuse is an optional external observability sink. It does not replace the
+local Trace or offline replay path. Install the client and configure either
+the CLI or the WebUI:
+
+```bash
+pawbot plugins enable langfuse
+pawbot langfuse configure \
+  --public-key pk-... \
+  --secret-key sk-... \
+  --base-url https://cloud.langfuse.com
+pawbot langfuse test
+```
+
+The WebUI equivalent is **Settings → System → Observability**. Configure the
+base URL, environment, sample rate, and optional bounded Prompt/Tool previews,
+then save and restart pawbot. Use `pawbot langfuse status --json` to inspect
+the configuration without printing credentials.
+
+The exporter maps Agent turns, LLM generations, Tool observations, task
+verification, and replay comparison events. Local Trace remains the source of
+truth, and an unavailable Langfuse endpoint cannot fail an Agent turn.
 
 ## 3. Automatic rolling replay evidence
 

@@ -1085,8 +1085,21 @@
       "localTraceDisabled": "已停用",
       "localTraceRetention": "保留 {{days}} 天 · 最多 {{count}} 个追踪文件",
       "configured": "pawbot 已检测到追踪凭证。",
-      "environment": "设置 LANGFUSE_SECRET_KEY 和 LANGFUSE_PUBLIC_KEY 后重启 pawbot。",
-      "enable": "启用追踪支持"
+      "environment": "填写下方配置或使用环境变量，然后重启 pawbot。",
+      "enable": "启用追踪支持",
+      "baseUrl": "服务地址",
+      "environmentLabel": "环境",
+      "publicKey": "Public Key",
+      "secretKey": "Secret Key",
+      "sampleRate": "采样率",
+      "capturePrompts": "记录 Prompt 预览",
+      "captureToolResults": "记录工具结果",
+      "enabled": "启用导出",
+      "save": "保存 Langfuse 设置",
+      "saving": "保存中...",
+      "restartHint": "保存后重启 pawbot，观测出口才会生效。",
+      "publicKeyPlaceholder": "pk-...",
+      "secretKeyPlaceholder": "sk-..."
     },
     "apps": {
       "description": "将工具接入 pawbot，然后在对话中通过 @ 调用。",

@@ -683,7 +683,15 @@ export interface SettingsPayload {
   observability?: {
     provider: "langfuse" | string;
     configured: boolean;
+    enabled?: boolean;
+    installed?: boolean;
+    public_key_hint?: string | null;
+    secret_key_hint?: string | null;
     base_url: string;
+    environment?: string;
+    sample_rate?: number;
+    capture_prompts?: boolean;
+    capture_tool_results?: boolean;
     local_trace_enabled?: boolean;
     local_trace_retention_days?: number;
     local_trace_max_traces?: number;
@@ -1275,6 +1283,18 @@ export interface WebSearchSettingsUpdate {
 export interface NetworkSafetySettingsUpdate {
   webuiAllowLocalServiceAccess: boolean;
   webuiDefaultAccessMode: WebuiDefaultAccessMode;
+}
+
+export interface LangfuseSettingsUpdate {
+  enabled: boolean;
+  publicKey?: string;
+  secretKey?: string;
+  baseUrl: string;
+  environment: string;
+  sampleRate: number;
+  capturePrompts: boolean;
+  captureToolResults: boolean;
+  clearKeys?: boolean;
 }
 
 export interface ImageGenerationSettingsUpdate {

@@ -49,6 +49,7 @@ from pawbot.agent.tools.exec_session import ExecSessionManager
 from pawbot.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from pawbot.agent.tools.registry import ToolRegistry
 from pawbot.agent.tools.runtime_control import AgentRuntimeControl
+from pawbot.agent.trace_schema import TRACE_SCHEMA_VERSION
 from pawbot.agent.turn.context import TurnContext, TurnKind
 from pawbot.agent.turn.outcome import TurnOutcome
 from pawbot.agent.turn.stages import TurnStagesMixin
@@ -248,6 +249,7 @@ class AgentLoop(TurnStagesMixin):
         blackbox: Any | None = None,
         rolling_blackbox: Any | None = None,
         trace_store: TraceStore | None = None,
+        trace_exporter: Any | None = None,
         tool_approval_callback: ToolApprovalCallback | None = None,
          approval_capabilities: frozenset[str] | None = None,
          memory_data_root: Path | None = None,
@@ -343,6 +345,7 @@ class AgentLoop(TurnStagesMixin):
         self.rolling_blackbox = rolling_blackbox
         self._blackbox_policy_active = False
         self.trace_store = trace_store
+        self.trace_exporter = trace_exporter
         self.tool_approval_callback = tool_approval_callback
         self.approval_capabilities = (
             approval_capabilities
@@ -483,6 +486,7 @@ class AgentLoop(TurnStagesMixin):
         allowing callers to override or extend the standard config-derived
         parameters (e.g. ``cron_service``, ``session_manager``).
         """
+        from pawbot.agent.langfuse import LangfuseExporter
         from pawbot.config.paths import get_data_dir
         from pawbot.providers.factory import make_provider
 
@@ -502,6 +506,9 @@ class AgentLoop(TurnStagesMixin):
             from pawbot.bus.outbound_events import TraceEvent
 
             data_dir = config.runtime_data_dir or get_data_dir()
+            if "trace_exporter" not in extra:
+                extra["trace_exporter"] = LangfuseExporter.from_config(config)
+            trace_exporter = extra.get("trace_exporter")
             websocket_config = getattr(config.channels, "websocket", None)
             websocket_enabled = (
                 bool(cast(Mapping[str, Any], websocket_config).get("enabled"))
@@ -510,19 +517,21 @@ class AgentLoop(TurnStagesMixin):
             )
 
             def _publish_trace_event(payload: dict[str, Any]) -> None:
-                if not websocket_enabled or payload.get("channel") != "websocket":
-                    return
-                chat_id = payload.get("chat_id")
-                if not isinstance(chat_id, str) or not chat_id:
-                    return
-                bus.outbound.put_nowait(
-                    OutboundMessage(
-                        channel="websocket",
-                        chat_id=chat_id,
-                        content="",
-                        event=TraceEvent(payload=payload),
-                    )
-                )
+                exporter = trace_exporter
+                emit = getattr(exporter, "emit", None)
+                if callable(emit):
+                    emit(payload)
+                if websocket_enabled and payload.get("channel") == "websocket":
+                    chat_id = payload.get("chat_id")
+                    if isinstance(chat_id, str) and chat_id:
+                        bus.outbound.put_nowait(
+                            OutboundMessage(
+                                channel="websocket",
+                                chat_id=chat_id,
+                                content="",
+                                event=TraceEvent(payload=payload),
+                            )
+                        )
 
             extra["trace_store"] = TraceStore(
                 data_dir / "traces",
@@ -530,8 +539,14 @@ class AgentLoop(TurnStagesMixin):
                 retention_days=config.observability.retention_days,
                 max_traces=config.observability.max_traces,
                 max_bytes=config.observability.max_bytes,
+                capture_prompts=config.observability.langfuse_capture_prompts,
+                capture_tool_results=config.observability.langfuse_capture_tool_results,
                 event_callback=_publish_trace_event,
             )
+        elif "trace_exporter" not in extra:
+            from pawbot.agent.langfuse import LangfuseExporter
+
+            extra["trace_exporter"] = LangfuseExporter.from_config(config)
         if (
             extra.get("blackbox") is None
             and "rolling_blackbox" not in extra
@@ -2025,6 +2040,13 @@ class AgentLoop(TurnStagesMixin):
                 await cleanup()
             except BaseException as exc:
                 errors.append(exc)
+        exporter = getattr(self, "trace_exporter", None)
+        close_exporter = getattr(exporter, "close", None)
+        if callable(close_exporter):
+            try:
+                close_exporter()
+            except BaseException as exc:
+                errors.append(exc)
         if len(errors) == 1:
             raise errors[0]
         if errors:
@@ -2672,6 +2694,7 @@ class AgentLoop(TurnStagesMixin):
                 chat_id="replay",
                 model=turn.model or runtime.model,
                 provider=getattr(runtime.provider, "provider_name", None),
+                on_event=getattr(getattr(self, "trace_exporter", None), "emit", None),
             )
             replay_trace_hook = replay_trace.hook(
                 initial_messages=turn.initial_messages,
@@ -2778,6 +2801,26 @@ class AgentLoop(TurnStagesMixin):
                     else None
                 ),
             })
+            export_replay = getattr(getattr(self, "trace_exporter", None), "emit", None)
+            if callable(export_replay):
+                export_replay({
+                    "schema_version": TRACE_SCHEMA_VERSION,
+                    "sequence": len(trace_writer.events) + 1,
+                    "event": "replay.compared",
+                    "trace_id": f"replay:{turn.turn_id}",
+                    "session_key": turn.session_key,
+                    "turn_id": turn.turn_id,
+                    "channel": "replay",
+                    "chat_id": "replay",
+                    "timestamp_ms": int(time.time() * 1000),
+                    "status": "completed" if ok else "failed",
+                    "outcome": {
+                        "replay_consistency": "consistent" if ok else "divergent",
+                        "message_diffs": len(message_diffs),
+                        "trace_diffs": len(trace_diffs),
+                        "trace_comparable": trace_comparable,
+                    },
+                })
         if hasattr(controller, "last_benchmark"):
             controller.last_benchmark = benchmark_rows
         if hasattr(controller, "last_replay_details"):

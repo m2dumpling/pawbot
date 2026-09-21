@@ -37,6 +37,7 @@ from pawbot.webui.settings_api import (
     update_model_call_order,
     update_model_configuration,
     update_network_safety_settings,
+    update_observability_settings,
     update_provider_settings,
     update_transcription_settings,
     update_web_search_settings,
@@ -162,6 +163,40 @@ def test_settings_payload_includes_relocated_capabilities(
     assert payload["api"]["api_key_hint"] is None
     assert payload["observability"]["provider"] == "langfuse"
     assert payload["observability"]["configured"] is True
+
+
+def test_update_observability_settings_persists_langfuse_configuration(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    save_config(Config(), config_path)
+    monkeypatch.setattr("pawbot.config.loader._current_config_path", config_path)
+
+    payload = update_observability_settings(
+        {
+            "enabled": ["true"],
+            "public_key": ["pk-test"],
+            "secret_key": ["sk-test"],
+            "base_url": ["http://localhost:3000/"],
+            "environment": ["local"],
+            "sample_rate": ["0.5"],
+            "capture_prompts": ["true"],
+            "capture_tool_results": ["false"],
+        }
+    )
+
+    saved = load_config(config_path)
+    assert saved.observability.langfuse_enabled is True
+    assert saved.observability.langfuse_public_key == "pk-test"
+    assert saved.observability.langfuse_secret_key == "sk-test"
+    assert saved.observability.langfuse_base_url == "http://localhost:3000"
+    assert saved.observability.langfuse_environment == "local"
+    assert saved.observability.langfuse_sample_rate == 0.5
+    assert saved.observability.langfuse_capture_prompts is True
+    assert saved.observability.langfuse_capture_tool_results is False
+    assert payload["observability"]["configured"] is True
+    assert payload["observability"]["secret_key_hint"] == chr(0x2022) * 4
 
 
 def test_settings_payload_exposes_modelscope_image_model(

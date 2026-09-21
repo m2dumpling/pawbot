@@ -125,6 +125,59 @@ class ObservabilityConfig(Base):
         validation_alias=AliasChoices("rollingMaxBytes", "rolling_max_bytes"),
         serialization_alias="rollingMaxBytes",
     )
+    langfuse_enabled: bool | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        validation_alias=AliasChoices("langfuseEnabled", "langfuse_enabled"),
+        serialization_alias="langfuseEnabled",
+    )
+    langfuse_public_key: str = Field(
+        default="",
+        exclude_if=lambda value: value == "",
+        validation_alias=AliasChoices("langfusePublicKey", "langfuse_public_key"),
+        serialization_alias="langfusePublicKey",
+    )
+    langfuse_secret_key: str = Field(
+        default="",
+        repr=False,
+        exclude_if=lambda value: value == "",
+        validation_alias=AliasChoices("langfuseSecretKey", "langfuse_secret_key"),
+        serialization_alias="langfuseSecretKey",
+    )
+    langfuse_base_url: str = Field(
+        default="https://cloud.langfuse.com",
+        exclude_if=lambda value: value == "https://cloud.langfuse.com",
+        validation_alias=AliasChoices("langfuseBaseUrl", "langfuse_base_url"),
+        serialization_alias="langfuseBaseUrl",
+    )
+    langfuse_environment: str = Field(
+        default="production",
+        exclude_if=lambda value: value == "production",
+        validation_alias=AliasChoices("langfuseEnvironment", "langfuse_environment"),
+        serialization_alias="langfuseEnvironment",
+    )
+    langfuse_sample_rate: float = Field(
+        default=1.0,
+        exclude_if=lambda value: value == 1.0,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("langfuseSampleRate", "langfuse_sample_rate"),
+        serialization_alias="langfuseSampleRate",
+    )
+    langfuse_capture_prompts: bool = Field(
+        default=False,
+        exclude_if=lambda value: value is False,
+        validation_alias=AliasChoices("langfuseCapturePrompts", "langfuse_capture_prompts"),
+        serialization_alias="langfuseCapturePrompts",
+    )
+    langfuse_capture_tool_results: bool = Field(
+        default=False,
+        exclude_if=lambda value: value is False,
+        validation_alias=AliasChoices(
+            "langfuseCaptureToolResults", "langfuse_capture_tool_results"
+        ),
+        serialization_alias="langfuseCaptureToolResults",
+    )
 
 
 class InlineFallbackConfig(Base):

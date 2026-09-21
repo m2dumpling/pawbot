@@ -1,6 +1,6 @@
 # pawbot 使用指南
 
-当前文档对应 `v0.5.3`。
+当前文档对应 `v0.6.0`。
 
 这篇文档面向已经安装 Pawbot 的用户，集中说明 CLI、WebUI、Trace、滚动回放、Record & Replay、Task Eval Set 和 Harness 的实际用法。
 
@@ -105,6 +105,27 @@ Trace 适合回答：
 - 为什么 Agent 没有继续或提前结束。
 
 Trace 是轻量诊断记录，不等于完整原始 Prompt 和工具结果。
+
+## 2.1 可选的 Langfuse 可观测性
+
+Langfuse 是可选的外部观测出口，不会替代本地 Trace 或离线回放。可以通过 CLI
+或 WebUI 配置：
+
+```bash
+pawbot plugins enable langfuse
+pawbot langfuse configure \
+  --public-key pk-... \
+  --secret-key sk-... \
+  --base-url https://cloud.langfuse.com
+pawbot langfuse test
+```
+
+WebUI 的入口是 **设置 → 系统 → 可观测性**。可以填写服务地址、环境、采样率，
+并按需开启有边界的 Prompt/Tool 预览；保存后重启 pawbot。使用
+`pawbot langfuse status --json` 可以查看状态，但不会输出密钥。
+
+导出内容包括 Agent 回合、LLM 请求、Tool 观测、任务验收和回放对比结果。
+本地 Trace 仍然是事实来源，Langfuse 不可用时不会阻断 Agent 执行。
 
 ## 3. 默认滚动回放缓存
 

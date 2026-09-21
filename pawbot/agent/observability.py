@@ -266,6 +266,8 @@ class TraceRun:
     trace_file_id: str | None = None
     on_event: TraceEventCallback | None = field(default=None, repr=False)
     on_finish: TraceFinishCallback | None = field(default=None, repr=False)
+    capture_prompts: bool = False
+    capture_tool_results: bool = False
     started_at_ns: int = field(default_factory=time.monotonic_ns)
     _sequence: int = 0
     _event_count: int = 0
@@ -449,6 +451,8 @@ class TraceRun:
             self,
             initial_message_count=len(initial_messages),
             tools_count=tools_count,
+            capture_prompts=self.capture_prompts,
+            capture_tool_results=self.capture_tool_results,
         )
 
 
@@ -461,11 +465,15 @@ class TraceHook(AgentHook):
         *,
         initial_message_count: int,
         tools_count: int,
+        capture_prompts: bool = False,
+        capture_tool_results: bool = False,
     ) -> None:
         super().__init__()
         self._trace = trace
         self._initial_message_count = initial_message_count
         self._tools_count = tools_count
+        self._capture_prompts = capture_prompts
+        self._capture_tool_results = capture_tool_results
         self._iteration_started_ns: dict[int, int] = {}
         self._model_started_ns: dict[int, int] = {}
         self._model_attempts: dict[int, int] = {}
@@ -578,7 +586,10 @@ class TraceHook(AgentHook):
             tool_names=tool_names,
             content_chars=len(response.content or ""),
             reasoning_chars=len(response.reasoning_content or ""),
-            content_preview=trace_value_preview(response.content, limit=720),
+            content_preview=trace_value_preview(
+                response.content,
+                limit=4_000 if self._capture_prompts else 720,
+            ),
             reasoning_preview=trace_value_preview(response.reasoning_content, limit=720),
             usage=usage,
             generation_ms=getattr(response, "generation_ms", None),
@@ -590,6 +601,9 @@ class TraceHook(AgentHook):
         attempt = self._model_attempts.get(context.iteration, 0) + 1
         self._model_attempts[context.iteration] = attempt
         self._model_started_ns[context.iteration] = time.monotonic_ns()
+        fields: dict[str, Any] = {}
+        if self._capture_prompts:
+            fields["messages_preview"] = trace_value_preview(context.messages, limit=8_000)
         self._trace.emit(
             "llm.request_started",
             status="running",
@@ -599,6 +613,7 @@ class TraceHook(AgentHook):
             message_count=context.model_message_count,
             context_window_tokens=context.context_window_tokens,
             tools_available=self._tools_count,
+            **fields,
         )
 
     async def on_model_retry(self, context: AgentHookContext, reason: str) -> None:
@@ -716,7 +731,10 @@ class TraceHook(AgentHook):
             call_id=call_id or None,
             tool_name=str(getattr(tool_call, "name", "") or "unknown"),
             argument_keys=argument_keys,
-            arguments_preview=trace_value_preview(argument_mapping, limit=480),
+            arguments_preview=trace_value_preview(
+                argument_mapping,
+                limit=4_000 if self._capture_tool_results else 480,
+            ),
             tool_capabilities=capabilities,
             read_only=tool_metadata["read_only"],
             concurrency_safe=tool_metadata["concurrency_safe"],
@@ -843,7 +861,10 @@ class TraceHook(AgentHook):
                     getattr(tool_call, "arguments", None),
                     limit=480,
                 ),
-                result_preview=trace_value_preview(result, limit=720),
+                result_preview=trace_value_preview(
+                    result,
+                    limit=4_000 if self._capture_tool_results else 720,
+                ),
                 result_type=type(result).__name__ if result is not None else None,
                 result_chars=len(str(result)) if result is not None else 0,
                 tool_capabilities=tool_metadata.get("tool_capabilities", []),
@@ -998,6 +1019,8 @@ class TraceStore:
         max_traces: int = _DEFAULT_MAX_TRACES,
         max_bytes: int = _DEFAULT_MAX_BYTES,
         event_callback: TraceEventCallback | None = None,
+        capture_prompts: bool = False,
+        capture_tool_results: bool = False,
     ) -> None:
         self.root = root.expanduser().resolve(strict=False)
         self.enabled = enabled
@@ -1005,6 +1028,8 @@ class TraceStore:
         self.max_traces = max(1, max_traces)
         self.max_bytes = max(0, max_bytes)
         self.event_callback = event_callback
+        self.capture_prompts = capture_prompts
+        self.capture_tool_results = capture_tool_results
         self._last_cleanup_at = 0.0
         self._active_trace_ids: set[str] = set()
 
@@ -1430,6 +1455,8 @@ class TraceStore:
             trace_file_id=trace_file_id,
             on_event=self.event_callback,
             on_finish=on_finish,
+            capture_prompts=self.capture_prompts,
+            capture_tool_results=self.capture_tool_results,
         )
         trace.emit("turn.accepted", status="accepted")
         if trace_file_id is not None:

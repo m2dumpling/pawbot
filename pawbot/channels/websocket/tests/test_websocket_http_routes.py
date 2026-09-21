@@ -3279,6 +3279,31 @@ async def test_recovery_mutation_uses_authenticated_websocket_action(bus: MagicM
 
 
 @pytest.mark.asyncio
+async def test_personalization_and_memory_mutations_reach_blackbox_router(
+    bus: MagicMock,
+) -> None:
+    blackbox_action = AsyncMock(return_value={"ok": True})
+    channel = _ch(bus)
+    channel.gateway.http.blackbox_action = blackbox_action
+
+    for action in (
+        "personalization.get",
+        "personalization.update",
+        "personalization.clear",
+        "memory.clear",
+    ):
+        response = await _webui_mutate(channel, action, {"enabled": True})
+        assert response.status_code == 200
+
+    assert [call.args[0] for call in blackbox_action.await_args_list] == [
+        "personalization.get",
+        "personalization.update",
+        "personalization.clear",
+        "memory.clear",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tool_approval_mutation_is_chat_bound_and_authenticated(bus: MagicMock) -> None:
     approval_action = AsyncMock(return_value={
         "resolved": True,

@@ -167,6 +167,11 @@ _WEBUI_MUTATION_PATHS = {
     "settings.image_generation.update": "/api/settings/image-generation/update",
     "settings.transcription.update": "/api/settings/transcription/update",
     "settings.network_safety.update": "/api/settings/network-safety/update",
+    "settings.observability.update": "/api/settings/observability/update",
+    "personalization.get": "/api/personalization/get",
+    "personalization.update": "/api/personalization/update",
+    "personalization.clear": "/api/personalization/clear",
+    "memory.clear": "/api/memory/clear",
     "settings.cli_app.install": "/api/settings/cli-apps/install",
     "settings.cli_app.update": "/api/settings/cli-apps/update",
     "settings.cli_app.uninstall": "/api/settings/cli-apps/uninstall",
@@ -497,7 +502,8 @@ class GatewayHTTPHandler:
             return True
         if re.match(
             r"^/api/(?:blackbox/(status|start|stop|list|detail|delete|replay|tokens)|"
-            r"memory/(list|remember|remember-note|promote|reject|forget))$",
+            r"memory/(list|remember|remember-note|promote|reject|forget|clear)|"
+            r"personalization/(get|update|clear))$",
             path,
         ):
             return True
@@ -832,9 +838,18 @@ class GatewayHTTPHandler:
             path,
         )
         if match is None:
-            memory_match = re.fullmatch(r"/api/memory/(list|remember|remember-note|promote|reject|forget)", path)
+            memory_match = re.fullmatch(
+                r"/api/memory/(list|remember|remember-note|promote|reject|forget|clear)",
+                path,
+            )
+            personalization_match = re.fullmatch(
+                r"/api/personalization/(get|update|clear)",
+                path,
+            )
             if memory_match is not None:
                 action = f"memory.{memory_match.group(1)}"
+            elif personalization_match is not None:
+                action = f"personalization.{personalization_match.group(1)}"
             else:
                 trace_match = re.fullmatch(r"/api/trace/(list|detail)", path)
                 if trace_match is None:
