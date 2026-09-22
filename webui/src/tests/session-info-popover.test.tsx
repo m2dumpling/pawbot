@@ -4,6 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
 import { setAppLanguage } from "@/i18n";
+import { copyTextToClipboard } from "@/lib/clipboard";
+
+vi.mock("@/lib/clipboard", () => ({
+  copyTextToClipboard: vi.fn(),
+}));
 
 function automationJob(
   nextRunAt = Date.now() + 3_600_000,
@@ -32,6 +37,7 @@ function automationsResponse(jobs: unknown[]) {
 describe("SessionInfoPopover", () => {
   beforeEach(async () => {
     await setAppLanguage("en");
+    vi.mocked(copyTextToClipboard).mockReset().mockResolvedValue(true);
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(automationsResponse([automationJob()])),
@@ -68,6 +74,43 @@ describe("SessionInfoPopover", () => {
     });
     expect(await screen.findByText("Morning check")).toBeInTheDocument();
     expect(screen.getByText("Check the project status")).toBeInTheDocument();
+  });
+
+  it("copies a native TUI continuation command for a WebSocket conversation", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <SessionInfoPopover
+        sessionKey="websocket:chat-1"
+        token="tok"
+        title="Release work"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Session details" }));
+    expect(await screen.findByText("Continue in TUI")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Copy TUI continuation command" }));
+
+    await waitFor(() => {
+      expect(copyTextToClipboard).toHaveBeenCalledWith("pawbot agent --session websocket:chat-1");
+    });
+    expect(screen.getByText("Command copied")).toBeInTheDocument();
+  });
+
+  it("does not offer a TUI continuation command for a non-WebSocket session", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <SessionInfoPopover
+        sessionKey="cli:direct"
+        token="tok"
+        title="Terminal-only task"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Session details" }));
+    await screen.findByText("Morning check");
+    expect(screen.queryByText("Continue in TUI")).not.toBeInTheDocument();
   });
 
   it("localizes the panel chrome in Simplified Chinese", async () => {

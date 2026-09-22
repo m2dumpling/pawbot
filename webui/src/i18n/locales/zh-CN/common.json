@@ -1593,6 +1593,11 @@
     "sessionInfo": {
       "title": "会话",
       "untitled": "未命名任务",
+      "continueInTui": "在 TUI 中继续",
+      "continuationHint": "让原生终端客户端连接到当前对话。",
+      "copyTuiCommand": "复制 TUI 继续命令",
+      "copied": "命令已复制",
+      "copyFailed": "无法复制命令。",
       "automations": "定时任务",
       "count": "{{count}}",
       "loading": "正在加载定时任务...",

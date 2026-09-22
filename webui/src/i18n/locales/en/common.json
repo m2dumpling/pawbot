@@ -1587,6 +1587,11 @@
     "sessionInfo": {
       "title": "Session",
       "untitled": "Untitled task",
+      "continueInTui": "Continue in TUI",
+      "continuationHint": "Attach the native terminal client to this conversation.",
+      "copyTuiCommand": "Copy TUI continuation command",
+      "copied": "Command copied",
+      "copyFailed": "Could not copy command.",
       "automations": "Scheduled tasks",
       "count": "{{count}}",
       "loading": "Loading scheduled tasks...",

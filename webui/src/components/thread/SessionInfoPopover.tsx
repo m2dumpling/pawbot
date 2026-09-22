@@ -1,9 +1,12 @@
 import { useState } from "react";
 import {
   CalendarClock,
+  Check,
   CircleAlert,
+  Copy,
   ListTodo,
   RefreshCcw,
+  Terminal,
 } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -16,6 +19,7 @@ import {
 } from "@/components/ui/popover";
 import { useSessionAutomationJobs } from "@/hooks/useSessionAutomationJobs";
 import { currentLocale } from "@/i18n";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { fmtDateTime } from "@/lib/format";
 import type { SessionAutomationJob } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -39,7 +43,19 @@ interface SessionInfoPopoverProps {
 export function SessionInfoPopover({ sessionKey, token, title }: SessionInfoPopoverProps) {
   const { t } = useTranslation("common");
   const [open, setOpen] = useState(false);
+  const [continuationCopyState, setContinuationCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const { jobs, loading, loadFailed, now } = useSessionAutomationJobs(open, token, sessionKey);
+  const tuiContinuationCommand = webSocketContinuationCommand(sessionKey);
+
+  const copyTuiContinuationCommand = () => {
+    if (!tuiContinuationCommand) return;
+    void copyTextToClipboard(tuiContinuationCommand).then((ok) => {
+      setContinuationCopyState(ok ? "copied" : "failed");
+      if (ok) {
+        window.setTimeout(() => setContinuationCopyState("idle"), 1_500);
+      }
+    });
+  };
   const automationContent = loading ? (
     <div className="flex items-center gap-2 rounded-floating bg-muted/45 px-3 py-3 text-[12.5px] text-muted-foreground">
       <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
@@ -92,6 +108,52 @@ export function SessionInfoPopover({ sessionKey, token, title }: SessionInfoPopo
             </div>
           </div>
 
+          {tuiContinuationCommand ? (
+            <>
+              <div className="h-px bg-border/45" />
+
+              <div className="space-y-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
+                  <span className="truncate text-[13px] font-medium text-foreground">
+                    {t("thread.sessionInfo.continueInTui")}
+                  </span>
+                </div>
+                <p className="text-[12px] leading-relaxed text-muted-foreground">
+                  {t("thread.sessionInfo.continuationHint")}
+                </p>
+                <div className="flex items-center gap-2 rounded-floating bg-muted/45 p-2">
+                  <code className="min-w-0 flex-1 truncate px-1 text-[11px] text-foreground/85">
+                    {tuiContinuationCommand}
+                  </code>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    onClick={copyTuiContinuationCommand}
+                    aria-label={t("thread.sessionInfo.copyTuiCommand")}
+                    title={t("thread.sessionInfo.copyTuiCommand")}
+                  >
+                    {continuationCopyState === "copied" ? (
+                      <Check className="h-3.5 w-3.5" aria-hidden />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                  </Button>
+                </div>
+                {continuationCopyState === "copied" ? (
+                  <p className="text-[11.5px] text-emerald-600 dark:text-emerald-400">
+                    {t("thread.sessionInfo.copied")}
+                  </p>
+                ) : continuationCopyState === "failed" ? (
+                  <p className="text-[11.5px] text-destructive">
+                    {t("thread.sessionInfo.copyFailed")}
+                  </p>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+
           <div className="h-px bg-border/45" />
 
           <div className="flex items-center justify-between gap-3">
@@ -111,6 +173,12 @@ export function SessionInfoPopover({ sessionKey, token, title }: SessionInfoPopo
       </PopoverContent>
     </Popover>
   );
+}
+
+function webSocketContinuationCommand(sessionKey: string): string | null {
+  return sessionKey.startsWith("websocket:")
+    ? `pawbot agent --session ${sessionKey}`
+    : null;
 }
 
 function AutomationRow({ job, now }: { job: SessionAutomationJob; now: number }) {
