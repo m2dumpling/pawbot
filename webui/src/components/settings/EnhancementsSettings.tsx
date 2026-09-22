@@ -27,7 +27,6 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { ExecutionTraceTimeline } from "@/components/thread/ExecutionTraceTimeline";
 import {
   Dialog,
   DialogContent,
@@ -51,8 +50,6 @@ import {
   blackboxTokens,
   taskEvalList,
   taskEvalRun,
-  traceDetail,
-  traceList,
   type BlackboxBreakpoint,
   type BlackboxCandidate,
   type BlackboxDetail,
@@ -62,14 +59,10 @@ import {
   type BlackboxTokens,
   type TaskEvalCase,
   type TaskEvalReport,
-  type TraceDetail,
-  type TraceSummary,
 } from "@/lib/api";
 import { useClient } from "@/providers/ClientProvider";
 
 type Translate = TFunction;
-type TraceFilter = "all" | "issues" | "slow";
-
 function tx(
   t: Translate,
   key: string,
@@ -197,6 +190,135 @@ function compactText(value: string, maxLength = 320, emptyValue = "Not recorded"
   return normalized.length > maxLength
     ? `${normalized.slice(0, maxLength).trimEnd()}…`
     : normalized;
+}
+
+type DifferenceField = {
+  path: string;
+  recorded: unknown;
+  replayed: unknown;
+};
+
+type ReplayDifference = {
+  title: string;
+  summary: string;
+  fields: DifferenceField[];
+  raw: string;
+};
+
+const MAX_PRESENTED_DIFFERENCE_FIELDS = 8;
+
+function parseDifferenceValue(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
+function collectChangedFields(
+  recorded: unknown,
+  replayed: unknown,
+  path = "",
+  fields: DifferenceField[] = [],
+): DifferenceField[] {
+  if (fields.length >= MAX_PRESENTED_DIFFERENCE_FIELDS) return fields;
+  if (Object.is(recorded, replayed)) return fields;
+  if (isRecord(recorded) && isRecord(replayed)) {
+    const keys = [...new Set([...Object.keys(recorded), ...Object.keys(replayed)])].sort();
+    for (const key of keys) {
+      collectChangedFields(recorded[key], replayed[key], path ? `${path}.${key}` : key, fields);
+      if (fields.length >= MAX_PRESENTED_DIFFERENCE_FIELDS) break;
+    }
+    return fields;
+  }
+  if (Array.isArray(recorded) && Array.isArray(replayed)) {
+    const count = Math.max(recorded.length, replayed.length);
+    for (let index = 0; index < count; index += 1) {
+      collectChangedFields(recorded[index], replayed[index], `${path}[${index}]`, fields);
+      if (fields.length >= MAX_PRESENTED_DIFFERENCE_FIELDS) break;
+    }
+    return fields;
+  }
+  fields.push({ path: path || "value", recorded, replayed });
+  return fields;
+}
+
+function presentReplayDifference(value: unknown, fallbackTitle: string): ReplayDifference {
+  const raw = typeof value === "string" ? value : formatJson(value);
+  const header = raw.split("\n", 1)[0]?.trim() || fallbackTitle;
+  const pair = /(?:^|\n)\s*recorded:\s*([\s\S]*?)\n\s*replayed:\s*([\s\S]*)$/i.exec(raw);
+  const count = /^(.*?count differs):\s*([^\s]+)\s*!=\s*([^\s]+)\s*$/i.exec(raw);
+  if (count) {
+    return {
+      title: count[1],
+      summary: `${count[2]} → ${count[3]}`,
+      fields: [{ path: "count", recorded: count[2], replayed: count[3] }],
+      raw,
+    };
+  }
+  if (pair) {
+    const recorded = parseDifferenceValue(pair[1]);
+    const replayed = parseDifferenceValue(pair[2]);
+    const fields = collectChangedFields(recorded, replayed);
+    return {
+      title: header.replace(/\s*differs:?$/i, ""),
+      summary: fields.length > 0 ? `${fields.length}${fields.length >= MAX_PRESENTED_DIFFERENCE_FIELDS ? "+" : ""} changed field(s)` : "Recorded and replayed values differ",
+      fields: fields.length > 0 ? fields : [{ path: "value", recorded, replayed }],
+      raw,
+    };
+  }
+  return { title: header, summary: "Recorded and replayed output differs", fields: [], raw };
+}
+
+function ReplayDifferenceCard({
+  difference,
+  category,
+}: {
+  difference: ReplayDifference;
+  category: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <article className="rounded-xl border border-amber-200 bg-amber-50/45 p-3 dark:border-amber-900 dark:bg-amber-950/15">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-amber-800 dark:text-amber-300">{category}</div>
+          <div className="mt-0.5 break-words text-sm font-semibold text-settings-foreground">{difference.title}</div>
+          <div className="mt-1 text-xs text-settings-muted">{difference.summary}</div>
+        </div>
+        <span className="rounded-full border border-amber-200 bg-background/70 px-2 py-0.5 text-[11px] text-amber-800 dark:border-amber-900 dark:text-amber-300">
+          {tx(t, "settings.enhancements.result.changed", "Changed")}
+        </span>
+      </div>
+      {difference.fields.length > 0 ? (
+        <div className="mt-3 space-y-2">
+          {difference.fields.map((field, index) => (
+            <div key={`${field.path}-${index}`} className="rounded-lg border border-settings-border bg-background/75 p-2.5">
+              <div className="mb-2 font-mono text-[11px] font-medium text-settings-muted">{field.path}</div>
+              <div className="grid gap-2 lg:grid-cols-2">
+                <div className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5 dark:border-rose-900 dark:bg-rose-950/20">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">{tx(t, "settings.enhancements.result.recorded", "Recorded")}</div>
+                  <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-4 text-settings-foreground">{compactText(displayValue(field.recorded), 480, "∅")}</pre>
+                </div>
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1.5 dark:border-emerald-900 dark:bg-emerald-950/20">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">{tx(t, "settings.enhancements.result.replayed", "Replayed")}</div>
+                  <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-4 text-settings-foreground">{compactText(displayValue(field.replayed), 480, "∅")}</pre>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <details className="mt-3">
+        <summary className="cursor-pointer text-[11px] text-settings-muted">
+          {tx(t, "settings.enhancements.result.rawDifference", "Show original difference text")}
+        </summary>
+        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-settings-hover/60 p-2 font-mono text-[11px] leading-5 text-settings-foreground">{difference.raw}</pre>
+      </details>
+    </article>
+  );
 }
 
 function formatDuration(value: unknown): string {
@@ -1344,10 +1466,6 @@ export function EnhancementsSettings() {
   const [evalCases, setEvalCases] = useState<TaskEvalCase[]>([]);
   const [evalReport, setEvalReport] = useState<TaskEvalReport | null>(null);
   const [tokens, setTokens] = useState<BlackboxTokens | null>(null);
-  const [traces, setTraces] = useState<TraceSummary[]>([]);
-  const [traceFilter, setTraceFilter] = useState<TraceFilter>("all");
-  const [selectedTrace, setSelectedTrace] = useState<TraceDetail | null>(null);
-  const [traceLoading, setTraceLoading] = useState<string | null>(null);
   const [replay, setReplay] = useState<BlackboxReplayResult | null>(null);
   const [breakpoint, setBreakpoint] = useState<BlackboxBreakpoint | null>(null);
   const [breakAt, setBreakAt] = useState<string>("");
@@ -1359,13 +1477,12 @@ export function EnhancementsSettings() {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [statusResult, recordingsResult, candidatesResult, tokensResult, tracesResult, evalResult] =
+    const [statusResult, recordingsResult, candidatesResult, tokensResult, evalResult] =
       await Promise.allSettled([
         blackboxStatus(client),
         blackboxList(client),
         blackboxCandidates(client),
         blackboxTokens(client, null),
-        traceList(client, { filter: traceFilter }),
         taskEvalList(client),
       ]);
 
@@ -1378,37 +1495,14 @@ export function EnhancementsSettings() {
     else errors.push(candidatesResult.reason instanceof Error ? candidatesResult.reason.message : String(candidatesResult.reason));
     if (tokensResult.status === "fulfilled") setTokens(tokensResult.value);
     else errors.push(tokensResult.reason instanceof Error ? tokensResult.reason.message : String(tokensResult.reason));
-    if (tracesResult.status === "fulfilled") setTraces(tracesResult.value.traces);
-    else errors.push(tracesResult.reason instanceof Error ? tracesResult.reason.message : String(tracesResult.reason));
     if (evalResult.status === "fulfilled") setEvalCases(evalResult.value.cases);
     else errors.push(evalResult.reason instanceof Error ? evalResult.reason.message : String(evalResult.reason));
     setError(errors.length > 0 ? errors[0] : null);
-  }, [client, traceFilter]);
+  }, [client]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  useEffect(() => {
-    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-    const subscribeTrace = client.onTrace;
-    if (typeof subscribeTrace !== "function") return;
-    const unsubscribe = subscribeTrace.call(client, (_chatId, trace) => {
-      const turnId = typeof trace.turn_id === "string" ? trace.turn_id : null;
-      if (turnId) {
-        setSelectedTrace((current) => {
-          if (current?.summary.turn_id !== turnId) return current;
-          return { ...current, events: [...current.events, trace] };
-        });
-      }
-      if (refreshTimer !== null) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => void refresh(), 250);
-    });
-    return () => {
-      unsubscribe();
-      if (refreshTimer !== null) clearTimeout(refreshTimer);
-    };
-  }, [client, refresh]);
 
   async function start() {
     setBusy("start");
@@ -1553,22 +1647,6 @@ export function EnhancementsSettings() {
     }
   }
 
-  async function openTrace(trace: TraceSummary) {
-    if (selectedTrace?.summary.id === trace.id) {
-      setSelectedTrace(null);
-      return;
-    }
-    setTraceLoading(trace.id);
-    setError(null);
-    try {
-      setSelectedTrace(await traceDetail(client, trace.id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTraceLoading(null);
-    }
-  }
-
   const usagePct =
     tokens && tokens.context_window_tokens > 0 && tokens.usage_ratio != null
       ? Math.round(tokens.usage_ratio * 1000) / 10
@@ -1592,27 +1670,7 @@ export function EnhancementsSettings() {
             <p className="mt-2 max-w-3xl text-sm leading-6 text-settings-foreground">
               {tx(t, "settings.enhancements.explainer", "See what each turn did, save a complete run when you need to reproduce a problem, then validate code changes offline.")}
             </p>
-            <div className="mt-5 grid gap-3 text-xs text-settings-foreground lg:grid-cols-3">
-              <div className="flex h-full flex-col rounded-xl border border-blue-200 border-l-4 bg-white/80 p-4 dark:border-blue-900 dark:bg-black/20">
-                <div className="flex items-center justify-between gap-2">
-                  <Gauge className="h-5 w-5 text-blue-600" />
-                  <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">
-                    {tx(t, "settings.enhancements.modes.automatic", "Automatic")}
-                  </span>
-                </div>
-                <div className="mt-3 font-semibold">{tx(t, "settings.enhancements.modes.liveTitle", "1. Live execution record")}</div>
-                <div className="mt-1 flex-1 text-settings-muted">{tx(t, "settings.enhancements.modes.liveDetail", "Every turn gets a lightweight record of stages, timing, and failures. Full prompts and tool outputs are not copied here.")}</div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="mt-3 w-fit px-0 text-xs"
-                  onClick={() => scrollToSection("execution-traces")}
-                >
-                  {tx(t, "settings.enhancements.modes.liveAction", "View live records")}
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </Button>
-              </div>
+            <div className="mt-5 grid gap-3 text-xs text-settings-foreground lg:grid-cols-2">
               <div className="flex h-full flex-col rounded-xl border border-violet-200 border-l-4 bg-white/80 p-4 dark:border-violet-900 dark:bg-black/20">
                 <div className="flex items-center justify-between gap-2">
                   <FileCheck2 className="h-5 w-5 text-violet-600" />
@@ -1620,7 +1678,7 @@ export function EnhancementsSettings() {
                     {tx(t, "settings.enhancements.modes.manual", "Manual")}
                   </span>
                 </div>
-                <div className="mt-3 font-semibold">{tx(t, "settings.enhancements.modes.sampleTitle", "2. Save a regression sample")}</div>
+                <div className="mt-3 font-semibold">{tx(t, "settings.enhancements.modes.sampleTitle", "1. Save a regression sample")}</div>
                 <div className="mt-1 flex-1 text-settings-muted">{tx(t, "settings.enhancements.modes.sampleDetail", "Keep the full request, model responses, tool calls, and tool results from every session until you stop.")}</div>
                 <Button
                   type="button"
@@ -1640,7 +1698,7 @@ export function EnhancementsSettings() {
                     {tx(t, "settings.enhancements.modes.offline", "Offline")}
                   </span>
                 </div>
-                <div className="mt-3 font-semibold">{tx(t, "settings.enhancements.modes.validationTitle", "3. Validate offline")}</div>
+                <div className="mt-3 font-semibold">{tx(t, "settings.enhancements.modes.validationTitle", "2. Validate offline")}</div>
                 <div className="mt-1 flex-1 text-settings-muted">{tx(t, "settings.enhancements.modes.validationDetail", "Use the saved responses and tool results to check the current orchestration without provider requests or real side effects.")}</div>
                 <Button
                   type="button"
@@ -1946,108 +2004,6 @@ export function EnhancementsSettings() {
         )}
       </section>
 
-      <section id="execution-traces" className="scroll-mt-4 rounded-xl border border-settings-border bg-settings-surface p-5">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-start gap-2">
-            <Gauge className="mt-0.5 h-5 w-5 text-settings-muted" />
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-base font-semibold text-settings-foreground">
-                  {tx(t, "settings.enhancements.trace.recentTitle", "Live execution records")}
-                </h3>
-                <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">
-                  {tx(t, "settings.enhancements.modes.automatic", "Automatic")}
-                </span>
-              </div>
-              <p className="mt-1 text-xs leading-5 text-settings-muted">
-                {tx(t, "settings.enhancements.trace.recentDescription", "A lightweight record is created automatically for every turn. It shows stages, timing, and failures without copying the full prompt or tool output.")}
-              </p>
-            </div>
-          </div>
-          <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={busy !== null}>
-            <RefreshCw className="h-4 w-4" />
-            {tx(t, "settings.enhancements.recording.refresh", "Refresh")}
-          </Button>
-        </div>
-        <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label={tx(t, "settings.enhancements.trace.filterLabel", "Trace filter")}>
-          {(["all", "issues", "slow"] as const).map((filter) => (
-            <Button
-              key={filter}
-              type="button"
-              variant={traceFilter === filter ? "secondary" : "ghost"}
-              size="sm"
-              onClick={() => setTraceFilter(filter)}
-              disabled={busy !== null}
-            >
-              {filter === "all"
-                ? tx(t, "settings.enhancements.trace.filterAll", "All")
-                : filter === "issues"
-                  ? tx(t, "settings.enhancements.trace.filterIssues", "Issues")
-                  : tx(t, "settings.enhancements.trace.filterSlow", "Slow (≥2s)")}
-            </Button>
-          ))}
-        </div>
-        {traces.length > 0 ? (
-          <div className="space-y-2">
-            {traces.map((trace) => {
-              const toolFailures = trace.tool_failure_count ?? 0;
-              const providerErrors = trace.provider_error_count ?? 0;
-              const uncertainSideEffects = trace.unknown_side_effect_count ?? 0;
-              const hasFailure = trace.failure_count > 0 || trace.status === "error" || trace.status === "cancelled";
-              const isActive = trace.status === "accepted" || trace.status === "running";
-              const issueSummary = [
-                toolFailures > 0
-                  ? tx(t, "settings.enhancements.trace.toolFailures", "{{count}} tool failures", { count: toolFailures })
-                  : "",
-                providerErrors > 0
-                  ? tx(t, "settings.enhancements.trace.providerErrors", "{{count}} model errors", { count: providerErrors })
-                  : "",
-                uncertainSideEffects > 0
-                  ? tx(t, "settings.enhancements.trace.unknownSideEffects", "{{count}} uncertain side effects", { count: uncertainSideEffects })
-                  : "",
-              ].filter(Boolean).join(" · ");
-              return (
-                <div key={trace.id} className="rounded-lg border border-settings-border">
-                  <button
-                    type="button"
-                    onClick={() => void openTrace(trace)}
-                    className="flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-settings-hover"
-                  >
-                    {hasFailure ? <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" /> : isActive ? <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-blue-600" /> : <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />}
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-medium text-settings-foreground">
-                        {trace.session_name || tx(t, "settings.enhancements.trace.unnamedSession", "Unnamed conversation")}
-                      </span>
-                      <span className="mt-1 block text-[11px] text-settings-muted">
-                        {trace.event_count} {tx(t, "settings.enhancements.trace.events", "events")} · {trace.tool_count} {tx(t, "settings.enhancements.trace.tools", "tools")} {trace.duration_ms != null ? ` · ${formatDuration(trace.duration_ms)}` : ""}
-                        {issueSummary ? ` · ${issueSummary}` : ""}
-                      </span>
-                    </span>
-                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${hasFailure ? "border-amber-200 bg-amber-50 text-amber-800" : isActive ? "border-blue-200 bg-blue-50 text-blue-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
-                      {hasFailure
-                        ? tx(t, "settings.enhancements.trace.needsAttention", "Needs attention")
-                        : isActive
-                          ? tx(t, "settings.enhancements.trace.running", "Running")
-                          : tx(t, "settings.enhancements.trace.completed", "Completed")}
-                    </span>
-                    {traceLoading === trace.id ? <Loader2 className="h-4 w-4 animate-spin text-settings-muted" /> : selectedTrace?.summary.id === trace.id ? <ChevronDown className="h-4 w-4 text-settings-muted" /> : <ChevronRight className="h-4 w-4 text-settings-muted" />}
-                  </button>
-                  {selectedTrace?.summary.id === trace.id ? (
-                    <div className="border-t border-settings-border bg-settings-hover/25 p-3">
-                      <ExecutionTraceTimeline events={selectedTrace.events} />
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="rounded-lg border border-dashed border-settings-border px-3 py-4 text-xs text-settings-muted">
-            {tx(t, "settings.enhancements.trace.empty", "No execution traces are available yet.")}
-          </div>
-        )}
-      </section>
-
       {replay ? (
         <section id="offline-validation" className="scroll-mt-4 rounded-xl border border-settings-border bg-settings-surface p-5">
           <div className="flex items-start gap-3">
@@ -2217,35 +2173,73 @@ export function EnhancementsSettings() {
                 </button>
                 {expandedTurn === row.turn_id ? (
                   <div>
-                    {row.diffs.length > 0 ? (
+                    {messageDiffs.length > 0 || traceDiffs.length > 0 ? (
                       <div className="border-t border-settings-border bg-settings-hover/50 p-3">
                         <div className="space-y-3">
                           {messageDiffs.length > 0 ? (
                             <div>
-                              <div className="mb-2 text-xs font-medium text-settings-muted">
+                              <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-settings-muted">
                                 {tx(t, "settings.enhancements.result.messageDifferenceTitle", "Message differences")}
+                                <span>{messageDiffs.length}</span>
                               </div>
                               <div className="flex flex-col gap-2">
-                                {messageDiffs.map((diff, diffIndex) => (
-                                  <pre key={diffIndex} className="whitespace-pre-wrap break-all font-mono text-xs text-settings-foreground">
-                                    {typeof diff === "string" ? diff : JSON.stringify(diff, null, 2)}
-                                  </pre>
+                                {messageDiffs.slice(0, 3).map((diff, diffIndex) => (
+                                  <ReplayDifferenceCard
+                                    key={diffIndex}
+                                    category={tx(t, "settings.enhancements.result.messageDifferenceTitle", "Message differences")}
+                                    difference={presentReplayDifference(diff, tx(t, "settings.enhancements.result.messageDifferenceTitle", "Message difference"))}
+                                  />
                                 ))}
                               </div>
+                              {messageDiffs.length > 3 ? (
+                                <details className="mt-2">
+                                  <summary className="cursor-pointer text-xs text-settings-muted">
+                                    {tx(t, "settings.enhancements.result.moreDifferences", "Show {{count}} more differences", { count: messageDiffs.length - 3 })}
+                                  </summary>
+                                  <div className="mt-2 flex flex-col gap-2">
+                                    {messageDiffs.slice(3).map((diff, diffIndex) => (
+                                      <ReplayDifferenceCard
+                                        key={diffIndex + 3}
+                                        category={tx(t, "settings.enhancements.result.messageDifferenceTitle", "Message differences")}
+                                        difference={presentReplayDifference(diff, tx(t, "settings.enhancements.result.messageDifferenceTitle", "Message difference"))}
+                                      />
+                                    ))}
+                                  </div>
+                                </details>
+                              ) : null}
                             </div>
                           ) : null}
                           {traceDiffs.length > 0 ? (
                             <div>
-                              <div className="mb-2 text-xs font-medium text-settings-muted">
+                              <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-settings-muted">
                                 {tx(t, "settings.enhancements.result.traceDifferenceTitle", "Execution trace differences")}
+                                <span>{traceDiffs.length}</span>
                               </div>
                               <div className="flex flex-col gap-2">
-                                {traceDiffs.map((diff, diffIndex) => (
-                                  <pre key={diffIndex} className="whitespace-pre-wrap break-all font-mono text-xs text-settings-foreground">
-                                    {typeof diff === "string" ? diff : JSON.stringify(diff, null, 2)}
-                                  </pre>
+                                {traceDiffs.slice(0, 3).map((diff, diffIndex) => (
+                                  <ReplayDifferenceCard
+                                    key={diffIndex}
+                                    category={tx(t, "settings.enhancements.result.traceDifferenceTitle", "Execution trace differences")}
+                                    difference={presentReplayDifference(diff, tx(t, "settings.enhancements.result.traceDifferenceTitle", "Execution trace difference"))}
+                                  />
                                 ))}
                               </div>
+                              {traceDiffs.length > 3 ? (
+                                <details className="mt-2">
+                                  <summary className="cursor-pointer text-xs text-settings-muted">
+                                    {tx(t, "settings.enhancements.result.moreDifferences", "Show {{count}} more differences", { count: traceDiffs.length - 3 })}
+                                  </summary>
+                                  <div className="mt-2 flex flex-col gap-2">
+                                    {traceDiffs.slice(3).map((diff, diffIndex) => (
+                                      <ReplayDifferenceCard
+                                        key={diffIndex + 3}
+                                        category={tx(t, "settings.enhancements.result.traceDifferenceTitle", "Execution trace differences")}
+                                        difference={presentReplayDifference(diff, tx(t, "settings.enhancements.result.traceDifferenceTitle", "Execution trace difference"))}
+                                      />
+                                    ))}
+                                  </div>
+                                </details>
+                              ) : null}
                             </div>
                           ) : null}
                         </div>

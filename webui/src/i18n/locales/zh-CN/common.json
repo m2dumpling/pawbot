@@ -112,7 +112,8 @@
       "apps": "工具箱",
       "automations": "定时任务",
       "skills": "指令包",
-      "enhancements": "执行与回归"
+      "enhancements": "执行与回归",
+      "live-execution": "实时执行记录"
     },
     "memory": {
         "title": "已确认记忆",
@@ -243,10 +244,10 @@
         "liveTitle": "1. 实时执行记录",
         "liveDetail": "每个回合自动留下阶段、模型与工具摘要、耗时和错误；完整内容仍只在原始记录中查看。",
         "liveAction": "查看实时记录",
-        "sampleTitle": "2. 保存回归样本",
+        "sampleTitle": "1. 保存回归样本",
         "sampleDetail": "从所有会话中保存完整请求、模型响应、工具调用和工具返回，直到你停止。",
         "sampleAction": "前往样本操作",
-        "validationTitle": "3. 离线验证",
+        "validationTitle": "2. 离线验证",
         "validationDetail": "使用样本里的响应和工具结果检查当前编排，不请求供应商，也不执行真实工具。",
         "validationAction": "选择样本"
       },
@@ -591,7 +592,17 @@
         "matched": "未发现编排差异",
         "differences": "发现 {{count}} 处差异",
         "differenceTitle": "当前结果与录制样本的不同之处",
-        "loading": "正在读取这个回合的执行过程…"
+        "loading": "正在读取这个回合的执行过程…",
+        "changed": "已变化",
+        "recorded": "录制时",
+        "replayed": "回放时",
+        "moreDifferences": "展开另外 {{count}} 处差异",
+        "rawDifference": "查看原始差异文本"
+      },
+      "liveExecution": {
+        "kicker": "本地可观测",
+        "title": "实时执行记录",
+        "description": "任务执行中或完成后查看本地执行记录：阶段、模型与工具摘要、耗时、错误和恢复事件都会按顺序展示。"
       },
       "original": {
         "success": "原执行正常完成",

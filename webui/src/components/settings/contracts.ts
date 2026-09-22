@@ -14,7 +14,8 @@ export type SettingsSectionKey =
   | "skills"
   | "runtime"
   | "advanced"
-  | "enhancements";
+  | "enhancements"
+  | "live-execution";
 
 type PendingRestartSection = "runtime" | "browser" | "image";
 export type PendingRestartSections = Record<PendingRestartSection, boolean>;

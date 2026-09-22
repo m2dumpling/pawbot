@@ -2,6 +2,7 @@ import { ChevronLeft, Loader2 } from "lucide-react";
 
 import { SkillsCatalogSettings } from "@/components/settings/SkillsCatalogSettings";
 import { EnhancementsSettings } from "@/components/settings/EnhancementsSettings";
+import { LiveExecutionSettings } from "@/components/settings/LiveExecutionSettings";
 import { PersonalizationSettings } from "@/components/settings/PersonalizationSettings";
 import { ImageGenerationSettings } from "@/components/settings/capabilities/ImageGenerationSettings";
 import { AdvancedSettings } from "@/components/settings/capabilities/SecuritySettings";
@@ -512,6 +513,8 @@ export function SettingsPage({
         );
       case "enhancements":
         return <EnhancementsSettings />;
+      case "live-execution":
+        return <LiveExecutionSettings />;
       default:
         return null;
     }

@@ -112,7 +112,8 @@
       "apps": "Toolbox",
       "automations": "Scheduled tasks",
       "skills": "Prompt packs",
-      "enhancements": "Execution & regression"
+      "enhancements": "Execution & regression",
+      "live-execution": "Live execution"
     },
     "memory": {
         "title": "Confirmed memory",
@@ -243,10 +244,10 @@
         "liveTitle": "1. Live execution record",
         "liveDetail": "Every turn records stages, model and tool previews, timing, and failures. Full values remain in the raw record.",
         "liveAction": "View live records",
-        "sampleTitle": "2. Save a regression sample",
+        "sampleTitle": "1. Save a regression sample",
         "sampleDetail": "Keep the full request, model responses, tool calls, and tool results from every session until you stop.",
         "sampleAction": "Open sample controls",
-        "validationTitle": "3. Validate offline",
+        "validationTitle": "2. Validate offline",
         "validationDetail": "Use the saved responses and tool results to check the current orchestration without provider requests or real side effects.",
         "validationAction": "Choose a sample"
       },
@@ -585,7 +586,17 @@
         "matched": "No orchestration difference found",
         "differences": "{{count}} difference(s) found",
         "differenceTitle": "Differences from the recording",
-        "loading": "Loading this turn's execution trace…"
+        "loading": "Loading this turn's execution trace…",
+        "changed": "Changed",
+        "recorded": "Recorded",
+        "replayed": "Replayed",
+        "moreDifferences": "Show {{count}} more differences",
+        "rawDifference": "Show original difference text"
+      },
+      "liveExecution": {
+        "kicker": "Local observability",
+        "title": "Live execution records",
+        "description": "Inspect local execution records while a task runs or after it completes. Records include stages, model and tool previews, timing, failures, and recovery events."
       },
       "original": {
         "success": "Completed without recorded errors",

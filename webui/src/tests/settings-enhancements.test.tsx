@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { EnhancementsSettings } from "@/components/settings/EnhancementsSettings";
+import { LiveExecutionSettings } from "@/components/settings/LiveExecutionSettings";
 import type { BlackboxDetail } from "@/lib/api";
 import { ClientProvider } from "@/providers/ClientProvider";
 import {
@@ -231,9 +232,9 @@ describe("Record & Replay inspection", () => {
           summary: "1/1 个回合未发现可观察差异",
           results: [{
             turn_id: "turn-1",
-            ok: true,
-            diffs: [],
-            message_diffs: [],
+            ok: false,
+            diffs: ["message[3] differs:\n recorded: {\"content\":\"旧答案\"}\n replayed: {\"content\":\"新答案\"}"],
+            message_diffs: ["message[3] differs:\n recorded: {\"content\":\"旧答案\"}\n replayed: {\"content\":\"新答案\"}"],
             trace_diffs: [],
             trace_comparable: true,
             summary: "未发现可观察差异",
@@ -259,13 +260,9 @@ describe("Record & Replay inspection", () => {
     );
 
     expect(screen.getByText("Agent execution & regression")).toBeInTheDocument();
-    expect(screen.getByText("1. Live execution record")).toBeInTheDocument();
-    expect(screen.getByText("2. Save a regression sample")).toBeInTheDocument();
-    expect(screen.getByText("3. Validate offline")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "View live records" })).toBeInTheDocument();
-
-    await user.click(await screen.findByRole("button", { name: /洛杉矶天气与本地新闻/ }));
-    expect((await screen.findAllByText(/build/)).length).toBeGreaterThan(0);
+    expect(screen.getByText("1. Save a regression sample")).toBeInTheDocument();
+    expect(screen.getByText("2. Validate offline")).toBeInTheDocument();
+    expect(screen.queryByText("Live execution records")).not.toBeInTheDocument();
 
     await user.click(await screen.findByRole("button", { name: "Validate offline" }));
     const turnButton = await screen.findByRole("button", { name: /Turn 1/ });
@@ -274,7 +271,11 @@ describe("Record & Replay inspection", () => {
     expect(await screen.findByText("Turn execution")).toBeInTheDocument();
     expect(screen.getByText("Replay benchmark")).toBeInTheDocument();
     expect(screen.getByText("Trace comparison · Consistent")).toBeInTheDocument();
-    expect(screen.getAllByText("Replay consistency · Consistent").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Replay consistency · 1 difference(s)").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("message[3]")).toBeInTheDocument();
+    expect(screen.getByText("content")).toBeInTheDocument();
+    expect(screen.getByText("旧答案")).toBeInTheDocument();
+    expect(screen.getByText("新答案")).toBeInTheDocument();
     expect(screen.getAllByText("Original execution · Completed without recorded errors").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("请检查示例文件")).toBeInTheDocument();
     expect(screen.getAllByText("Model thinking trace")).toHaveLength(2);
@@ -366,5 +367,54 @@ describe("Record & Replay inspection", () => {
     expect(screen.getAllByText("Original execution · Model request failed").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Model request failed")).toBeInTheDocument();
     expect(screen.getByText("HTTP 503 · kind=http · type=server_error · code=overloaded")).toBeInTheDocument();
+  });
+
+  it("keeps live Trace inspection on its own settings page", async () => {
+    requestMutationMock.mockImplementation(async (action: string) => {
+      if (action === "trace.list") {
+        return {
+          root: "/tmp/traces",
+          traces: [{
+            id: "websocket_test/trace.jsonl",
+            trace_id: "trace:test",
+            session_key: "websocket:test",
+            session_name: "正在执行的天气任务",
+            turn_id: "trace-test",
+            channel: "websocket",
+            chat_id: "test",
+            model: "demo-model",
+            provider: "fake",
+            status: "running",
+            duration_ms: 42,
+            event_count: 2,
+            tool_count: 1,
+            failure_count: 0,
+          }],
+        };
+      }
+      if (action === "trace.detail") {
+        return {
+          summary: { id: "websocket_test/trace.jsonl", turn_id: "trace-test" },
+          events: [{ event: "stage.completed", sequence: 1, stage: "build", status: "completed", duration_ms: 12 }],
+        };
+      }
+      throw new Error(`Unexpected mutation: ${action}`);
+    });
+
+    const user = userEvent.setup();
+    render(
+      <ClientProvider client={{ requestMutation: requestMutationMock } as never} token="tok">
+        <LiveExecutionSettings />
+      </ClientProvider>,
+    );
+
+    expect(await screen.findByText("Live execution records")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: /正在执行的天气任务/ }));
+    expect((await screen.findAllByText(/build/)).length).toBeGreaterThan(0);
+    expect(requestMutationMock).toHaveBeenCalledWith(
+      "trace.list",
+      expect.objectContaining({ filter: "all" }),
+      expect.any(Number),
+    );
   });
 });

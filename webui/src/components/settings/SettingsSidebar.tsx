@@ -45,6 +45,7 @@ const SETTINGS_NAV_ITEMS: Array<{ key: SettingsSectionKey; icon: LucideIcon; fal
   { key: "browser", icon: Globe2, fallback: "Web" },
   { key: "channels", icon: MessageCircle, fallback: "Channels" },
   { key: "enhancements", icon: Bug, fallback: "Record & Replay" },
+  { key: "live-execution", icon: Activity, fallback: "Live execution" },
 ];
 
 export function standaloneSectionTitle(section: SettingsSectionKey): string {

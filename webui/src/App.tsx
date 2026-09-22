@@ -171,6 +171,7 @@ const SETTINGS_SECTION_KEYS: SettingsSectionKey[] = [
   "runtime",
   "advanced",
   "enhancements",
+  "live-execution",
 ];
 
 function isSettingsSectionKey(value: string | null): value is SettingsSectionKey {
