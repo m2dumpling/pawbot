@@ -32,6 +32,7 @@ without another model request, another token bill, or real tool side effects.
 | Install the released package | [Quick install](#quick-install) |
 | Open the browser workspace | [WebUI](#webui) |
 | Run one request from a terminal | [CLI](#cli) |
+| Continue a browser conversation in a terminal | [Cross-client sessions](docs/usage.md#2-continue-a-conversation-across-webui-and-tui) |
 | Connect a chat app | [Channels](#channels-and-integrations) |
 | Understand the replay feature | [Record & Replay](#record--replay) |
 | Verify an AI-assisted code change | [Agent Harness Benchmark](#agent-harness-benchmark) |
@@ -279,6 +280,10 @@ Run one request and exit:
 ```bash
 uv run pawbot agent --message "Explain the top-level modules in this repository"
 ```
+
+WebUI and the native TUI can attach to the same `websocket:<chat-id>`
+conversation. The terminal command and the complete session-boundary rules are
+documented in the [usage guide](docs/usage.md#2-continue-a-conversation-across-webui-and-tui).
 
 Start the gateway directly when you want a long-running process:
 

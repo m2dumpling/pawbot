@@ -48,6 +48,63 @@ pawbot --help
 pawbot agent --help
 ```
 
+## 2. 在 WebUI 和 TUI 之间继续同一会话
+
+WebUI、Native TUI 和一次性 CLI 命令复用同一套 Agent Runtime、Provider 与本地 Session
+存储，但默认**不会**进入同一个对话：
+
+| 入口 | 默认 session | 是否显示在 WebUI 侧边栏 |
+|---|---|---|
+| WebUI | `websocket:<chat-id>` | 是 |
+| Native TUI | 新建一个 `websocket:<chat-id>` | 是 |
+| `pawbot agent --message ...` 或 `--classic` | `cli:direct` | 否 |
+
+WebUI 侧边栏有意只展示 WebSocket 会话。CLI、Slack 或其他通道的 Session 即使存放在同一套
+本地存储中，也没有可由浏览器安全恢复的 WebSocket 路由身份和浏览器 transcript，因此不会
+自动出现在侧边栏。
+
+### 在 Native TUI 中继续 WebUI 对话
+
+打开目标 WebUI 对话，从地址栏取得并解码 session key：
+
+```text
+#/chat/websocket%3Aabc123  →  websocket:abc123
+```
+
+然后带上这个 key 启动 TUI。后续工具需要继续在同一个项目中运行时，也应传入 WebUI 对话
+所选的工作区：
+
+```bash
+pawbot agent \
+  --session websocket:abc123 \
+  --workspace "/path/to/project"
+```
+
+TUI 中也可以通过 `/sessions` 搜索并切换已保存的 WebSocket 对话。WebUI 与 TUI 连到同一个
+session 后，双方都会看到已接受的用户消息和 Agent/Tool 流；Gateway 对每个已接受回合只执行一次。
+
+### 用一次 CLI 消息继续 WebUI 对话
+
+无需打开交互终端时，显式传入同一个 session key：
+
+```bash
+pawbot agent \
+  --session websocket:abc123 \
+  --workspace "/path/to/project" \
+  --message "继续刚才的任务，并验证修改后的文件。"
+```
+
+不要为 CLI 历史伪造 `websocket:` key。反过来，Native TUI 会有意拒绝 `telegram:123` 这类
+非 WebSocket selector；需要继续其他通道的会话时，使用：
+
+```bash
+pawbot agent --classic --session <channel:id>
+```
+
+`agents.defaults.unifiedSession` 是另一种面向单用户、多渠道的上下文模式：它会把后续执行
+上下文合并到 `unified:default`，但不会把既有 CLI 历史自动导入 WebUI 侧边栏。除非确实希望
+多个渠道共用同一段上下文，否则保持默认关闭。
+
 ### Linux 服务器上的 WebUI
 
 服务器默认绑定 `127.0.0.1`，服务器外部无法直接访问。推荐使用 SSH 隧道：

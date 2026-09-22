@@ -35,6 +35,67 @@ Run one request and exit:
 pawbot agent --message "Inspect this repository and summarize the Agent Loop"
 ```
 
+## 2. Continue a conversation across WebUI and TUI
+
+WebUI, the native TUI, and one-shot CLI commands share the same Agent Runtime,
+providers, and session store. They deliberately do **not** start in the same
+conversation by default:
+
+| Entry point | Default session | Shown in the WebUI sidebar |
+|---|---|---|
+| WebUI | `websocket:<chat-id>` | Yes |
+| Native TUI | A new `websocket:<chat-id>` | Yes |
+| `pawbot agent --message ...` or `--classic` | `cli:direct` | No |
+
+The WebUI sidebar intentionally lists WebSocket conversations only. A CLI,
+Slack, or other channel session may use the same local session store, but it
+does not have a browser transcript or a WebSocket routing identity that the
+sidebar can safely resume.
+
+### Continue a WebUI conversation in the native TUI
+
+Open the WebUI conversation and copy its session key from the URL:
+
+```text
+#/chat/websocket%3Aabc123  →  websocket:abc123
+```
+
+Then launch the TUI with that key. Use the same workspace that the WebUI
+conversation selected when its future tools should operate in that project.
+
+```bash
+pawbot agent \
+  --session websocket:abc123 \
+  --workspace "/path/to/project"
+```
+
+The TUI can also use `/sessions` to search and switch among existing WebSocket
+conversations. When WebUI and TUI attach to the same session, accepted messages
+and the resulting agent stream are shared; the Gateway executes each accepted
+turn once.
+
+### Send one terminal message into a WebUI conversation
+
+For a non-interactive follow-up, pass the same session key explicitly:
+
+```bash
+pawbot agent \
+  --session websocket:abc123 \
+  --workspace "/path/to/project" \
+  --message "Continue the previous task and verify the changed files."
+```
+
+Do not invent a `websocket:` key for a CLI conversation. Conversely, the native
+TUI intentionally refuses a non-WebSocket selector such as `telegram:123`; use
+`pawbot agent --classic --session <channel:id>` when you need to continue a
+conversation owned by another channel.
+
+`agents.defaults.unifiedSession` is a separate single-user, multi-channel
+context mode. It merges future execution context into `unified:default`; it
+does not turn existing CLI histories into browser-sidebar conversations. Leave
+it off unless you deliberately want messages from multiple channels to share
+one context.
+
 ### WebUI on a Linux server
 
 The server binds to `127.0.0.1` by default. Use an SSH tunnel:
