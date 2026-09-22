@@ -341,6 +341,7 @@
           "unknown": "未知阶段"
         },
         "iteration": "第 {{number}} 回合",
+        "comparisonIndex": "对比 #{{number}}",
         "stageCompleted": "阶段 · {{stage}}",
         "stageFailed": "阶段失败 · {{stage}}",
         "stageCancelled": "阶段已取消 · {{stage}}",
@@ -594,8 +595,13 @@
         "differenceTitle": "当前结果与录制样本的不同之处",
         "loading": "正在读取这个回合的执行过程…",
         "changed": "已变化",
+        "changedFields": "发生 {{count}} 个字段变化",
         "recorded": "录制时",
         "replayed": "回放时",
+        "onlyRecorded": "仅录制存在",
+        "onlyReplayed": "仅回放存在",
+        "unstructuredDifference": "录制值与回放值不同",
+        "locateTraceEvent": "定位原始事件",
         "moreDifferences": "展开另外 {{count}} 处差异",
         "rawDifference": "查看原始差异文本"
       },

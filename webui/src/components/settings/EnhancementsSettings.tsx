@@ -13,6 +13,7 @@ import {
   Gauge,
   Info,
   Loader2,
+  LocateFixed,
   Maximize2,
   MessageSquare,
   PauseCircle,
@@ -196,16 +197,145 @@ type DifferenceField = {
   path: string;
   recorded: unknown;
   replayed: unknown;
+  kind: "changed" | "added" | "removed";
 };
 
 type ReplayDifference = {
   title: string;
-  summary: string;
   fields: DifferenceField[];
   raw: string;
+  traceIndex: number | null;
 };
 
-const MAX_PRESENTED_DIFFERENCE_FIELDS = 8;
+class DisplayLiteralParser {
+  private index = 0;
+
+  constructor(private readonly source: string) {}
+
+  parse(): unknown {
+    const value = this.parseValue();
+    this.skipWhitespace();
+    if (this.index !== this.source.length) throw new Error("trailing input");
+    return value;
+  }
+
+  private peek(): string {
+    return this.source[this.index] ?? "";
+  }
+
+  private consume(expected?: string): string {
+    const value = this.peek();
+    if (expected && value !== expected) throw new Error(`expected ${expected}`);
+    this.index += 1;
+    return value;
+  }
+
+  private skipWhitespace(): void {
+    while (/\s/.test(this.peek())) this.index += 1;
+  }
+
+  private parseValue(): unknown {
+    this.skipWhitespace();
+    const current = this.peek();
+    if (current === "{") return this.parseObject();
+    if (current === "[") return this.parseArray();
+    if (current === "'" || current === '"') return this.parseString();
+    return this.parseAtom();
+  }
+
+  private parseObject(): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    this.consume("{");
+    this.skipWhitespace();
+    if (this.peek() === "}") {
+      this.consume();
+      return result;
+    }
+    while (this.index < this.source.length) {
+      const key = this.parseValue();
+      this.skipWhitespace();
+      this.consume(":");
+      result[String(key)] = this.parseValue();
+      this.skipWhitespace();
+      if (this.peek() === "}") {
+        this.consume();
+        return result;
+      }
+      this.consume(",");
+      this.skipWhitespace();
+    }
+    throw new Error("unterminated object");
+  }
+
+  private parseArray(): unknown[] {
+    const result: unknown[] = [];
+    this.consume("[");
+    this.skipWhitespace();
+    if (this.peek() === "]") {
+      this.consume();
+      return result;
+    }
+    while (this.index < this.source.length) {
+      result.push(this.parseValue());
+      this.skipWhitespace();
+      if (this.peek() === "]") {
+        this.consume();
+        return result;
+      }
+      this.consume(",");
+      this.skipWhitespace();
+    }
+    throw new Error("unterminated array");
+  }
+
+  private parseString(): string {
+    const quote = this.consume();
+    let result = "";
+    while (this.index < this.source.length) {
+      const current = this.consume();
+      if (current === quote) return result;
+      if (current !== "\\") {
+        result += current;
+        continue;
+      }
+      const escaped = this.consume();
+      const escapes: Record<string, string> = {
+        "\\": "\\",
+        "'": "'",
+        '"': '"',
+        b: "\b",
+        f: "\f",
+        n: "\n",
+        r: "\r",
+        t: "\t",
+      };
+      if (escaped === "u") {
+        const hex = this.source.slice(this.index, this.index + 4);
+        if (!/^[0-9a-fA-F]{4}$/.test(hex)) throw new Error("invalid unicode escape");
+        result += String.fromCharCode(Number.parseInt(hex, 16));
+        this.index += 4;
+      } else {
+        result += escapes[escaped] ?? escaped;
+      }
+    }
+    throw new Error("unterminated string");
+  }
+
+  private parseAtom(): unknown {
+    const start = this.index;
+    while (this.index < this.source.length && !/[\s,\]}]/.test(this.peek())) this.index += 1;
+    const value = this.source.slice(start, this.index);
+    if (value === "None" || value === "null") return null;
+    if (value === "True" || value === "true") return true;
+    if (value === "False" || value === "false") return false;
+    if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) {
+      const number = Number(value);
+      if (Number.isFinite(number)) return number;
+    }
+    if (!value) throw new Error("empty value");
+    return value;
+  }
+}
 
 function parseDifferenceValue(value: string): unknown {
   const trimmed = value.trim();
@@ -213,7 +343,11 @@ function parseDifferenceValue(value: string): unknown {
   try {
     return JSON.parse(trimmed);
   } catch {
-    return trimmed;
+    try {
+      return new DisplayLiteralParser(trimmed).parse();
+    } catch {
+      return trimmed;
+    }
   }
 }
 
@@ -223,61 +357,111 @@ function collectChangedFields(
   path = "",
   fields: DifferenceField[] = [],
 ): DifferenceField[] {
-  if (fields.length >= MAX_PRESENTED_DIFFERENCE_FIELDS) return fields;
   if (Object.is(recorded, replayed)) return fields;
   if (isRecord(recorded) && isRecord(replayed)) {
     const keys = [...new Set([...Object.keys(recorded), ...Object.keys(replayed)])].sort();
     for (const key of keys) {
-      collectChangedFields(recorded[key], replayed[key], path ? `${path}.${key}` : key, fields);
-      if (fields.length >= MAX_PRESENTED_DIFFERENCE_FIELDS) break;
+      const childPath = path ? `${path}.${key}` : key;
+      const hasRecorded = Object.prototype.hasOwnProperty.call(recorded, key);
+      const hasReplayed = Object.prototype.hasOwnProperty.call(replayed, key);
+      if (!hasRecorded || !hasReplayed) {
+        fields.push({
+          path: childPath,
+          recorded: hasRecorded ? recorded[key] : undefined,
+          replayed: hasReplayed ? replayed[key] : undefined,
+          kind: hasRecorded ? "removed" : "added",
+        });
+        continue;
+      }
+      collectChangedFields(recorded[key], replayed[key], childPath, fields);
     }
     return fields;
   }
   if (Array.isArray(recorded) && Array.isArray(replayed)) {
     const count = Math.max(recorded.length, replayed.length);
     for (let index = 0; index < count; index += 1) {
-      collectChangedFields(recorded[index], replayed[index], `${path}[${index}]`, fields);
-      if (fields.length >= MAX_PRESENTED_DIFFERENCE_FIELDS) break;
+      const childPath = `${path}[${index}]`;
+      const hasRecorded = index < recorded.length;
+      const hasReplayed = index < replayed.length;
+      if (!hasRecorded || !hasReplayed) {
+        fields.push({
+          path: childPath,
+          recorded: hasRecorded ? recorded[index] : undefined,
+          replayed: hasReplayed ? replayed[index] : undefined,
+          kind: hasRecorded ? "removed" : "added",
+        });
+        continue;
+      }
+      collectChangedFields(recorded[index], replayed[index], childPath, fields);
     }
     return fields;
   }
-  fields.push({ path: path || "value", recorded, replayed });
+  fields.push({ path: path || "value", recorded, replayed, kind: "changed" });
   return fields;
 }
 
 function presentReplayDifference(value: unknown, fallbackTitle: string): ReplayDifference {
   const raw = typeof value === "string" ? value : formatJson(value);
   const header = raw.split("\n", 1)[0]?.trim() || fallbackTitle;
+  const traceMatch = /^trace event\[(\d+)\]/i.exec(header);
+  const traceIndex = traceMatch ? Number(traceMatch[1]) : null;
   const pair = /(?:^|\n)\s*recorded:\s*([\s\S]*?)\n\s*replayed:\s*([\s\S]*)$/i.exec(raw);
-  const count = /^(.*?count differs):\s*([^\s]+)\s*!=\s*([^\s]+)\s*$/i.exec(raw);
-  if (count) {
-    return {
-      title: count[1],
-      summary: `${count[2]} → ${count[3]}`,
-      fields: [{ path: "count", recorded: count[2], replayed: count[3] }],
-      raw,
-    };
-  }
   if (pair) {
     const recorded = parseDifferenceValue(pair[1]);
     const replayed = parseDifferenceValue(pair[2]);
     const fields = collectChangedFields(recorded, replayed);
     return {
       title: header.replace(/\s*differs:?$/i, ""),
-      summary: fields.length > 0 ? `${fields.length}${fields.length >= MAX_PRESENTED_DIFFERENCE_FIELDS ? "+" : ""} changed field(s)` : "Recorded and replayed values differ",
-      fields: fields.length > 0 ? fields : [{ path: "value", recorded, replayed }],
+      fields: fields.length > 0 ? fields : [{ path: "value", recorded, replayed, kind: "changed" }],
       raw,
+      traceIndex,
     };
   }
-  return { title: header, summary: "Recorded and replayed output differs", fields: [], raw };
+  const count = /^(.*?count differs):\s*([^\s]+)\s*!=\s*([^\s]+)\s*$/i.exec(raw);
+  return {
+    title: count ? count[1] : header,
+    fields: count ? [{ path: "count", recorded: parseDifferenceValue(count[2]), replayed: parseDifferenceValue(count[3]), kind: "changed" }] : [],
+    raw,
+    traceIndex,
+  };
+}
+
+function mergeReplayDifferences(values: unknown[], fallbackTitle: string): ReplayDifference[] {
+  const grouped = new Map<string, ReplayDifference>();
+  for (const value of values) {
+    const difference = presentReplayDifference(value, fallbackTitle);
+    const key = difference.traceIndex === null
+      ? `message:${difference.title}`
+      : `trace:${difference.traceIndex}`;
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, difference);
+      continue;
+    }
+    const fields = [...existing.fields];
+    for (const field of difference.fields) {
+      const duplicate = fields.some((item) => item.path === field.path
+        && Object.is(item.recorded, field.recorded)
+        && Object.is(item.replayed, field.replayed));
+      if (!duplicate) fields.push(field);
+    }
+    grouped.set(key, {
+      ...existing,
+      fields,
+      raw: `${existing.raw}\n\n---\n\n${difference.raw}`,
+    });
+  }
+  return [...grouped.values()];
 }
 
 function ReplayDifferenceCard({
   difference,
   category,
+  onLocateTrace,
 }: {
   difference: ReplayDifference;
   category: string;
+  onLocateTrace?: (traceIndex: number) => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -286,17 +470,37 @@ function ReplayDifferenceCard({
         <div className="min-w-0">
           <div className="text-[11px] font-medium uppercase tracking-wide text-amber-800 dark:text-amber-300">{category}</div>
           <div className="mt-0.5 break-words text-sm font-semibold text-settings-foreground">{difference.title}</div>
-          <div className="mt-1 text-xs text-settings-muted">{difference.summary}</div>
+          <div className="mt-1 text-xs text-settings-muted">
+            {difference.fields.length > 0
+              ? tx(t, "settings.enhancements.result.changedFields", "{{count}} changed field(s)", { count: difference.fields.length })
+              : tx(t, "settings.enhancements.result.unstructuredDifference", "Recorded and replayed values differ")}
+          </div>
         </div>
-        <span className="rounded-full border border-amber-200 bg-background/70 px-2 py-0.5 text-[11px] text-amber-800 dark:border-amber-900 dark:text-amber-300">
-          {tx(t, "settings.enhancements.result.changed", "Changed")}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          {difference.traceIndex !== null ? (
+            <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 font-mono text-[11px] text-blue-800 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-200">
+              trace event[{difference.traceIndex}]
+            </span>
+          ) : null}
+          <span className="rounded-full border border-amber-200 bg-background/70 px-2 py-0.5 text-[11px] text-amber-800 dark:border-amber-900 dark:text-amber-300">
+            {tx(t, "settings.enhancements.result.changed", "Changed")}
+          </span>
+        </div>
       </div>
       {difference.fields.length > 0 ? (
         <div className="mt-3 space-y-2">
           {difference.fields.map((field, index) => (
             <div key={`${field.path}-${index}`} className="rounded-lg border border-settings-border bg-background/75 p-2.5">
-              <div className="mb-2 font-mono text-[11px] font-medium text-settings-muted">{field.path}</div>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="font-mono text-[11px] font-medium text-settings-muted">{field.path}</span>
+                {field.kind !== "changed" ? (
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200">
+                    {field.kind === "added"
+                      ? tx(t, "settings.enhancements.result.onlyReplayed", "Replay only")
+                      : tx(t, "settings.enhancements.result.onlyRecorded", "Recorded only")}
+                  </span>
+                ) : null}
+              </div>
               <div className="grid gap-2 lg:grid-cols-2">
                 <div className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5 dark:border-rose-900 dark:bg-rose-950/20">
                   <div className="text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">{tx(t, "settings.enhancements.result.recorded", "Recorded")}</div>
@@ -310,6 +514,16 @@ function ReplayDifferenceCard({
             </div>
           ))}
         </div>
+      ) : null}
+      {difference.traceIndex !== null && onLocateTrace ? (
+        <button
+          type="button"
+          className="mt-3 inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-800 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-200 dark:hover:bg-blue-950/40"
+          onClick={() => onLocateTrace(difference.traceIndex as number)}
+        >
+          <LocateFixed className="mr-1.5 h-3.5 w-3.5" />
+          {tx(t, "settings.enhancements.result.locateTraceEvent", "Locate original event")}
+        </button>
       ) : null}
       <details className="mt-3">
         <summary className="cursor-pointer text-[11px] text-settings-muted">
@@ -1132,23 +1346,87 @@ function structuredTraceDetails(event: Record<string, unknown>, t: Translate): R
   );
 }
 
-function StructuredTraceTimeline({ events }: { events: Array<Record<string, unknown>> }) {
+const TRACE_COMPARISON_EXCLUDED_PREFIXES = [
+  "stage.",
+  "context.",
+  "checkpoint.",
+  "recovery.",
+  "turn.",
+];
+
+function isComparableTraceEvent(event: Record<string, unknown>): boolean {
+  const name = String(event.event ?? "");
+  return Boolean(name) && !TRACE_COMPARISON_EXCLUDED_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
+function comparableTraceIndex(events: Array<Record<string, unknown>>, rawIndex: number): number | null {
+  let comparisonIndex = 0;
+  for (let index = 0; index < events.length; index += 1) {
+    if (!isComparableTraceEvent(events[index])) continue;
+    if (index === rawIndex) return comparisonIndex;
+    comparisonIndex += 1;
+  }
+  return null;
+}
+
+function traceEventAnchorId(turnId: string, comparisonIndex: number): string {
+  return `replay-trace-event-${encodeURIComponent(turnId)}-${comparisonIndex}`;
+}
+
+function locateTraceEvent(turnId: string, comparisonIndex: number): void {
+  const element = document.getElementById(traceEventAnchorId(turnId, comparisonIndex));
+  if (!element) return;
+  if (element instanceof HTMLDetailsElement) element.open = true;
+  if (typeof element.scrollIntoView === "function") {
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
+function StructuredTraceTimeline({
+  events,
+  turnId,
+  highlightedCompareIndices,
+}: {
+  events: Array<Record<string, unknown>>;
+  turnId: string;
+  highlightedCompareIndices?: ReadonlySet<number>;
+}) {
   const { t } = useTranslation();
-  const visibleEvents = [...events]
-    .filter((event) => !["turn.accepted", "agent.started", "stage.started", "iteration.started"].includes(String(event.event ?? "")))
-    .sort((left, right) => Number(left.sequence ?? 0) - Number(right.sequence ?? 0));
+  const visibleEvents = events
+    .map((event, rawIndex) => ({
+      event,
+      rawIndex,
+      comparisonIndex: comparableTraceIndex(events, rawIndex),
+    }))
+    .filter(({ event }) => !["turn.accepted", "agent.started", "stage.started", "iteration.started"].includes(String(event.event ?? "")))
+    .sort((left, right) => Number(left.event.sequence ?? 0) - Number(right.event.sequence ?? 0));
   return (
     <div className="space-y-2">
-      {visibleEvents.map((event, index) => {
+      {visibleEvents.map(({ event, rawIndex, comparisonIndex }) => {
         const duration = Number(event.duration_ms);
         const hasDuration = Number.isFinite(duration) && duration >= 0;
+        const isHighlighted = comparisonIndex !== null && highlightedCompareIndices?.has(comparisonIndex);
+        const anchorId = comparisonIndex !== null
+          ? traceEventAnchorId(turnId, comparisonIndex)
+          : `replay-trace-raw-event-${encodeURIComponent(turnId)}-${rawIndex}`;
         return (
-          <details key={`${String(event.event ?? "event")}-${String(event.sequence ?? index)}`} className={`rounded-lg border ${structuredTraceTone(event)}`}>
+          <details
+            id={anchorId}
+            key={`${String(event.event ?? "event")}-${String(event.sequence ?? rawIndex)}`}
+            className={`rounded-lg border ${structuredTraceTone(event)} ${isHighlighted ? "ring-2 ring-amber-400 ring-offset-1" : ""}`}
+          >
             <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-xs [&::-webkit-details-marker]:hidden">
               {structuredTraceIcon(event)}
               <span className="min-w-0 flex-1 font-medium text-settings-foreground">
                 {structuredTraceLabel(event, t)}
               </span>
+              {comparisonIndex !== null ? (
+                <span className={`shrink-0 rounded-full px-2 py-0.5 font-mono text-[11px] ${isHighlighted
+                  ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                  : "bg-background/70 text-settings-muted"}`}>
+                  {tx(t, "settings.enhancements.trace.comparisonIndex", "Compare #{{number}}", { number: comparisonIndex })}
+                </span>
+              ) : null}
               {hasDuration ? <span className="shrink-0 font-mono text-[11px] text-settings-muted">{formatDuration(duration)}</span> : null}
               <span className="shrink-0 rounded-full bg-background/70 px-2 py-0.5 text-[11px] text-settings-muted">
                 {structuredTraceStatus(event, t)}
@@ -1173,11 +1451,13 @@ function ReplayTurnSummary({
   detail,
   replayOk,
   replayDiffCount,
+  highlightedTraceIndices,
   onFullscreen,
 }: {
   detail: BlackboxDetail;
   replayOk: boolean;
   replayDiffCount: number;
+  highlightedTraceIndices?: number[];
   onFullscreen?: () => void;
 }) {
   const { t } = useTranslation();
@@ -1354,7 +1634,11 @@ function ReplayTurnSummary({
         </div>
         <div className="mt-3 space-y-2">
           {traceEvents.length > 0 ? (
-            <StructuredTraceTimeline events={traceEvents} />
+            <StructuredTraceTimeline
+              events={traceEvents}
+              turnId={detail.turn_id}
+              highlightedCompareIndices={new Set(highlightedTraceIndices ?? [])}
+            />
           ) : detail.events.length > 0 ? detail.events.map((event, index) => (
             <ReplayTimelineEvent key={`${String(event.kind ?? "event")}-${index}`} event={event} index={index} />
           )) : (
@@ -2104,6 +2388,14 @@ export function EnhancementsSettings() {
             {replay.results.map((row, index) => {
               const messageDiffs = Array.isArray(row.message_diffs) ? row.message_diffs : row.diffs;
               const traceDiffs = Array.isArray(row.trace_diffs) ? row.trace_diffs : [];
+              const messageDifferences = mergeReplayDifferences(
+                messageDiffs,
+                tx(t, "settings.enhancements.result.messageDifferenceTitle", "Message difference"),
+              );
+              const traceDifferences = mergeReplayDifferences(
+                traceDiffs,
+                tx(t, "settings.enhancements.result.traceDifferenceTitle", "Execution trace difference"),
+              );
               const traceChecked = row.trace_comparable === true;
               return (
               <div key={row.turn_id} className="rounded-lg border border-settings-border">
@@ -2173,35 +2465,35 @@ export function EnhancementsSettings() {
                 </button>
                 {expandedTurn === row.turn_id ? (
                   <div>
-                    {messageDiffs.length > 0 || traceDiffs.length > 0 ? (
+                    {messageDifferences.length > 0 || traceDifferences.length > 0 ? (
                       <div className="border-t border-settings-border bg-settings-hover/50 p-3">
                         <div className="space-y-3">
-                          {messageDiffs.length > 0 ? (
+                          {messageDifferences.length > 0 ? (
                             <div>
                               <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-settings-muted">
                                 {tx(t, "settings.enhancements.result.messageDifferenceTitle", "Message differences")}
-                                <span>{messageDiffs.length}</span>
+                                <span>{messageDifferences.length}</span>
                               </div>
                               <div className="flex flex-col gap-2">
-                                {messageDiffs.slice(0, 3).map((diff, diffIndex) => (
+                                {messageDifferences.slice(0, 3).map((difference, diffIndex) => (
                                   <ReplayDifferenceCard
                                     key={diffIndex}
                                     category={tx(t, "settings.enhancements.result.messageDifferenceTitle", "Message differences")}
-                                    difference={presentReplayDifference(diff, tx(t, "settings.enhancements.result.messageDifferenceTitle", "Message difference"))}
+                                    difference={difference}
                                   />
                                 ))}
                               </div>
-                              {messageDiffs.length > 3 ? (
+                              {messageDifferences.length > 3 ? (
                                 <details className="mt-2">
                                   <summary className="cursor-pointer text-xs text-settings-muted">
-                                    {tx(t, "settings.enhancements.result.moreDifferences", "Show {{count}} more differences", { count: messageDiffs.length - 3 })}
+                                    {tx(t, "settings.enhancements.result.moreDifferences", "Show {{count}} more differences", { count: messageDifferences.length - 3 })}
                                   </summary>
                                   <div className="mt-2 flex flex-col gap-2">
-                                    {messageDiffs.slice(3).map((diff, diffIndex) => (
+                                    {messageDifferences.slice(3).map((difference, diffIndex) => (
                                       <ReplayDifferenceCard
                                         key={diffIndex + 3}
                                         category={tx(t, "settings.enhancements.result.messageDifferenceTitle", "Message differences")}
-                                        difference={presentReplayDifference(diff, tx(t, "settings.enhancements.result.messageDifferenceTitle", "Message difference"))}
+                                        difference={difference}
                                       />
                                     ))}
                                   </div>
@@ -2209,32 +2501,34 @@ export function EnhancementsSettings() {
                               ) : null}
                             </div>
                           ) : null}
-                          {traceDiffs.length > 0 ? (
+                          {traceDifferences.length > 0 ? (
                             <div>
                               <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-settings-muted">
                                 {tx(t, "settings.enhancements.result.traceDifferenceTitle", "Execution trace differences")}
-                                <span>{traceDiffs.length}</span>
+                                <span>{traceDifferences.length}</span>
                               </div>
                               <div className="flex flex-col gap-2">
-                                {traceDiffs.slice(0, 3).map((diff, diffIndex) => (
+                                {traceDifferences.slice(0, 3).map((difference, diffIndex) => (
                                   <ReplayDifferenceCard
                                     key={diffIndex}
                                     category={tx(t, "settings.enhancements.result.traceDifferenceTitle", "Execution trace differences")}
-                                    difference={presentReplayDifference(diff, tx(t, "settings.enhancements.result.traceDifferenceTitle", "Execution trace difference"))}
+                                    difference={difference}
+                                    onLocateTrace={(traceIndex) => locateTraceEvent(row.turn_id, traceIndex)}
                                   />
                                 ))}
                               </div>
-                              {traceDiffs.length > 3 ? (
+                              {traceDifferences.length > 3 ? (
                                 <details className="mt-2">
                                   <summary className="cursor-pointer text-xs text-settings-muted">
-                                    {tx(t, "settings.enhancements.result.moreDifferences", "Show {{count}} more differences", { count: traceDiffs.length - 3 })}
+                                    {tx(t, "settings.enhancements.result.moreDifferences", "Show {{count}} more differences", { count: traceDifferences.length - 3 })}
                                   </summary>
                                   <div className="mt-2 flex flex-col gap-2">
-                                    {traceDiffs.slice(3).map((diff, diffIndex) => (
+                                    {traceDifferences.slice(3).map((difference, diffIndex) => (
                                       <ReplayDifferenceCard
                                         key={diffIndex + 3}
                                         category={tx(t, "settings.enhancements.result.traceDifferenceTitle", "Execution trace differences")}
-                                        difference={presentReplayDifference(diff, tx(t, "settings.enhancements.result.traceDifferenceTitle", "Execution trace difference"))}
+                                        difference={difference}
+                                        onLocateTrace={(traceIndex) => locateTraceEvent(row.turn_id, traceIndex)}
                                       />
                                     ))}
                                   </div>
@@ -2250,6 +2544,9 @@ export function EnhancementsSettings() {
                         detail={detailByTurn[row.turn_id]}
                         replayOk={row.ok}
                         replayDiffCount={row.diffs.length}
+                        highlightedTraceIndices={traceDifferences
+                          .map((difference) => difference.traceIndex)
+                          .filter((traceIndex): traceIndex is number => traceIndex !== null)}
                         onFullscreen={() => setFullscreenDetail(detailByTurn[row.turn_id])}
                       />
                     ) : detailLoading === row.turn_id ? (

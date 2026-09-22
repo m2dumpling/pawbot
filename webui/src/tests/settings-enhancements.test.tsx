@@ -290,6 +290,112 @@ describe("Record & Replay inspection", () => {
     await waitFor(() => expect(screen.getByText("turns.jsonl · kind=turn")).toBeInTheDocument());
   });
 
+  it("shows exact nested trace fields and locates the comparable event", async () => {
+    const traceDifference = [
+      "trace event[8] differs:",
+      "  recorded: {'event': 'tool.finished', 'tool_name': 'web_search', 'tool_outcome': {'side_effect': 'not_started', 'duration_ms': 6237}}",
+      "  replayed: {'event': 'tool.finished', 'tool_name': 'web_search', 'tool_outcome': {'side_effect': 'not_executed', 'duration_ms': 5}}",
+    ].join("\n");
+    const traceDetail: BlackboxDetail = {
+      ...detail,
+      turn_id: "turn-trace-diff",
+      trace_events: Array.from({ length: 9 }, (_, index) => ({
+        event: "tool.finished",
+        sequence: index,
+        iteration: 0,
+        tool_name: index === 8 ? "web_search" : "demo_tool",
+        status: "succeeded",
+      })),
+    };
+    requestMutationMock.mockImplementation(async (action: string) => {
+      if (action === "blackbox.status") {
+        return {
+          recording: false,
+          directory: "",
+          model: "demo-model",
+          context_window_tokens: 128000,
+          tool_count: 1,
+        };
+      }
+      if (action === "blackbox.list") {
+        return {
+          root: "/tmp/blackbox",
+          recordings: [{
+            directory: "/tmp/blackbox/trace-diff",
+            name: "trace-diff",
+            turns: 1,
+            status: "ready",
+            message: "记录完整",
+          }],
+        };
+      }
+      if (action === "blackbox.tokens") {
+        return {
+          estimated_tokens: 100,
+          context_window_tokens: 128000,
+          usage_ratio: 0.01,
+          message_count: 1,
+          tool_count: 1,
+          model: "demo-model",
+        };
+      }
+      if (action === "blackbox.replay") {
+        return {
+          directory: "/tmp/blackbox/trace-diff",
+          total_turns: 1,
+          deterministic_turns: 0,
+          all_deterministic: false,
+          original_issue_turns: 0,
+          original_failed_tool_calls: 0,
+          original_provider_errors: 0,
+          original_unknown_side_effects: 0,
+          trace_comparable_turns: 1,
+          trace_diff_turns: 1,
+          summary: "发现 1 处轨迹差异",
+          results: [{
+            turn_id: "turn-trace-diff",
+            ok: false,
+            diffs: [traceDifference],
+            message_diffs: [],
+            trace_diffs: [traceDifference],
+            trace_comparable: true,
+            summary: "发现轨迹差异",
+            original_execution: {
+              status: "success",
+              ok: true,
+              failed_tool_count: 0,
+              provider_error_count: 0,
+              unknown_side_effect_count: 0,
+            },
+          }],
+        };
+      }
+      if (action === "blackbox.detail") return traceDetail;
+      throw new Error(`Unexpected mutation: ${action}`);
+    });
+
+    const user = userEvent.setup();
+    render(
+      <ClientProvider client={{ requestMutation: requestMutationMock } as never} token="tok">
+        <EnhancementsSettings />
+      </ClientProvider>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Validate offline" }));
+    await user.click(await screen.findByRole("button", { name: /Turn 1/ }));
+
+    expect(screen.getByText("tool_outcome.side_effect")).toBeInTheDocument();
+    expect(screen.getByText("tool_outcome.duration_ms")).toBeInTheDocument();
+    expect(screen.getByText("not_started")).toBeInTheDocument();
+    expect(screen.getByText("not_executed")).toBeInTheDocument();
+    expect(screen.getByText("6237")).toBeInTheDocument();
+    expect(screen.getAllByText("trace event[8]").length).toBeGreaterThan(0);
+    expect(screen.getByText("Compare #8")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Locate original event" }));
+    expect(document.getElementById("replay-trace-event-turn-trace-diff-8")).toHaveAttribute("open");
+  });
+
   it("surfaces provider failures separately from a consistent replay", async () => {
     requestMutationMock.mockImplementation(async (action: string) => {
       if (action === "blackbox.status") {

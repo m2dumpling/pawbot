@@ -341,6 +341,7 @@
           "unknown": "unknown stage"
         },
         "iteration": "Round {{number}}",
+        "comparisonIndex": "Compare #{{number}}",
         "stageCompleted": "Stage · {{stage}}",
         "stageFailed": "Stage failed · {{stage}}",
         "stageCancelled": "Stage cancelled · {{stage}}",
@@ -588,8 +589,13 @@
         "differenceTitle": "Differences from the recording",
         "loading": "Loading this turn's execution trace…",
         "changed": "Changed",
+        "changedFields": "{{count}} changed field(s)",
         "recorded": "Recorded",
         "replayed": "Replayed",
+        "onlyRecorded": "Recorded only",
+        "onlyReplayed": "Replay only",
+        "unstructuredDifference": "Recorded and replayed values differ",
+        "locateTraceEvent": "Locate original event",
         "moreDifferences": "Show {{count}} more differences",
         "rawDifference": "Show original difference text"
       },
