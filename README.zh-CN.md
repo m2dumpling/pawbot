@@ -31,6 +31,7 @@ pawbot 最适合 Agent 开发者的能力是 **Record & Replay（录制与回放
 | 安装已发布版本 | [快速安装](#快速安装) |
 | 打开浏览器工作台 | [WebUI](#webui) |
 | 在终端执行一次请求 | [CLI](#cli) |
+| 在终端继续浏览器对话 | [跨端继续会话](docs/usage.zh-CN.md#2-在-webui-和-tui-之间继续同一会话) |
 | 接入聊天应用 | [通道与集成](#通道与集成) |
 | 了解回放能力 | [Record & Replay](#record--replay录制与回放) |
 | 验证 AI 修改后的代码 | [Agent Harness Benchmark](#agent-harness-benchmark) |
@@ -256,6 +257,9 @@ ssh -N -L 8765:127.0.0.1:8765 <用户>@<服务器>
 ```bash
 uv run pawbot agent --message "解释这个仓库的顶层模块"
 ```
+
+WebUI 和 Native TUI 可以连接同一个 `websocket:<chat-id>` 会话。具体命令和
+会话隔离边界见[使用指南](docs/usage.zh-CN.md#2-在-webui-和-tui-之间继续同一会话)。
 
 如果要让 Gateway 常驻后台，请执行：
 
