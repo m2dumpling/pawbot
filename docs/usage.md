@@ -1,6 +1,6 @@
 # pawbot Usage Guide
 
-This guide corresponds to `v0.6.5`.
+This guide corresponds to the planned `v0.7.0` release. Live model evaluation and optional OTLP setup are documented in the [Agent evaluation and observability guide](agent-evaluation-observability.md).
 
 This guide explains how to use the released Pawbot features from the CLI and WebUI: Trace, the rolling replay buffer, Record & Replay, TaskContract, the Task Eval Set, and the Agent Harness.
 

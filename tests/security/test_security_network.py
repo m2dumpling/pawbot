@@ -6,9 +6,12 @@ import ipaddress
 import socket
 from unittest.mock import patch
 
+import httpx2
 import pytest
 
+import pawbot.security.network as network
 from pawbot.security.network import (
+    PinnedDNSAsyncTransport2,
     configure_ssrf_whitelist,
     contains_internal_url,
     env_proxy_applies_to_url,
@@ -263,6 +266,62 @@ def test_env_proxy_helpers_respect_no_proxy(monkeypatch):
     mounts = httpx_env_proxy_mounts()
     assert any(transport is None for transport in mounts.values())
     assert any(transport is not None for transport in mounts.values())
+
+
+@pytest.mark.asyncio
+async def test_httpx2_pinned_transport_validates_and_forwards_safe_urls(monkeypatch) -> None:
+    requests: list[str] = []
+
+    class InnerTransport(httpx2.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+            requests.append(str(request.url))
+            return httpx2.Response(200, request=request)
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        network,
+        "resolve_url_target",
+        lambda _url, **_kwargs: (True, "", ("93.184.216.34",)),
+    )
+    monkeypatch.setattr(network, "pin_resolved_url_dns", lambda *_args: _null_context())
+    transport = PinnedDNSAsyncTransport2(inner=InnerTransport())
+
+    response = await transport.handle_async_request(
+        httpx2.Request("GET", "https://example.test/resource")
+    )
+
+    assert response.status_code == 200
+    assert requests == ["https://example.test/resource"]
+
+
+@pytest.mark.asyncio
+async def test_httpx2_pinned_transport_blocks_unsafe_urls_before_network(monkeypatch) -> None:
+    class InnerTransport(httpx2.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+            raise AssertionError("blocked URLs must not reach the transport")
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        network,
+        "resolve_url_target",
+        lambda _url, **_kwargs: (False, "private address", ()),
+    )
+    transport = PinnedDNSAsyncTransport2(inner=InnerTransport())
+
+    with pytest.raises(httpx2.RequestError, match="private address"):
+        await transport.handle_async_request(
+            httpx2.Request("GET", "https://metadata.internal/")
+        )
+
+
+def _null_context():
+    from contextlib import nullcontext
+
+    return nullcontext()
 
 
 # ---------------------------------------------------------------------------

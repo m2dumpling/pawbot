@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -95,6 +96,41 @@ async def test_trace_records_lifecycle_without_raw_payloads(tmp_path: Path) -> N
     summary, _ = store.detail("websocket_chat-1/websocket_chat-1_turn-1.jsonl")
     assert summary["tool_failure_count"] == 1
     assert summary["provider_error_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_trace_reports_prompt_estimate_source_without_prompt_text(tmp_path: Path) -> None:
+    store = TraceStore(tmp_path / "traces")
+    trace = store.start_turn(
+        session_key="cli:token-estimate",
+        turn_id="turn-token-estimate",
+        channel="cli",
+        chat_id="direct",
+        model="test-model",
+    )
+    assert trace is not None
+    counter = SimpleNamespace(
+        estimate_prompt_tokens=lambda messages, tools, model: (321, "test-provider-counter")
+    )
+    hook = trace.hook(
+        initial_messages=[{"role": "user", "content": "private prompt text"}],
+        tools_count=1,
+        token_counter=counter,
+        tool_definitions=[{"type": "function", "function": {"name": "lookup"}}],
+    )
+
+    await hook.on_model_request_started(AgentHookContext(
+        iteration=0,
+        messages=[{"role": "user", "content": "private prompt text"}],
+        model="test-model",
+    ))
+    trace.finish(status="completed", stop_reason="completed")
+
+    _summary, events = store.detail("cli_token-estimate/turn-token-estimate.jsonl")
+    request = next(event for event in events if event["event"] == "llm.request_started")
+    assert request["estimated_prompt_tokens"] == 321
+    assert request["token_estimation_source"] == "test-provider-counter"
+    assert "private prompt text" not in json.dumps(request, ensure_ascii=False)
 
 
 @pytest.mark.asyncio

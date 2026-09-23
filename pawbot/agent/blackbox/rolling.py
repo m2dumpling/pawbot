@@ -436,5 +436,63 @@ class RollingBlackboxController:
         write_json_atomic(candidate_path, candidate_mapping)
         return case
 
+    def export_candidate_as_live_eval_case(
+        self,
+        candidate_id: str,
+        *,
+        case_payload: dict[str, Any],
+        review_reference: str,
+    ) -> dict[str, Any]:
+        """Export a human-reviewed, sanitized standalone live EvalCase.
+
+        The recording is never copied into the case file. The reviewer supplies
+        the redacted task, fixture, and oracle explicitly; the raw candidate is
+        retained only as a local sample for replay/debugging.
+        """
+        from pawbot.agent.live_eval import (
+            LIVE_EVAL_SCHEMA_VERSION,
+            LIVE_EVAL_VERSION,
+            LiveEvalCase,
+        )
+
+        reference = review_reference.strip()
+        if not reference or len(reference) > 160:
+            raise ValueError("review_reference must be a non-empty local ticket or review note")
+        if case_payload.get("privacy") not in {"sanitized", "public_fixture"}:
+            raise ValueError("live EvalCase export requires reviewed sanitized/public content")
+        case = LiveEvalCase.model_validate({
+            **case_payload,
+            "source": f"rolling_candidate_review:{sanitize_turn_name(candidate_id)}",
+        })
+        if case.privacy == "private":
+            raise ValueError("private candidate data cannot be exported as a live EvalCase")
+
+        sample = self.promote_candidate(candidate_id, name=case.id)
+        case_path = sample / "live-eval-catalog.v1.json"
+        catalog = {
+            "schema_version": LIVE_EVAL_SCHEMA_VERSION,
+            "name": "pawbot-reviewed-candidate",
+            "version": LIVE_EVAL_VERSION,
+            "review_reference": reference,
+            "cases": [case.model_dump(mode="json")],
+        }
+        write_json_atomic(case_path, catalog)
+        candidate_path = sample / "candidate.json"
+        try:
+            payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            payload = {}
+        if isinstance(payload, dict):
+            reviewed = cast(dict[str, Any], payload)
+            reviewed["live_eval_case"] = case_path.name
+            reviewed["review_reference"] = reference
+            write_json_atomic(candidate_path, reviewed)
+        return {
+            "case": case.model_dump(mode="json"),
+            "catalog_path": str(case_path),
+            "sample_path": str(sample),
+            "review_reference": reference,
+        }
+
 
 __all__ = ["RollingBlackboxController"]

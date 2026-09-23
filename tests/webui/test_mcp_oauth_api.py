@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from mcp.client.auth import AuthorizationCodeResult
 
 from pawbot.config.schema import MCPServerConfig
 from pawbot.webui.mcp_oauth_api import (
@@ -80,7 +81,12 @@ async def test_browser_flow_retries_current_server_and_ignores_unrelated_reload_
 
     assert started["status"] == "authorization_required"
     assert started["authorization_url"].startswith("https://accounts.example.com/authorize?")
-    manager.submit_callback(state="state-123", code="oauth-code", error=None)
+    manager.submit_callback(
+        state="state-123",
+        code="oauth-code",
+        error=None,
+        issuer="https://accounts.example.com",
+    )
     with pytest.raises(McpOAuthError, match="expired"):
         manager.submit_callback(state="state-123", code="replayed-code", error=None)
 
@@ -102,7 +108,11 @@ async def test_browser_flow_retries_current_server_and_ignores_unrelated_reload_
     assert first["status"] == "connected"
     assert second["status"] == "connected"
     assert first["hot_reload"]["failed"] == ["notion"]
-    assert received["callback"] == ("oauth-code", "state-123")
+    assert received["callback"] == AuthorizationCodeResult(
+        code="oauth-code",
+        state="state-123",
+        iss="https://accounts.example.com",
+    )
     assert reload_calls == 2
     assert connection.closed is True
 
@@ -165,7 +175,7 @@ async def test_remote_http_flow_accepts_a_pasted_loopback_callback(
         flow_id=started["flow_id"],
         callback_url=(
             "http://127.0.0.1:8765/auth/mcp/callback"
-            "?code=oauth-code&state=manual-state"
+            "?code=oauth-code&state=manual-state&iss=https%3A%2F%2Faccounts.example.com"
         ),
     )
     assert submitted["status"] == "connecting"
@@ -178,7 +188,11 @@ async def test_remote_http_flow_accepts_a_pasted_loopback_callback(
 
     assert result["status"] == "connected"
     assert result["completion_input"] == "callback_url"
-    assert received["callback"] == ("oauth-code", "manual-state")
+    assert received["callback"] == AuthorizationCodeResult(
+        code="oauth-code",
+        state="manual-state",
+        iss="https://accounts.example.com",
+    )
     assert connection.closed is True
 
 

@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import SplitResult, parse_qs, urlsplit, urlunsplit
 
+from mcp.client.auth import AuthorizationCodeResult
+
 from pawbot.agent.tools.mcp import MCPConnection, connect_mcp_servers
 from pawbot.agent.tools.mcp_oauth import MCP_OAUTH_CALLBACK_PATH, MCPOAuthHandlers
 from pawbot.agent.tools.registry import ToolRegistry
@@ -47,7 +49,7 @@ class _McpOAuthFlow:
     manual_callback: bool
     expires_at: float
     authorization_ready: asyncio.Event = field(default_factory=asyncio.Event)
-    callback_result: asyncio.Future[tuple[str, str | None]] | None = None
+    callback_result: asyncio.Future[AuthorizationCodeResult] | None = None
     task: asyncio.Task[bool] | None = None
     authorization_url: str | None = None
     state: str | None = None
@@ -164,6 +166,7 @@ class McpOAuthManager:
         state: str,
         code: str | None,
         error: str | None,
+        issuer: str | None = None,
     ) -> str:
         self._prune()
         flow_id = self._states.pop(state, None)
@@ -184,8 +187,14 @@ class McpOAuthManager:
             flow.error = "The MCP server did not return an authorization code."
             callback_result.set_exception(_OAuthCallbackError(flow.error))
             raise McpOAuthError(flow.error)
+        elif issuer is not None and len(issuer) > 2_048:
+            flow.error = "The MCP server returned an invalid authorization issuer."
+            callback_result.set_exception(_OAuthCallbackError(flow.error))
+            raise McpOAuthError(flow.error)
         else:
-            callback_result.set_result((code, state))
+            callback_result.set_result(
+                AuthorizationCodeResult(code=code, state=state, iss=issuer)
+            )
         return flow.name
 
     def submit_callback_url(self, *, flow_id: str, callback_url: str) -> dict[str, Any]:
@@ -224,18 +233,20 @@ class McpOAuthManager:
 
         codes = query.get("code", [])
         errors = query.get("error", [])
-        if len(codes) > 1 or len(errors) > 1 or (codes and errors):
+        issuers = query.get("iss", [])
+        if len(codes) > 1 or len(errors) > 1 or len(issuers) > 1 or (codes and errors):
             raise McpOAuthError(
                 "Paste the complete callback URL from the browser address bar."
             )
         code = codes[0] if len(codes) == 1 else None
         error = errors[0] if len(errors) == 1 else None
+        issuer = issuers[0] if len(issuers) == 1 else None
         if (not code and not error) or (code is not None and len(code) > 8192):
             raise McpOAuthError(
                 "Paste the complete callback URL from the browser address bar."
             )
 
-        self.submit_callback(state=state, code=code, error=error)
+        self.submit_callback(state=state, code=code, error=error, issuer=issuer)
         return self._payload(flow)
 
     async def cancel(self, flow_id: str) -> dict[str, Any]:
@@ -276,7 +287,7 @@ class McpOAuthManager:
         self._states[state] = flow.flow_id
         flow.authorization_ready.set()
 
-    async def _wait_for_callback(self, flow: _McpOAuthFlow) -> tuple[str, str | None]:
+    async def _wait_for_callback(self, flow: _McpOAuthFlow) -> AuthorizationCodeResult:
         callback_result = flow.callback_result
         if callback_result is None:
             raise _OAuthCallbackError("MCP OAuth callback is unavailable")

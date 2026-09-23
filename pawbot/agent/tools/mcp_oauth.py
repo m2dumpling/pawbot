@@ -20,7 +20,7 @@ from typing import Any, TypedDict, cast
 
 from filelock import FileLock
 from loguru import logger
-from mcp.client.auth import OAuthClientProvider
+from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 from pydantic import AnyUrl
 
@@ -55,7 +55,7 @@ class MCPOAuthHandlers:
 
     redirect_uri: str
     redirect_handler: Callable[[str], Awaitable[None]]
-    callback_handler: Callable[[], Awaitable[tuple[str, str | None]]]
+    callback_handler: Callable[[], Awaitable[AuthorizationCodeResult]]
     reset_credentials: bool = False
 
 
@@ -324,7 +324,7 @@ class MCPOAuthStorage:
         return isinstance(access_token, str) and bool(access_token)
 
 
-async def _missing_callback() -> tuple[str, str | None]:
+async def _missing_callback() -> AuthorizationCodeResult:
     raise MCPAuthorizationRequiredError("MCP server requires browser authorization")
 
 
@@ -372,7 +372,6 @@ async def create_mcp_oauth_auth(
         storage,
         redirect_handler=redirect_handler,
         callback_handler=callback_handler,
-        timeout=300,
     )
 
 

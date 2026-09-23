@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, cast
+from typing import Any, Awaitable, Callable, cast
 
 from loguru import logger
 
@@ -35,7 +35,7 @@ from pawbot.agent.approval import (
     ToolApprovalResult,
 )
 from pawbot.agent.hook import AgentHook, AgentHookContext
-from pawbot.agent.tools.base import ToolExecutionPolicy
+from pawbot.agent.tools.base import ToolExecutionContext, ToolExecutionPolicy
 from pawbot.agent.tools.outcome import ToolOutcome
 from pawbot.agent.tools.registry import ToolRegistry, ToolResult, is_tool_error_result
 from pawbot.providers.base import ToolCallRequest
@@ -749,7 +749,24 @@ class CallExecutor:
                 }
                 return replay_error, event
             if tool is not None:
-                result = await tool.execute(**params)
+                result: Any
+                execution_context = ToolExecutionContext(
+                    operation_id=operation_id,
+                    idempotency_key=(
+                        operation_id if policy.idempotency == "idempotent" else None
+                    ),
+                )
+                tool_adapter = cast(Any, tool)
+                execute_with_context = cast(
+                    Callable[..., Awaitable[Any]] | None,
+                    getattr(tool_adapter, "execute_with_context", None),
+                )
+                if callable(execute_with_context):
+                    result = await execute_with_context(execution_context, **params)
+                else:
+                    # Keep lightweight embedding adapters that implement the
+                    # original execute(**kwargs) contract source-compatible.
+                    result = await tool_adapter.execute(**params)
             else:
                 result = await self._tools.execute(tool_call.name, params)
         except asyncio.CancelledError:

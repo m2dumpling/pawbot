@@ -189,7 +189,7 @@ async def test_connect_isolates_streamable_http_status_failure(
     monkeypatch.setattr(mcp_mod, "_probe_http_url", _reachable)
     monkeypatch.setattr(
         mcp_mod,
-        "PinnedDNSAsyncTransport",
+        "PinnedDNSAsyncTransport2",
         lambda: httpx.MockTransport(_return_http_530),
     )
 

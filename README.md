@@ -36,6 +36,8 @@ without another model request, another token bill, or real tool side effects.
 | Connect a chat app | [Channels](#channels-and-integrations) |
 | Understand the replay feature | [Record & Replay](#record--replay) |
 | Verify an AI-assisted code change | [Agent Harness Benchmark](#agent-harness-benchmark) |
+| Understand Agent state, approvals, and recovery | [Control flow and recovery](docs/agent-control-flow.md) |
+| Run a live task evaluation or enable OTLP | [Evaluation and observability guide](docs/agent-evaluation-observability.md) |
 | Learn how to use all execution and evaluation features | [Usage guide](docs/usage.md) |
 | Change the agent or add a tool | [Development](#development) |
 
@@ -188,19 +190,19 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.5/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.7.0/scripts/install.sh | sh
 ```
 
 If `curl` is not available, use `wget` instead:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.5/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.7.0/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.5/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.7.0/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a
@@ -459,8 +461,8 @@ uv run --no-sync python scripts/quality_gate.py
 ```
 
 The Harness separates trajectory checks from simple task contracts such as final
-content and required successful tools. Domain-specific evaluators are a separate
-next step; a green replay or Harness result is not a general model-quality score.
+content and required successful tools. A green replay or Harness result is not
+a general model-quality score.
 
 ### Agent Task Eval Set
 
@@ -480,6 +482,21 @@ failures, model requests, and elapsed time separate. This is a regression gate,
 not a general model-accuracy score. A real failure can be promoted from the
 rolling replay buffer into a permanent sample after reviewing its sensitive
 content.
+
+For on-demand live model measurement, Pawbot also provides a versioned
+20-case incident-triage catalog with isolated fake APIs and workspaces:
+
+```bash
+pawbot eval live list
+pawbot eval live run --trials 3 --seed 42 --max-total-cost-usd 1.00 --label baseline --output eval-reports/baseline.json
+pawbot eval live compare --baseline eval-reports/baseline.json --candidate eval-reports/candidate.json
+```
+
+This live set makes real provider requests and needs configured token prices and
+an explicit spend cap. The included fixtures are synthetic; reports separate
+outcome, trajectory, safety, estimated cost, and latency. It is not a production
+incident success-rate claim. See the [evaluation and observability guide](docs/agent-evaluation-observability.md)
+for case format, trace privacy, candidate review, and optional OTLP setup.
 
 When a WebUI chat uses **Workspace access**, write, execute, and network-capable
 Tools pause for an explicit approval. **Full access** remains the opt-in mode
@@ -555,6 +572,8 @@ The core source is organized around:
 
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
+- [Agent evaluation and observability](docs/agent-evaluation-observability.md)
+- [Agent control flow and recovery](docs/agent-control-flow.md)
 - [Security policy](SECURITY.md)
 
 ## Security and privacy

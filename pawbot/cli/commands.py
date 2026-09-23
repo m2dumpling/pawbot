@@ -818,6 +818,63 @@ def record_list(
     console.print("[dim]Use `pawbot replay <sample>` for offline validation, or `/record` in a running gateway.[/dim]")
 
 
+@record_app.command("export-live-eval")
+def record_export_live_eval(
+    candidate_id: str,
+    case_json: Path = typer.Option(
+        ...,
+        "--case-json",
+        exists=True,
+        readable=True,
+        help="JSON object containing the reviewed, sanitized versioned EvalCase",
+    ),
+    review_reference: str = typer.Option(
+        ...,
+        "--review-reference",
+        help="Local review ticket/reference; no raw recording is copied into the case",
+    ),
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+) -> None:
+    """Export a human-reviewed sanitized rolling candidate as a standalone live EvalCase."""
+    import json
+
+    from pawbot.agent.blackbox import RollingBlackboxController
+    from pawbot.config.paths import get_data_dir
+
+    _, loaded = _load_inspection_config(config=config, workspace=workspace)
+    try:
+        payload_value = json.loads(case_json.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not load reviewed EvalCase:[/red] {exc}")
+        raise typer.Exit(2) from exc
+    if not isinstance(payload_value, dict):
+        console.print("[red]The case JSON must be one EvalCase object.[/red]")
+        raise typer.Exit(2)
+    data_dir = loaded.runtime_data_dir or get_data_dir()
+    controller = RollingBlackboxController(
+        data_dir / "blackbox",
+        max_turns_per_session=loaded.observability.rolling_turns_per_session,
+        retention_seconds=loaded.observability.rolling_retention_hours * 3_600,
+        max_bytes=loaded.observability.rolling_max_bytes,
+    )
+    try:
+        exported = controller.export_candidate_as_live_eval_case(
+            candidate_id,
+            case_payload=cast(dict[str, Any], payload_value),
+            review_reference=review_reference,
+        )
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]Could not export candidate:[/red] {exc}")
+        raise typer.Exit(2) from exc
+    console.print(f"Reviewed EvalCase: [green]{escape(str(exported['case']['id']))}[/green]")
+    console.print(f"Standalone catalog: {escape(str(exported['catalog_path']))}")
+    console.print(
+        "[dim]Run it with `pawbot eval live run --catalog <path> --max-total-cost-usd ...`; "
+        "the original recording remains local in the replay sample.[/dim]"
+    )
+
+
 # ============================================================================
 # Session Commands
 # ============================================================================

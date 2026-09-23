@@ -35,6 +35,7 @@ class InboundMessage:
     session_key_override: str | None = None  # Optional override for thread-scoped sessions
     require_existing_session: bool = False
     input_role: Literal["user", "system"] | None = None
+    trace_context: dict[str, str] = field(default_factory=dict, repr=False)
 
     @property
     def session_key(self) -> str:

@@ -488,6 +488,11 @@ _TRACE_VOLATILE_FIELDS = {
     "duration_ms",
     "owner_pid",
     "usage",
+    # Estimation provenance is diagnostic metadata added in later trace schema
+    # revisions. It should be visible to operators without making legacy
+    # recordings diverge solely because the estimator gained a source label.
+    "estimated_prompt_tokens",
+    "token_estimation_source",
     # These describe the execution environment, not orchestration behavior:
     # replay deliberately avoids side effects and uses a different detail note.
     "side_effect",

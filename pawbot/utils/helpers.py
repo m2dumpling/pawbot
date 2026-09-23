@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from pawbot.providers.base import LLMUsage
 
 _TOOLS_TOKEN_CACHE_MAX_ENTRIES = 64
-_TOOLS_TOKEN_CACHE: dict[int, tuple[tuple[int, ...], dict[bool, int]]] = {}
+_TOOLS_TOKEN_CACHE: dict[tuple[int, str], tuple[tuple[int, ...], dict[bool, int]]] = {}
 _T = TypeVar("_T")
 
 
@@ -102,22 +102,28 @@ def sanitize_surrogates_deep(value: Any) -> Any:
     return value
 
 
-@lru_cache(maxsize=1)
-def _get_token_encoding() -> Any:
-    return tiktoken.get_encoding("cl100k_base")
+@lru_cache(maxsize=16)
+def _get_token_encoding(model: str | None = None) -> Any:
+    # All runtime prompt-budget estimates use the same model-family mapping as
+    # the canonical message estimator. The helper remains private for existing
+    # callers such as token-aware truncation.
+    from pawbot.agent.token_estimation import tokenizer_encoding_name
+
+    encoding_name = tokenizer_encoding_name(model) or "cl100k_base"
+    return tiktoken.get_encoding(encoding_name)
 
 
 def _cache_tools_token_count(
-    tools_id: int,
+    cache_key: tuple[int, str],
     fingerprint: tuple[int, ...],
     counts: dict[bool, int],
 ) -> None:
     if (
-        tools_id not in _TOOLS_TOKEN_CACHE
+        cache_key not in _TOOLS_TOKEN_CACHE
         and len(_TOOLS_TOKEN_CACHE) >= _TOOLS_TOKEN_CACHE_MAX_ENTRIES
     ):
         _TOOLS_TOKEN_CACHE.pop(next(iter(_TOOLS_TOKEN_CACHE)))
-    _TOOLS_TOKEN_CACHE[tools_id] = (fingerprint, counts)
+    _TOOLS_TOKEN_CACHE[cache_key] = (fingerprint, counts)
 
 
 def _estimate_tools_tokens(
@@ -125,12 +131,13 @@ def _estimate_tools_tokens(
     tools: list[dict[str, Any]],
     *,
     leading_separator: bool,
+    encoding_name: str,
 ) -> int:
     """Estimate stable tool definition tokens without re-encoding every loop."""
     # ToolRegistry keeps the returned definitions list alive until the registry changes.
-    tools_id = id(tools)
+    cache_key = (id(tools), encoding_name)
     fingerprint = tuple(id(tool) for tool in tools)
-    cached = _TOOLS_TOKEN_CACHE.get(tools_id)
+    cached = _TOOLS_TOKEN_CACHE.get(cache_key)
     if cached and cached[0] == fingerprint:
         token_count = cached[1].get(leading_separator)
         if token_count is not None:
@@ -144,7 +151,7 @@ def _estimate_tools_tokens(
         rendered = "\n" + rendered
     token_count = len(enc.encode(rendered))
     counts[leading_separator] = token_count
-    _cache_tools_token_count(tools_id, fingerprint, counts)
+    _cache_tools_token_count(cache_key, fingerprint, counts)
     return token_count
 
 
@@ -687,6 +694,7 @@ def build_assistant_message(
 def _estimate_prompt_tokens_with_source(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
+    model: str | None = None,
 ) -> tuple[int, str]:
     """Estimate prompt tokens and identify the counter used.
 
@@ -722,12 +730,25 @@ def _estimate_prompt_tokens_with_source(
     message_payload = "\n".join(parts)
     per_message_overhead = len(messages) * 4
     try:
-        enc = _get_token_encoding()
+        from pawbot.agent.token_estimation import (
+            token_estimation_source,
+            tokenizer_encoding_name,
+        )
+
+        enc = _get_token_encoding(model)
+        encoding_name = tokenizer_encoding_name(model) or "cl100k_base"
         tool_tokens = (
-            _estimate_tools_tokens(enc, tools, leading_separator=bool(parts)) if tools else 0
+            _estimate_tools_tokens(
+                enc,
+                tools,
+                leading_separator=bool(parts),
+                encoding_name=encoding_name,
+            )
+            if tools
+            else 0
         )
         message_tokens = len(enc.encode(message_payload)) if message_payload else 0
-        return message_tokens + tool_tokens + per_message_overhead, "tiktoken"
+        return message_tokens + tool_tokens + per_message_overhead, token_estimation_source(model)
     except Exception:
         tool_payload = (
             ("\n" if message_payload else "") + json.dumps(tools, ensure_ascii=False)
@@ -736,15 +757,16 @@ def _estimate_prompt_tokens_with_source(
         )
         payload = message_payload + tool_payload
         estimated = len(payload.encode("utf-8"))
-        return estimated + per_message_overhead, "heuristic"
+        return estimated + per_message_overhead, "heuristic:utf8_bytes"
 
 
 def estimate_prompt_tokens(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
+    model: str | None = None,
 ) -> int:
-    """Estimate prompt tokens with tiktoken and a conservative byte fallback."""
-    estimated, _ = _estimate_prompt_tokens_with_source(messages, tools)
+    """Estimate prompt tokens using a model-family tokenizer when known."""
+    estimated, _ = _estimate_prompt_tokens_with_source(messages, tools, model)
     return estimated
 
 
@@ -772,7 +794,7 @@ def estimate_prompt_tokens_chain(
             tokens, source = cast(tuple[object, object], provider_counter(messages, tools, model))
             if isinstance(tokens, (int, float)) and tokens > 0:
                 return int(tokens), str(source or "provider_counter")
-    estimated, source = _estimate_prompt_tokens_with_source(messages, tools)
+    estimated, source = _estimate_prompt_tokens_with_source(messages, tools, model)
     if estimated > 0:
         return int(estimated), source
     return 0, "none"

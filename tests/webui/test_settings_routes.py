@@ -243,7 +243,10 @@ async def test_mcp_oauth_callback_is_state_authenticated_and_returns_close_page(
     submit = MagicMock(return_value="xmind")
     router._mcp_oauth = SimpleNamespace(submit_callback=submit)
     request = SimpleNamespace(
-        path="/auth/mcp/callback?code=oauth-code&state=state-123",
+        path=(
+            "/auth/mcp/callback?code=oauth-code&state=state-123"
+            "&iss=https%3A%2F%2Faccounts.example.com"
+        ),
         headers=Headers(),
     )
 
@@ -257,7 +260,33 @@ async def test_mcp_oauth_callback_is_state_authenticated_and_returns_close_page(
     assert b"window.close" in response.body
     assert b"Authorization received" in response.body
     assert b"oauth-code" not in response.body
-    submit.assert_called_once_with(state="state-123", code="oauth-code", error=None)
+    submit.assert_called_once_with(
+        state="state-123",
+        code="oauth-code",
+        error=None,
+        issuer="https://accounts.example.com",
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_oauth_callback_rejects_duplicate_issuer_parameters() -> None:
+    router = _router(authorized=False)
+    submit = MagicMock(return_value="xmind")
+    router._mcp_oauth = SimpleNamespace(submit_callback=submit)
+    request = SimpleNamespace(
+        path=(
+            "/auth/mcp/callback?code=oauth-code&state=state-123"
+            "&iss=https%3A%2F%2Fone.example&iss=https%3A%2F%2Ftwo.example"
+        ),
+        headers=Headers(),
+    )
+
+    response = await router.dispatch(None, request, "/auth/mcp/callback")
+
+    assert response is not None
+    assert response.status_code == 400
+    assert b"duplicate security parameters" in response.body
+    submit.assert_not_called()
 
 
 @pytest.mark.asyncio
