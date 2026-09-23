@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -103,10 +104,11 @@ def test_live_eval_compare_preserves_repeated_trial_statuses(tmp_path: Path) -> 
 
 
 def test_live_eval_run_requires_explicit_cost_limit() -> None:
-    result = runner.invoke(app, ["eval", "live", "run"])
+    result = runner.invoke(app, ["eval", "live", "run"], env={"FORCE_COLOR": "1"})
 
     assert result.exit_code != 0
-    assert "--max-total-cost-usd" in result.output
+    plain_output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.output)
+    assert "--max-total-cost-usd" in plain_output
 
 
 def test_cli_candidate_export_writes_only_reviewed_case_payload(tmp_path: Path) -> None:
