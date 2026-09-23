@@ -34,13 +34,17 @@ supported surface and known boundaries of each published version.
 
 ### Verification
 
-- Python CI coverage command: 6,970 passed, 54 skipped, 1 existing warning;
-  coverage 82.76% (75% minimum).
-- WebUI: 1,130 tests passed and production build passed; clean wheel install and
-  WebUI chat, Trace, offline replay, and MCP connection smoke checks passed.
-- The final catalog-title CLI fix passed 25 targeted tests, Ruff, and
-  basedpyright. Cross-platform GitHub Actions for the release commit remain
-  required before publishing.
+- GitHub Actions on main commit `ebb01fe`: Python 3.11/Linux, 7,010 passed and
+  15 skipped at 82.83% coverage; Python 3.13/Windows, 6,979 passed and 46
+  skipped at 82.82% coverage.
+- WebUI, production build, native TUI, package smoke, Record & Replay, Linux/
+  macOS/Windows installer smoke tests, and the quality gate all passed.
+- Built wheel and sdist installed in clean Python 3.11 environments. WebUI chat,
+  Trace, offline replay (1/1 consistent), and a Microsoft Learn MCP connection
+  passed local smoke checks.
+- TUI CI and release packaging workflows are pinned to Bun 1.3.13 to match the
+  bundled license, relinking, and source-offer documents. The five-platform TUI
+  release archive workflow remains to be run for the release tag before publish.
 
 ## 0.6.5 - 2026-09-21
 
