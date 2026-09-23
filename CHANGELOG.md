@@ -3,6 +3,45 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.7.0 - unreleased
+
+### Added
+
+- Added a versioned 20-case live model evaluation suite for synthetic incident
+  triage, with isolated local fixtures, repeated trials, outcome/trajectory/safety
+  reports, cost estimates, latency, and baseline comparison.
+- Added an opt-in OpenTelemetry OTLP exporter for Agent spans and low-cardinality
+  metrics. Local Trace and replay remain available without an exporter.
+- Added token-estimate provenance to local Trace, control-flow documentation,
+  and a reviewed-candidate export path for sanitized live evaluation cases.
+
+### Changed
+
+- Migrated the MCP client to SDK v2, with modern discovery and a legacy
+  method-not-found fallback, HTTPX2 transport protection, and OAuth issuer checks.
+- Added operation context for tool adapters that explicitly support idempotency.
+- Calibrated the synthetic evaluation oracle to accept reviewed safe paraphrases
+  and avoid treating a qualified retry-safety assumption as affirmative advice.
+
+### Known boundaries
+
+- Live evaluation and OTLP setup use the CLI/configuration; this release does not
+  add a new WebUI page for them.
+- The bundled cases are synthetic and were calibrated against the same saved
+  responses used for comparison. They do not establish production task quality.
+- Checkpoint recovery does not undo remote side effects; unknown write outcomes
+  still require reconciliation or explicit approval before retry.
+
+### Verification
+
+- Python CI coverage command: 6,970 passed, 54 skipped, 1 existing warning;
+  coverage 82.76% (75% minimum).
+- WebUI: 1,130 tests passed and production build passed; clean wheel install and
+  WebUI chat, Trace, offline replay, and MCP connection smoke checks passed.
+- The final catalog-title CLI fix passed 25 targeted tests, Ruff, and
+  basedpyright. Cross-platform GitHub Actions for the release commit remain
+  required before publishing.
+
 ## 0.6.5 - 2026-09-21
 
 ### Changed

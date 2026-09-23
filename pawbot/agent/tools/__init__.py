@@ -3,6 +3,7 @@
 from pawbot.agent.tools.base import (
     Schema,
     Tool,
+    ToolExecutionContext,
     ToolExecutionPolicy,
     ToolIdempotency,
     ToolRecoveryStrategy,
@@ -32,6 +33,7 @@ __all__ = [
     "ObjectSchema",
     "StringSchema",
     "Tool",
+    "ToolExecutionContext",
     "ToolIdempotency",
     "ToolExecutionPolicy",
     "ToolRecoveryStrategy",

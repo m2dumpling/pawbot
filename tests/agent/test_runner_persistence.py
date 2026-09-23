@@ -6,6 +6,8 @@ import os
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agent.runner_helpers import make_run_spec
 from pawbot.config.schema import AgentDefaults
 from pawbot.providers.base import LLMResponse, LLMUsage, ToolCallRequest
@@ -51,6 +53,43 @@ async def test_runner_persists_large_tool_results_for_follow_up_calls(tmp_path):
     assert "[tool output persisted]" in tool_message["content"]
     assert "tool-results" in tool_message["content"]
     assert (tmp_path / ".pawbot" / "tool-results" / "test_runner" / "call_big.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_context_eval_can_read_back_full_offloaded_tool_result(tmp_path):
+    import re
+
+    from pawbot.agent.tools.context import RequestContext, request_context
+    from pawbot.agent.tools.filesystem import ReadFileTool
+    from pawbot.utils.helpers import maybe_persist_tool_result
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    original = "first line\n" + "large evidence " * 300 + "\nlast line"
+    reference = maybe_persist_tool_result(
+        workspace,
+        "eval:offload",
+        "call-full-result",
+        original,
+        max_chars=64,
+    )
+    match = re.search(r"Full output saved to: (.+)\n", str(reference))
+    assert match is not None
+    result_path = match.group(1)
+    reader = ReadFileTool(workspace=workspace, allowed_dir=workspace, restrict_to_workspace=True)
+
+    with request_context(RequestContext(
+        channel="test",
+        chat_id="offload-eval",
+        workspace=workspace,
+    )):
+        recovered = await reader.execute(path=result_path)
+        outside = await reader.execute(path=str(tmp_path / "outside.txt"))
+
+    assert "first line" in str(recovered)
+    assert "last line" in str(recovered)
+    assert "large evidence" in str(recovered)
+    assert "outside" in str(outside).lower()
 
 
 def test_persist_tool_result_prunes_old_session_buckets(tmp_path):

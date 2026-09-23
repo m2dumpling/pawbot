@@ -483,9 +483,15 @@ class AgentLoop(TurnStagesMixin):
         allowing callers to override or extend the standard config-derived
         parameters (e.g. ``cron_service``, ``session_manager``).
         """
+        from pawbot.agent.otel import configure_otlp_export
         from pawbot.config.paths import get_data_dir
         from pawbot.providers.factory import make_provider
 
+        configure_otlp_export(
+            enabled=config.observability.otel_enabled,
+            service_name=config.observability.otel_service_name,
+            sample_ratio=config.observability.otel_sample_ratio,
+        )
         if bus is None:
             bus = MessageBus()
         defaults = config.agents.defaults
@@ -525,6 +531,7 @@ class AgentLoop(TurnStagesMixin):
             extra["trace_store"] = TraceStore(
                 data_dir / "traces",
                 enabled=config.observability.enabled,
+                otel_enabled=config.observability.otel_enabled,
                 retention_days=config.observability.retention_days,
                 max_traces=config.observability.max_traces,
                 max_bytes=config.observability.max_bytes,
@@ -1558,6 +1565,8 @@ class AgentLoop(TurnStagesMixin):
             trace.hook(
                 initial_messages=initial_messages,
                 tools_count=len(effective_tools.get_definitions()),
+                token_counter=runtime.provider,
+                tool_definitions=effective_tools.get_definitions(),
             )
             if trace is not None
             else None
@@ -2189,16 +2198,22 @@ class AgentLoop(TurnStagesMixin):
                 if runtime is not None
                 else None
             )
-            ctx.trace = self.trace_store.start_turn(
-                session_key=key,
-                turn_id=ctx.turn_id,
-                channel=msg.channel,
-                chat_id=msg.chat_id,
-                model=runtime.model if runtime is not None else None,
-                provider=provider_name,
-                recording_directory=recording_directory,
-                mirror_recording=getattr(self.blackbox, "mode", None) == "rolling",
-            )
+            from pawbot.agent.otel import attach_trace_context, detach_trace_context
+
+            parent_context_token = attach_trace_context(msg.trace_context)
+            try:
+                ctx.trace = self.trace_store.start_turn(
+                    session_key=key,
+                    turn_id=ctx.turn_id,
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    model=runtime.model if runtime is not None else None,
+                    provider=provider_name,
+                    recording_directory=recording_directory,
+                    mirror_recording=getattr(self.blackbox, "mode", None) == "rolling",
+                )
+            finally:
+                detach_trace_context(parent_context_token)
         # A streaming callback may be present even when the final text comes from a
         # non-streaming recovery. Only the last completed segment can suppress the
         # regular outbound message.
@@ -2674,6 +2689,8 @@ class AgentLoop(TurnStagesMixin):
             replay_trace_hook = replay_trace.hook(
                 initial_messages=turn.initial_messages,
                 tools_count=len(self.tools.get_definitions()),
+                token_counter=replay_runtime.provider,
+                tool_definitions=self.tools.get_definitions(),
             )
             replay_hook = CompositeHook([replay_trace_hook, probe])
             try:

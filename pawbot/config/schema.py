@@ -84,6 +84,25 @@ class ObservabilityConfig(Base):
     """Local execution-trace retention and privacy policy."""
 
     enabled: bool = True
+    otel_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("otelEnabled", "otel_enabled"),
+        serialization_alias="otelEnabled",
+    )
+    otel_service_name: str = Field(
+        default="pawbot",
+        min_length=1,
+        max_length=100,
+        validation_alias=AliasChoices("otelServiceName", "otel_service_name"),
+        serialization_alias="otelServiceName",
+    )
+    otel_sample_ratio: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("otelSampleRatio", "otel_sample_ratio"),
+        serialization_alias="otelSampleRatio",
+    )
     retention_days: int = Field(
         default=14,
         ge=0,

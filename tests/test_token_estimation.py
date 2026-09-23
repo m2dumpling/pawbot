@@ -7,7 +7,10 @@ from pawbot.agent.token_estimation import (
     count_message_tokens,
     count_prompt_tokens,
     count_tokens,
+    count_tokens_with_source,
     system_prompt_tokens,
+    token_estimation_source,
+    tokenizer_encoding_name,
 )
 
 
@@ -23,6 +26,8 @@ class _FakeRuntime:
 def test_count_tokens_fallback_and_tiktoken():
     assert count_tokens("") == 0
     assert count_tokens("hello world", "fake-model") > 0
+    assert tokenizer_encoding_name("gpt-4o-mini") == "o200k_base"
+    assert tokenizer_encoding_name("provider-unknown") == "cl100k_base"
 
 
 def test_structural_overhead_counts_tool_calls():
@@ -54,3 +59,16 @@ def test_replay_budget_reserves_system_prompt():
 
 def test_system_prompt_tokens_positive():
     assert system_prompt_tokens("You are a lean coding agent.") > 0
+
+
+def test_token_counter_reports_the_fallback_used(monkeypatch):
+    monkeypatch.setattr(
+        "pawbot.agent.token_estimation._encoding",
+        lambda _model: (_ for _ in ()).throw(RuntimeError("encoding unavailable")),
+    )
+
+    tokens, source = count_tokens_with_source("你好", "unknown-model")
+
+    assert tokens == (len("你好".encode("utf-8")) + 3) // 4
+    assert source == "heuristic:utf8_4_bytes_per_token"
+    assert token_estimation_source("unknown-model") == source

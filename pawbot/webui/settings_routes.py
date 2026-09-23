@@ -647,6 +647,12 @@ class WebUISettingsRouter:
 
     def _handle_mcp_oauth_callback(self, request: WsRequest) -> Response:
         query = self._query(request)
+        if any(len(query.get(key, [])) > 1 for key in ("state", "code", "error", "iss")):
+            return self._mcp_oauth_callback_page(
+                ok=False,
+                message="This authorization callback contains duplicate security parameters.",
+                status=400,
+            )
         state = (_query_first(query, "state") or "").strip()
         if not state:
             return self._mcp_oauth_callback_page(
@@ -659,6 +665,7 @@ class WebUISettingsRouter:
                 state=state,
                 code=_query_first(query, "code"),
                 error=_query_first(query, "error"),
+                issuer=_query_first(query, "iss"),
             )
         except Exception as exc:
             status = int(getattr(exc, "status", 400))

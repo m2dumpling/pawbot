@@ -11,9 +11,8 @@ from unittest.mock import AsyncMock
 import anyio
 import pytest
 from mcp import types as mcp_types
-from mcp.shared.exceptions import McpError
+from mcp.shared.exceptions import MCPError
 from mcp.shared.message import SessionMessage
-from mcp.types import ErrorData
 
 from pawbot.agent.tools import mcp as mcp_runtime
 from pawbot.agent.tools.base import Tool
@@ -25,12 +24,10 @@ from pawbot.config.schema import MCPServerConfig
 
 def _mcp_notification(method: str, params: dict[str, Any] | None = None) -> SessionMessage:
     return SessionMessage(
-        message=mcp_types.JSONRPCMessage(
-            mcp_types.JSONRPCNotification(
-                jsonrpc="2.0",
-                method=method,
-                params=params,
-            )
+        message=mcp_types.JSONRPCNotification(
+            jsonrpc="2.0",
+            method=method,
+            params=params,
         )
     )
 
@@ -51,6 +48,48 @@ def test_mcp_progress_detection_accepts_flattened_sdk_message_shape():
 
     assert mcp_runtime._is_malformed_mcp_progress_notification(malformed) is True
     assert mcp_runtime._is_malformed_mcp_progress_notification(valid) is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_v2_discovery_falls_back_only_for_legacy_method_not_found() -> None:
+    class ModernSession:
+        discovered = False
+
+        async def discover(self) -> None:
+            self.discovered = True
+
+        async def initialize(self) -> None:
+            raise AssertionError("modern discovery must not run the legacy handshake")
+
+    class LegacySession:
+        initialized = False
+
+        async def discover(self) -> None:
+            raise MCPError(code=-32601, message="Method not found")
+
+        async def initialize(self) -> None:
+            self.initialized = True
+
+    modern = ModernSession()
+    legacy = LegacySession()
+
+    assert await mcp_runtime._discover_or_initialize_session(modern) == "2026-07-28"
+    assert modern.discovered is True
+    assert await mcp_runtime._discover_or_initialize_session(legacy) == "legacy"
+    assert legacy.initialized is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_v2_discovery_does_not_hide_authorization_or_server_errors() -> None:
+    class BrokenSession:
+        async def discover(self) -> None:
+            raise MCPError(code=-32000, message="authorization rejected")
+
+        async def initialize(self) -> None:
+            raise AssertionError("non-method-not-found errors must not downgrade")
+
+    with pytest.raises(MCPError, match="authorization rejected"):
+        await mcp_runtime._discover_or_initialize_session(BrokenSession())
 
 
 class _FakeMcpTool(Tool):
@@ -563,7 +602,7 @@ async def test_mcp_tool_reconnects_after_session_terminated(
             self.call_count += 1
             assert arguments == {"symbol": "AAPL"}
             if self.index == 1:
-                raise McpError(ErrorData(code=-32000, message="Session terminated"))
+                raise MCPError(code=-32000, message="Session terminated")
             return SimpleNamespace(
                 content=[mcp_types.TextContent(type="text", text="recovered")]
             )
@@ -621,7 +660,7 @@ async def test_mcp_reconnect_handler_uses_sanitized_server_prefix(
         async def call_tool(self, _name: str, arguments: dict[str, Any]) -> Any:
             assert arguments == {}
             if self.index == 1:
-                raise McpError(ErrorData(code=-32000, message="Session terminated"))
+                raise MCPError(code=-32000, message="Session terminated")
             return SimpleNamespace(
                 content=[mcp_types.TextContent(type="text", text="recovered")]
             )
@@ -671,7 +710,7 @@ async def test_concurrent_mcp_reconnect_reuses_fresh_session(
 
     class _DeadSession:
         async def read_resource(self, _uri: str) -> Any:
-            raise McpError(ErrorData(code=-32000, message="Session terminated"))
+            raise MCPError(code=-32000, message="Session terminated")
 
     class _LiveSession:
         async def read_resource(self, uri: str) -> Any:

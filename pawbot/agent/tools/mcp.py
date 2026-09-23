@@ -14,14 +14,15 @@ from contextlib import AsyncExitStack, suppress
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import httpx
+import httpx2
 from loguru import logger
 
 from pawbot.agent.tools.base import Tool, ToolResult
 from pawbot.agent.tools.registry import ToolRegistry
 from pawbot.security.network import (
-    PinnedDNSAsyncTransport,
+    PinnedDNSAsyncTransport2,
     env_proxy_applies_to_url,
-    httpx_env_proxy_mounts,
+    httpx2_env_proxy_mounts,
     resolve_url_target,
     validate_url_target,
 )
@@ -116,6 +117,32 @@ def _mcp_jsonrpc_payload(message: Any) -> Any:
     return getattr(envelope, "root", None) or envelope
 
 
+def _mcp_field(value: Any, current_name: str, legacy_name: str) -> Any:
+    """Read a protocol field across MCP SDK v1/v2 Python attribute naming."""
+    current = getattr(value, current_name, None)
+    return current if current is not None else getattr(value, legacy_name, None)
+
+
+async def _discover_or_initialize_session(session: Any) -> str:
+    """Use MCP 2026 discovery and fall back to the legacy handshake for old servers."""
+    discover = cast(Callable[[], Awaitable[Any]] | None, getattr(session, "discover", None))
+    if discover is None:
+        await session.initialize()
+        return "legacy"
+    try:
+        await discover()
+        return "2026-07-28"
+    except Exception as exc:
+        error = getattr(exc, "error", None)
+        code = getattr(exc, "code", None)
+        if code is None and error is not None:
+            code = getattr(error, "code", None)
+        if code != -32601:  # JSON-RPC method-not-found means a pre-discovery server.
+            raise
+        await session.initialize()
+        return "legacy"
+
+
 def _payload_value(payload: Any, key: str) -> Any:
     if isinstance(payload, Mapping):
         return cast(Mapping[str, Any], payload).get(key)
@@ -208,7 +235,15 @@ def _is_transient_connection_failure(exc: BaseException) -> bool:
         return bool(group.exceptions) and all(
             _is_transient_connection_failure(nested) for nested in group.exceptions
         )
-    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)) or _is_transient(exc)
+    return isinstance(
+        exc,
+        (
+            httpx.ConnectError,
+            httpx.ConnectTimeout,
+            httpx2.ConnectError,
+            httpx2.ConnectTimeout,
+        ),
+    ) or _is_transient(exc)
 
 
 def _log_mcp_connection_failure(name: str, exc: BaseException, hint: str = "") -> None:
@@ -289,18 +324,18 @@ def _redact_url(url: str) -> str:
 
 
 def _pinned_transport_kwargs() -> dict[str, Any]:
-    kwargs: dict[str, Any] = {"transport": PinnedDNSAsyncTransport()}
-    mounts = httpx_env_proxy_mounts()
+    kwargs: dict[str, Any] = {"transport": PinnedDNSAsyncTransport2()}
+    mounts = httpx2_env_proxy_mounts()
     if mounts:
         kwargs["mounts"] = mounts
     return kwargs
 
 
-async def _validate_mcp_request_url(request: httpx.Request) -> None:
+async def _validate_mcp_request_url(request: httpx2.Request) -> None:
     """Validate each outgoing MCP HTTP request, including redirect targets."""
     ok, error = validate_url_target(str(request.url))
     if not ok:
-        raise httpx.RequestError(
+        raise httpx2.RequestError(
             f"Blocked unsafe MCP URL {_redact_url(str(request.url))} ({error})",
             request=request,
         )
@@ -555,7 +590,7 @@ def _image_block_data_url(block: Any, types: Any) -> str | None:
     """
     image_cls = getattr(types, "ImageContent", None)
     if image_cls is not None and isinstance(block, image_cls):
-        mime = getattr(block, "mimeType", None) or "image/png"
+        mime = _mcp_field(block, "mime_type", "mimeType") or "image/png"
         return f"data:{mime};base64,{block.data}"
 
     embedded_cls = getattr(types, "EmbeddedResource", None)
@@ -564,7 +599,7 @@ def _image_block_data_url(block: Any, types: Any) -> str | None:
         resource = getattr(block, "resource", None)
         if blob_cls is not None and isinstance(resource, blob_cls):
             blob_resource = cast(Any, resource)
-            mime = getattr(blob_resource, "mimeType", None) or ""
+            mime = _mcp_field(blob_resource, "mime_type", "mimeType") or ""
             if isinstance(mime, str) and mime.startswith("image/"):
                 return f"data:{mime};base64,{blob_resource.blob}"
     return None
@@ -608,7 +643,11 @@ class MCPToolWrapper(_MCPWrapperBase):
         self._original_name = tool_def.name
         self._name = _sanitize_mcp_tool_name(f"mcp_{server_name}_{tool_def.name}")
         self._description = tool_def.description or tool_def.name
-        raw_schema = tool_def.inputSchema or {"type": "object", "properties": {}}
+        raw_schema = cast(
+            dict[str, Any],
+            _mcp_field(tool_def, "input_schema", "inputSchema")
+            or {"type": "object", "properties": {}},
+        )
         self._parameters = _normalize_schema_for_openai(raw_schema)
         self._tool_timeout = tool_timeout
 
@@ -625,6 +664,8 @@ class MCPToolWrapper(_MCPWrapperBase):
         return self._parameters
 
     async def execute(self, **kwargs: Any) -> str:
+        from mcp.shared.exceptions import MCPError
+
         retried_transient = False
         refreshed_session = False
         while True:
@@ -647,6 +688,27 @@ class MCPToolWrapper(_MCPWrapperBase):
                     raise
                 logger.warning("MCP tool '{}' was cancelled by server/SDK", self._name)
                 return ToolResult.error("(MCP tool call was cancelled)")
+            except MCPError as exc:
+                if await self._refresh_session_after_termination(
+                    exc,
+                    refreshed_session,
+                    "tool",
+                ):
+                    refreshed_session = True
+                    continue
+                error = getattr(exc, "error", None)
+                code = getattr(exc, "code", None) or getattr(error, "code", None)
+                message = getattr(error, "message", None) or str(exc)
+                logger.warning(
+                    "MCP tool '{}' returned protocol error code={}",
+                    self._name,
+                    code,
+                )
+                return ToolResult.error(
+                    f"(MCP tool call failed: {message}"
+                    + (f" [code {code}]" if code is not None else "")
+                    + ")"
+                )
             except Exception as exc:
                 if await self._refresh_session_after_termination(
                     exc,
@@ -687,7 +749,7 @@ class MCPToolWrapper(_MCPWrapperBase):
                 # Success — extract text and persist any image content as artifacts.
                 try:
                     rendered = self._render_call_result(result.content, kwargs)
-                    if getattr(result, "isError", False):
+                    if _mcp_field(result, "is_error", "isError"):
                         return ToolResult.error(rendered)
                     return rendered
                 except Exception as exc:
@@ -914,7 +976,7 @@ class MCPPromptWrapper(_MCPWrapperBase):
 
     async def execute(self, **kwargs: Any) -> str:
         from mcp import types
-        from mcp.shared.exceptions import McpError
+        from mcp.shared.exceptions import MCPError
 
         retried_transient = False
         refreshed_session = False
@@ -934,7 +996,7 @@ class MCPPromptWrapper(_MCPWrapperBase):
                     raise
                 logger.warning("MCP prompt '{}' was cancelled by server/SDK", self._name)
                 return "(MCP prompt call was cancelled)"
-            except McpError as exc:
+            except MCPError as exc:
                 if await self._refresh_session_after_termination(
                     exc,
                     refreshed_session,
@@ -1041,7 +1103,7 @@ async def connect_mcp_servers(
                     )
                     return False
 
-            oauth_auth: httpx.Auth | None = None
+            oauth_auth: httpx2.Auth | None = None
             if cfg.auth == "oauth":
                 if transport_type not in {"sse", "streamableHttp"}:
                     logger.warning(
@@ -1084,15 +1146,15 @@ async def connect_mcp_servers(
 
                 def httpx_client_factory(
                     headers: dict[str, str] | None = None,
-                    timeout: httpx.Timeout | None = None,
-                    auth: httpx.Auth | None = None,
-                ) -> httpx.AsyncClient:
+                    timeout: httpx2.Timeout | None = None,
+                    auth: httpx2.Auth | None = None,
+                ) -> httpx2.AsyncClient:
                     merged_headers = {
                         "Accept": "application/json, text/event-stream",
                         **(cfg.headers or {}),
                         **(headers or {}),
                     }
-                    return httpx.AsyncClient(
+                    return httpx2.AsyncClient(
                         headers=merged_headers or None,
                         event_hooks={"request": [_validate_mcp_request_url]},
                         follow_redirects=True,
@@ -1118,15 +1180,15 @@ async def connect_mcp_servers(
                     "headers": cfg.headers or None,
                     "event_hooks": {"request": [_validate_mcp_request_url]},
                     "follow_redirects": True,
-                    "timeout": httpx.Timeout(30.0, connect=10.0),
+                    "timeout": httpx2.Timeout(30.0, connect=10.0),
                     **_pinned_transport_kwargs(),
                 }
                 if oauth_auth is not None:
                     http_client_kwargs["auth"] = oauth_auth
                 http_client = await server_stack.enter_async_context(
-                    httpx.AsyncClient(**http_client_kwargs)
+                    httpx2.AsyncClient(**http_client_kwargs)
                 )
-                read, write, _ = await server_stack.enter_async_context(
+                read, write = await server_stack.enter_async_context(
                     streamable_http_client(cfg.url, http_client=http_client)
                 )
             else:
@@ -1135,7 +1197,8 @@ async def connect_mcp_servers(
 
             read = _filter_malformed_mcp_progress_notifications(read, name)
             session = await server_stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
+            protocol_era = await _discover_or_initialize_session(session)
+            logger.debug("MCP server '{}' negotiated protocol era {}", name, protocol_era)
 
             tools = await session.list_tools()
             enabled_tools = set(cfg.enabled_tools)

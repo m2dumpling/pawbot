@@ -32,6 +32,7 @@ from loguru import logger
 
 from pawbot.agent.approval import ToolApprovalRequest, ToolApprovalResult
 from pawbot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
+from pawbot.agent.otel import emit_trace_event
 from pawbot.agent.tools.execution import execution_policy_for_tool, operation_id_for_tool_call
 from pawbot.agent.trace_schema import TRACE_SCHEMA_VERSION, normalize_trace_event
 
@@ -250,6 +251,13 @@ class TraceWriter:
             logger.exception("failed to append agent trace event to {}", self.path)
 
 
+class NullTraceWriter:
+    """Discard the local row while still letting TraceRun publish opt-in signals."""
+
+    def append(self, event: dict[str, Any]) -> None:
+        del event
+
+
 @dataclass(slots=True)
 class TraceRun:
     """The trace identity and sink shared by the outer and inner turn layers."""
@@ -363,6 +371,7 @@ class TraceRun:
                 self.on_event(dict(safe_row))
             except Exception:
                 logger.exception("failed to publish live trace event {}", event)
+        emit_trace_event(safe_row)
 
     def summary(
         self,
@@ -446,11 +455,15 @@ class TraceRun:
         *,
         initial_messages: list[dict[str, Any]],
         tools_count: int,
+        token_counter: object | None = None,
+        tool_definitions: list[dict[str, Any]] | None = None,
     ) -> "TraceHook":
         return TraceHook(
             self,
             initial_message_count=len(initial_messages),
             tools_count=tools_count,
+            token_counter=token_counter,
+            tool_definitions=tool_definitions,
             capture_prompts=self.capture_prompts,
             capture_tool_results=self.capture_tool_results,
         )
@@ -465,6 +478,8 @@ class TraceHook(AgentHook):
         *,
         initial_message_count: int,
         tools_count: int,
+        token_counter: object | None = None,
+        tool_definitions: list[dict[str, Any]] | None = None,
         capture_prompts: bool = False,
         capture_tool_results: bool = False,
     ) -> None:
@@ -472,6 +487,8 @@ class TraceHook(AgentHook):
         self._trace = trace
         self._initial_message_count = initial_message_count
         self._tools_count = tools_count
+        self._token_counter = token_counter
+        self._tool_definitions = list(tool_definitions or [])
         self._capture_prompts = capture_prompts
         self._capture_tool_results = capture_tool_results
         self._iteration_started_ns: dict[int, int] = {}
@@ -602,6 +619,22 @@ class TraceHook(AgentHook):
         self._model_attempts[context.iteration] = attempt
         self._model_started_ns[context.iteration] = time.monotonic_ns()
         fields: dict[str, Any] = {}
+        if self._token_counter is not None:
+            try:
+                from pawbot.utils.helpers import estimate_prompt_tokens_chain
+
+                estimated_tokens, source = estimate_prompt_tokens_chain(
+                    self._token_counter,
+                    context.model or self._trace.model,
+                    context.messages,
+                    self._tool_definitions,
+                )
+            except Exception:
+                fields["token_estimation_source"] = "unavailable"
+                logger.debug("Could not estimate prompt size for trace {}", self._trace.trace_id)
+            else:
+                fields["estimated_prompt_tokens"] = estimated_tokens
+                fields["token_estimation_source"] = source
         if self._capture_prompts:
             fields["messages_preview"] = trace_value_preview(context.messages, limit=8_000)
         self._trace.emit(
@@ -1015,6 +1048,7 @@ class TraceStore:
         root: Path,
         *,
         enabled: bool = True,
+        otel_enabled: bool = False,
         retention_days: int = _DEFAULT_RETENTION_DAYS,
         max_traces: int = _DEFAULT_MAX_TRACES,
         max_bytes: int = _DEFAULT_MAX_BYTES,
@@ -1024,6 +1058,7 @@ class TraceStore:
     ) -> None:
         self.root = root.expanduser().resolve(strict=False)
         self.enabled = enabled
+        self.otel_enabled = otel_enabled
         self.retention_days = max(0, retention_days)
         self.max_traces = max(1, max_traces)
         self.max_bytes = max(0, max_bytes)
@@ -1419,15 +1454,16 @@ class TraceStore:
         recording_directory: Path | None = None,
         mirror_recording: bool = False,
     ) -> TraceRun | None:
-        if not self.enabled:
+        if not self.enabled and not self.otel_enabled and recording_directory is None:
             return None
-        self.cleanup()
+        if self.enabled:
+            self.cleanup()
         trace_file_id: str | None = None
         on_finish: TraceFinishCallback | None = None
         writers: list[TraceWriterLike] = []
         if recording_directory is not None:
             writers.append(TraceWriter(recording_directory / TRACE_EVENTS_FILENAME))
-        if recording_directory is None or mirror_recording:
+        if self.enabled and (recording_directory is None or mirror_recording):
             path = self._trace_path(session_key, turn_id)
             trace_file_id = path.relative_to(self.root).as_posix()
             self._active_trace_ids.add(trace_file_id)
@@ -1440,6 +1476,8 @@ class TraceStore:
 
             on_finish = _finish_index
             writers.append(TraceWriter(path))
+        if not writers and self.otel_enabled:
+            writers.append(NullTraceWriter())
         if not writers:
             return None
         trace = TraceRun(

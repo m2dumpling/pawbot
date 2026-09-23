@@ -19,6 +19,10 @@ class MessageBus:
 
     async def publish_inbound(self, msg: InboundMessage) -> None:
         """Publish a message from a channel to the agent."""
+        if not msg.trace_context:
+            from pawbot.agent.otel import capture_trace_context
+
+            msg.trace_context = capture_trace_context()
         await self.inbound.put(msg)
 
     async def consume_inbound(self) -> InboundMessage:

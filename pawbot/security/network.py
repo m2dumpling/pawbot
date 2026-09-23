@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from urllib.request import getproxies, proxy_bypass
 
 import httpx
+import httpx2
 
 _BLOCKED_NETWORKS = [
     ipaddress.ip_network("0.0.0.0/8"),
@@ -29,6 +30,7 @@ _BLOCKED_NETWORKS = [
 
 _URL_RE = re.compile(r"https?://[^\s\"'`;|<>]+", re.IGNORECASE)
 _allowed_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+_PINNED_DNS_RESOLVER_LOCK = asyncio.Lock()
 
 
 def is_loopback_host(host: str) -> bool:
@@ -195,6 +197,29 @@ def httpx_env_proxy_mounts() -> dict[str, httpx.AsyncBaseTransport | None]:
     return mounts
 
 
+def httpx2_env_proxy_mounts() -> dict[str, httpx2.AsyncBaseTransport | None]:
+    """Build HTTPX2 proxy mounts for the MCP v2 transport stack."""
+    proxies = getproxies()
+    mounts: dict[str, httpx2.AsyncBaseTransport | None] = {}
+    for scheme in ("http", "https", "all"):
+        proxy_url = proxies.get(scheme)
+        if proxy_url:
+            if "://" not in proxy_url:
+                proxy_url = f"http://{proxy_url}"
+            mounts[f"{scheme}://"] = httpx2.AsyncHTTPTransport(proxy=httpx2.Proxy(proxy_url))
+
+    if not mounts:
+        return {}
+    no_proxy = proxies.get("no", "")
+    if no_proxy == "*":
+        return {}
+    for entry in no_proxy.split(","):
+        pattern = _no_proxy_mount_pattern(entry.strip())
+        if pattern:
+            mounts[pattern] = None
+    return mounts
+
+
 def _no_proxy_mount_pattern(hostname: str) -> str | None:
     if not hostname:
         return None
@@ -264,7 +289,7 @@ class UnsafeURLRequestError(httpx.RequestError):
 class PinnedDNSAsyncTransport(httpx.AsyncBaseTransport):
     """HTTPX transport that pins each request to the IPs validated for its URL."""
 
-    _resolver_lock = asyncio.Lock()
+    _resolver_lock = _PINNED_DNS_RESOLVER_LOCK
 
     def __init__(
         self,
@@ -280,6 +305,37 @@ class PinnedDNSAsyncTransport(httpx.AsyncBaseTransport):
         ok, error, resolved_ips = resolve_url_target(url, allow_loopback=self._allow_loopback)
         if not ok:
             raise UnsafeURLRequestError(error, request=request)
+        async with self._resolver_lock:
+            with pin_resolved_url_dns(url, resolved_ips):
+                return await self._inner.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+class PinnedDNSAsyncTransport2(httpx2.AsyncBaseTransport):
+    """HTTPX2 equivalent of :class:`PinnedDNSAsyncTransport` for MCP SDK v2.
+
+    MCP v2 deliberately uses distinct HTTPX2 transport types. Keep its DNS
+    validation and pinning identical to the rest of Pawbot's SSRF boundary.
+    """
+
+    _resolver_lock = _PINNED_DNS_RESOLVER_LOCK
+
+    def __init__(
+        self,
+        *,
+        allow_loopback: bool = False,
+        inner: httpx2.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._allow_loopback = allow_loopback
+        self._inner = inner or httpx2.AsyncHTTPTransport()
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        url = str(request.url)
+        ok, error, resolved_ips = resolve_url_target(url, allow_loopback=self._allow_loopback)
+        if not ok:
+            raise httpx2.RequestError(error, request=request)
         async with self._resolver_lock:
             with pin_resolved_url_dns(url, resolved_ips):
                 return await self._inner.handle_async_request(request)

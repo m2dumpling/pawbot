@@ -35,6 +35,8 @@ pawbot 最适合 Agent 开发者的能力是 **Record & Replay（录制与回放
 | 接入聊天应用 | [通道与集成](#通道与集成) |
 | 了解回放能力 | [Record & Replay](#record--replay录制与回放) |
 | 验证 AI 修改后的代码 | [Agent Harness Benchmark](#agent-harness-benchmark) |
+| 理解 Agent 控制流、审批与恢复 | [控制流与恢复契约](docs/agent-control-flow.md) |
+| 运行真实模型评测或启用 OTLP | [评测与可观测性说明](docs/agent-evaluation-observability.zh-CN.md) |
 | 查看完整使用方法 | [使用指南](docs/usage.zh-CN.md) |
 | 修改 Agent 或增加工具 | [开发](#开发) |
 
@@ -171,19 +173,19 @@ v0.4.2 开始，`pawbot update` 会把升级交给辅助进程，等当前启动
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.5/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.7.0/scripts/install.sh | sh
 ```
 
 如果系统没有 `curl`，也可以使用 `wget`：
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.5/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.7.0/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.6.5/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.7.0/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的
@@ -415,8 +417,8 @@ uv run --no-sync pawbot harness run
 uv run --no-sync python scripts/quality_gate.py
 ```
 
-Harness 已将执行轨迹检查和简单任务契约（最终内容、要求成功的 Tool）分开；更复杂的
-领域评测器属于下一阶段。因此，回放或 Harness 变绿都不是通用的模型回答质量评分。
+Harness 已将执行轨迹检查和简单任务契约（最终内容、要求成功的 Tool）分开。因此，
+回放或 Harness 变绿都不是通用的模型回答质量评分。
 
 ### Agent 任务评测集
 
@@ -432,6 +434,19 @@ pawbot eval run --json
 报告会分别统计 `task_passed`、`trajectory_passed`、`not_evaluable`、工具失败、模型请求次数
 和耗时。这是代码和编排的回归门禁，不是通用模型准确率评分。滚动缓存中的真实失败回合，
 在确认其中没有不应保留的敏感内容后，也可以提升为永久回归样本。
+
+按需测量真实模型时，可运行版本化的 20 个事件分诊用例；每个 trial 都使用隔离的假 API
+和临时 Workspace：
+
+```bash
+pawbot eval live list
+pawbot eval live run --trials 3 --seed 42 --max-total-cost-usd 1.00 --label baseline --output eval-reports/baseline.json
+pawbot eval live compare --baseline eval-reports/baseline.json --candidate eval-reports/candidate.json
+```
+
+Live 命令会请求真实 Provider，需要配置 token 单价并显式设置成本上限。内置用例是合成数据，
+不代表生产事故成功率。报告分别展示结果、轨迹、安全、估算成本和延迟。详细说明见
+[评测与可观测性文档](docs/agent-evaluation-observability.zh-CN.md)。
 
 WebUI 使用“工作区访问”时，写入、执行和网络 Tool 会在真正运行前等待明确批准；
 “完全访问”仍表示用户主动授予这些 Tool 直接执行权限。原生 TUI 使用同一套确认协议。

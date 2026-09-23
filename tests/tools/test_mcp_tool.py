@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 import pawbot.agent.tools.mcp as mcp_mod
@@ -112,7 +112,7 @@ def _fake_mcp_module(
 
     @asynccontextmanager
     async def _fake_streamable_http_client(_url: str, http_client=None):
-        yield object(), object(), object()
+        yield object(), object()
 
     mod.ClientSession = _FakeClientSession
     mod.StdioServerParameters = _FakeStdioServerParameters
@@ -139,7 +139,7 @@ def _fake_mcp_module(
             self.error = SimpleNamespace(code=code, message=message)
             super().__init__(message)
 
-    exc_mod.McpError = _FakeMcpError
+    exc_mod.MCPError = _FakeMcpError
     monkeypatch.setitem(sys.modules, "mcp.shared", shared_mod)
     monkeypatch.setitem(sys.modules, "mcp.shared.exceptions", exc_mod)
 
@@ -203,7 +203,7 @@ async def test_saved_oauth_http_403_projects_failed_runtime_without_details(
             request=request,
             response=response,
         )
-        yield object(), object(), object()
+        yield object(), object()
 
     async def reachable(_url: str) -> bool:
         return True
@@ -1029,7 +1029,7 @@ async def test_connect_mcp_servers_env_proxy_adds_proxy_mounts_and_keeps_pinned_
     @asynccontextmanager
     async def _capturing_streamable_http_client(_url: str, http_client=None):
         assert http_client is not None
-        yield object(), object(), object()
+        yield object(), object()
 
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
     monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1,::1")
@@ -1037,16 +1037,16 @@ async def test_connect_mcp_servers_env_proxy_adds_proxy_mounts_and_keeps_pinned_
     monkeypatch.setattr(mcp_mod, "_probe_http_url", _reachable)
     monkeypatch.setattr(
         mcp_mod,
-        "PinnedDNSAsyncTransport",
+        "PinnedDNSAsyncTransport2",
         lambda: httpx.MockTransport(lambda request: httpx.Response(200, request=request)),
     )
     monkeypatch.setattr(
-        "pawbot.security.network.httpx.AsyncHTTPTransport",
+        "pawbot.security.network.httpx2.AsyncHTTPTransport",
         lambda **_kwargs: httpx.MockTransport(
             lambda request: httpx.Response(200, request=request)
         ),
     )
-    monkeypatch.setattr(mcp_mod.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(mcp_mod.httpx2, "AsyncClient", FakeAsyncClient)
     monkeypatch.setattr(sys.modules["mcp.client.sse"], "sse_client", _capturing_sse_client)
     monkeypatch.setattr(
         sys.modules["mcp.client.streamable_http"],
@@ -1069,11 +1069,11 @@ def test_mcp_http_clients_no_proxy_env_keeps_pinned_direct_route(monkeypatch):
     monkeypatch.setenv("NO_PROXY", "mcp.example.com")
     monkeypatch.setattr(
         mcp_mod,
-        "PinnedDNSAsyncTransport",
+        "PinnedDNSAsyncTransport2",
         lambda: httpx.MockTransport(lambda request: httpx.Response(200, request=request)),
     )
     monkeypatch.setattr(
-        "pawbot.security.network.httpx.AsyncHTTPTransport",
+        "pawbot.security.network.httpx2.AsyncHTTPTransport",
         lambda **_kwargs: httpx.MockTransport(
             lambda request: httpx.Response(200, request=request)
         ),
@@ -1143,16 +1143,16 @@ async def test_connect_mcp_servers_http_clients_reject_unsafe_redirect_targets(
         assert http_client is not None
         used_transports.append("streamableHttp")
         await http_client.get("https://example.com/start")
-        yield object(), object(), object()
+        yield object(), object()
 
     monkeypatch.setattr(mcp_mod, "validate_url_target", _validate)
     monkeypatch.setattr(mcp_mod, "_probe_http_url", _reachable)
     monkeypatch.setattr(
         mcp_mod,
-        "PinnedDNSAsyncTransport",
+        "PinnedDNSAsyncTransport2",
         lambda **_kwargs: httpx.MockTransport(_handler),
     )
-    monkeypatch.setattr(mcp_mod.httpx, "AsyncClient", _async_client_with_mock_transport)
+    monkeypatch.setattr(mcp_mod.httpx2, "AsyncClient", _async_client_with_mock_transport)
     monkeypatch.setattr(sys.modules["mcp.client.sse"], "sse_client", _fake_sse_client)
     monkeypatch.setattr(
         sys.modules["mcp.client.streamable_http"],
@@ -1326,13 +1326,13 @@ async def test_connect_mcp_servers_streamable_http_uses_finite_timeout(
     @asynccontextmanager
     async def _capturing_streamable_http_client(_url: str, http_client=None):
         captured["timeout"] = http_client.timeout
-        yield object(), object(), object()
+        yield object(), object()
 
     monkeypatch.setattr(mcp_mod, "validate_url_target", _validate)
     monkeypatch.setattr(mcp_mod, "_probe_http_url", _reachable)
     monkeypatch.setattr(
         mcp_mod,
-        "PinnedDNSAsyncTransport",
+        "PinnedDNSAsyncTransport2",
         lambda: httpx.MockTransport(lambda request: httpx.Response(200, request=request)),
     )
     monkeypatch.setattr(
@@ -1405,11 +1405,11 @@ async def test_connect_mcp_servers_attaches_oauth_to_remote_http_client(
     @asynccontextmanager
     async def _capturing_streamable_http_client(_url: str, http_client=None):
         assert http_client is not None
-        yield object(), object(), object()
+        yield object(), object()
 
     monkeypatch.setattr(mcp_mod, "validate_url_target", _validate)
     monkeypatch.setattr(mcp_mod, "_probe_http_url", _reachable)
-    monkeypatch.setattr(mcp_mod.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(mcp_mod.httpx2, "AsyncClient", FakeAsyncClient)
     monkeypatch.setattr(sys.modules["mcp.client.sse"], "sse_client", _capturing_sse_client)
     monkeypatch.setattr(
         sys.modules["mcp.client.streamable_http"],
@@ -1696,10 +1696,10 @@ async def test_prompt_wrapper_execute_handles_timeout() -> None:
 
 @pytest.mark.asyncio
 async def test_prompt_wrapper_execute_handles_mcp_error() -> None:
-    from mcp.shared.exceptions import McpError
+    from mcp.shared.exceptions import MCPError
 
     async def get_prompt(name: str, arguments: dict | None = None) -> object:
-        raise McpError(code=42, message="invalid argument")
+        raise MCPError(code=42, message="invalid argument")
 
     wrapper = _make_prompt_wrapper(SimpleNamespace(get_prompt=get_prompt))
     result = await wrapper.execute()

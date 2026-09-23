@@ -1,4 +1,4 @@
-"""CLI for the deterministic task-level evaluation set."""
+"""CLI for deterministic and opt-in live task evaluation."""
 
 from __future__ import annotations
 
@@ -8,12 +8,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from pawbot.cli.live_eval import live_eval_app
 from pawbot.evals import eval_cases, run_eval_sync
 
 eval_app = typer.Typer(
-    help="Run the provider-free Pawbot task evaluation set",
+    help="Run Pawbot's provider-free regression evals or opt-in live model evals",
     no_args_is_help=True,
 )
+eval_app.add_typer(live_eval_app, name="live")
 console = Console()
 
 

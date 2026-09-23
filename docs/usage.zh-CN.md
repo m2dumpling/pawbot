@@ -1,6 +1,6 @@
 # pawbot 使用指南
 
-当前文档对应 `v0.6.5`。
+当前文档对应待发布的 `v0.7.0`。真实模型评测和可选 OTLP 配置见[Agent 评测与可观测性指南](agent-evaluation-observability.zh-CN.md)。
 
 这篇文档面向已经安装 Pawbot 的用户，集中说明 CLI、WebUI、Trace、滚动回放、Record & Replay、Task Eval Set 和 Harness 的实际用法。
 

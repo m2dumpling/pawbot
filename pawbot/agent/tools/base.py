@@ -169,6 +169,21 @@ ToolRecoveryStrategy = Literal[
 
 
 @dataclass(frozen=True, slots=True)
+class ToolExecutionContext:
+    """Stable identity supplied to adapters for logs and remote idempotency.
+
+    ``operation_id`` is Pawbot's deterministic identity for one logical
+    operation. ``idempotency_key`` is opt-in: adapters may send it to a remote
+    service only when that service explicitly guarantees idempotency keys.
+    MCP tools do not receive it automatically because MCP has no universal
+    idempotency-key contract.
+    """
+
+    operation_id: str
+    idempotency_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ToolExecutionPolicy:
     """Side-effect and recovery contract declared by a Tool implementation."""
 
@@ -310,6 +325,20 @@ class Tool(ABC):
     async def execute(self, **kwargs: Any) -> Any:
         """Run the tool; return content, or ``ToolResult.error(...)`` for failures."""
         ...
+
+    async def execute_with_context(
+        self,
+        context: ToolExecutionContext,
+        **kwargs: Any,
+    ) -> Any:
+        """Optional execution boundary for adapters needing stable operation IDs.
+
+        Existing Tools remain source compatible. Remote adapters can override
+        this method and forward ``context.idempotency_key`` to a service that
+        documents support for it.
+        """
+        del context
+        return await self.execute(**kwargs)
 
     @staticmethod
     def error(content: str) -> ToolResult:

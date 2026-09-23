@@ -45,18 +45,65 @@ def _encoding(model: str | None):
     return _tiktoken.get_encoding("cl100k_base")
 
 
-def count_tokens(text: str, model: str | None = None) -> int:
-    """Token count for one text blob with a byte-heuristic fallback."""
+def tokenizer_encoding_name(model: str | None = None) -> str | None:
+    """Return the encoding selected for *model*, or ``None`` for the fallback.
+
+    This reports the chosen tokenizer family, not a provider's private billing
+    tokenizer. Providers may override Pawbot's estimate with their own counter.
+    """
+    if _tiktoken is None:
+        return None
+    if model:
+        lowered = model.lower()
+        if any(
+            family in lowered
+            for family in ("o200k", "gpt-5", "gpt-4o", "gpt-4.1", "o1", "o3", "chatgpt")
+        ):
+            return "o200k_base"
+    return "cl100k_base"
+
+
+def token_estimation_source(model: str | None = None) -> str:
+    """Identify tokenizer and whether its model mapping is specific or generic."""
+    try:
+        enc = _encoding(model)
+    except Exception:
+        enc = None
+    if enc is None:
+        return "heuristic:utf8_4_bytes_per_token"
+    name = getattr(enc, "name", tokenizer_encoding_name(model) or "model_encoding")
+    lowered = (model or "").lower()
+    if any(
+        family in lowered
+        for family in ("o200k", "gpt-5", "gpt-4o", "gpt-4.1", "o1", "o3", "chatgpt")
+    ):
+        mapping = "model_family"
+    elif lowered.startswith(("gpt-3", "gpt-4", "text-embedding-ada", "text-davinci")):
+        mapping = "model_family"
+    else:
+        mapping = "generic_fallback"
+    return f"tiktoken:{name}:{mapping}"
+
+
+def count_tokens_with_source(text: str, model: str | None = None) -> tuple[int, str]:
+    """Count one text blob and return the actual counter used."""
     if not text:
-        return 0
-    enc = _encoding(model)
+        return 0, token_estimation_source(model)
+    try:
+        enc = _encoding(model)
+    except Exception:
+        enc = None
     if enc is not None:
         try:
-            return len(enc.encode(text))
+            return len(enc.encode(text)), token_estimation_source(model)
         except Exception:
             pass
-    # 4 bytes per token heuristic (upstream-compatible fallback).
-    return max(1, (len(text.encode("utf-8")) + 3) // 4)
+    return max(1, (len(text.encode("utf-8")) + 3) // 4), "heuristic:utf8_4_bytes_per_token"
+
+
+def count_tokens(text: str, model: str | None = None) -> int:
+    """Token count for one text blob with a byte-heuristic fallback."""
+    return count_tokens_with_source(text, model)[0]
 
 
 def count_message_tokens(message: dict[str, Any], model: str | None = None) -> int:
@@ -115,6 +162,15 @@ def count_prompt_tokens(
     model: str | None = None,
 ) -> int:
     """Full prompt token estimate: messages + tool schemas."""
+    return count_prompt_tokens_with_source(messages, tools, model)[0]
+
+
+def count_prompt_tokens_with_source(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+    model: str | None = None,
+) -> tuple[int, str]:
+    """Full prompt estimate plus tokenizer/fallback provenance."""
     total = sum(count_message_tokens(msg, model) for msg in messages)
     if tools:
         schema_tokens = sum(
@@ -122,7 +178,7 @@ def count_prompt_tokens(
             for tool in tools
         )
         total += schema_tokens + 32  # tools framing overhead
-    return total
+    return total, token_estimation_source(model)
 
 
 def system_prompt_tokens(text: str, model: str | None = None) -> int:

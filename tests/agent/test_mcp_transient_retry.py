@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from mcp import types as mcp_types
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
+from mcp.shared.exceptions import MCPError
 
 from pawbot.agent.tools.mcp import (
     MCPPromptWrapper,
@@ -37,12 +36,12 @@ class _FakeEndOfStreamError(Exception):
 _FakeEndOfStreamError.__name__ = "EndOfStream"
 
 
-def _session_terminated_error() -> McpError:
-    return McpError(ErrorData(code=-32000, message="Session terminated"))
+def _session_terminated_error() -> MCPError:
+    return MCPError(code=-32000, message="Session terminated")
 
 
-def _connection_closed_error() -> McpError:
-    return McpError(ErrorData(code=-32000, message="Connection closed"))
+def _connection_closed_error() -> MCPError:
+    return MCPError(code=-32000, message="Connection closed")
 
 
 def test_is_transient_recognizes_closed_resource():
@@ -418,7 +417,7 @@ async def test_prompt_no_retry_on_mcp_error():
     """McpError (application-level) should NOT trigger retry."""
     session = AsyncMock()
     session.get_prompt = AsyncMock(
-        side_effect=McpError(ErrorData(code=-1, message="not found"))
+        side_effect=MCPError(code=-1, message="not found")
     )
 
     wrapper = MCPPromptWrapper(session, "test_server", _make_prompt_def())

@@ -9,6 +9,9 @@ def test_observability_config_accepts_json_aliases_and_round_trips() -> None:
     config = Config.model_validate({
         "observability": {
             "enabled": False,
+            "otelEnabled": True,
+            "otelServiceName": "pawbot-test",
+            "otelSampleRatio": 0.25,
             "retentionDays": 7,
             "maxTraces": 12,
             "maxBytes": 4096,
@@ -20,6 +23,9 @@ def test_observability_config_accepts_json_aliases_and_round_trips() -> None:
     })
 
     assert config.observability.enabled is False
+    assert config.observability.otel_enabled is True
+    assert config.observability.otel_service_name == "pawbot-test"
+    assert config.observability.otel_sample_ratio == 0.25
     assert config.observability.retention_days == 7
     assert config.observability.max_traces == 12
     assert config.observability.max_bytes == 4096
@@ -29,6 +35,9 @@ def test_observability_config_accepts_json_aliases_and_round_trips() -> None:
     assert config.observability.rolling_max_bytes == 8192
     assert config.model_dump(mode="json", by_alias=True)["observability"] == {
         "enabled": False,
+        "otelEnabled": True,
+        "otelServiceName": "pawbot-test",
+        "otelSampleRatio": 0.25,
         "retentionDays": 7,
         "maxTraces": 12,
         "maxBytes": 4096,
@@ -44,6 +53,7 @@ def test_observability_config_rejects_invalid_retention_limits() -> None:
         {"retentionDays": -1},
         {"maxTraces": 0},
         {"maxBytes": -1},
+        {"otelSampleRatio": 1.1},
     ):
         try:
             Config.model_validate({"observability": payload})

@@ -6,7 +6,7 @@ import pytest
 
 from pawbot.agent.approval import ToolApprovalRequest, ToolApprovalResult
 from pawbot.agent.hook import AgentHook, AgentHookContext
-from pawbot.agent.tools.base import ToolExecutionPolicy, ToolResult
+from pawbot.agent.tools.base import ToolExecutionContext, ToolExecutionPolicy, ToolResult
 from pawbot.agent.tools.execution import CallExecutor, operation_id_for_tool_call
 from pawbot.agent.tools.registry import ToolRegistry
 from pawbot.harness import HarnessTool
@@ -28,6 +28,20 @@ class _PolicyTool(HarnessTool):
     @property
     def execution_policy(self) -> ToolExecutionPolicy:
         return self._policy
+
+
+class _ContextAwarePolicyTool(_PolicyTool):
+    def __init__(self, policy: ToolExecutionPolicy, action: Any) -> None:
+        super().__init__(policy, action)
+        self.execution_contexts: list[ToolExecutionContext] = []
+
+    async def execute_with_context(
+        self,
+        context: ToolExecutionContext,
+        **kwargs: Any,
+    ) -> Any:
+        self.execution_contexts.append(context)
+        return await self.execute(**kwargs)
 
 
 def _executor(
@@ -116,6 +130,58 @@ async def test_idempotent_operation_is_retried_without_confirmation() -> None:
     assert calls == 1
     assert context.tool_states[-1]["recovery_resolution"] == "auto_retry"
     assert context.tool_states[-1]["recovery_required"] is True
+
+
+@pytest.mark.asyncio
+async def test_idempotent_adapter_receives_stable_remote_idempotency_key() -> None:
+    registry = ToolRegistry()
+    tool = _ContextAwarePolicyTool(
+        ToolExecutionPolicy(
+            side_effect="reversible",
+            idempotency="idempotent",
+            recovery_strategy="safe_retry",
+            reversible=True,
+        ),
+        lambda _arguments: "ok",
+    )
+    registry.register(tool)
+    call = ToolCallRequest(id="call-new", name="mutate", arguments={"value": "x"})
+    context = _interrupted_context(call)
+
+    result, event = await _executor(registry, context).run(call)
+
+    assert result == "ok"
+    assert event["status"] == "ok"
+    assert len(tool.execution_contexts) == 1
+    execution = tool.execution_contexts[0]
+    expected_id = operation_id_for_tool_call("test:recovery", "mutate", {"value": "x"})
+    assert execution.operation_id == expected_id
+    assert execution.idempotency_key == expected_id
+    assert context.tool_states[-1]["operation_id"] == expected_id
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_idempotency_is_not_advertised_to_adapter() -> None:
+    registry = ToolRegistry()
+    tool = _ContextAwarePolicyTool(
+        ToolExecutionPolicy(
+            side_effect="irreversible",
+            idempotency="unknown",
+            recovery_strategy="manual_confirmation",
+        ),
+        lambda _arguments: "accepted",
+    )
+    registry.register(tool)
+    call = ToolCallRequest(id="call-unknown", name="mutate", arguments={"value": "x"})
+    context = AgentHookContext(iteration=0, session_key="test:normal", messages=[])
+
+    result, event = await _executor(registry, context).run(call)
+
+    assert result == "accepted"
+    assert event["status"] == "ok"
+    assert len(tool.execution_contexts) == 1
+    assert tool.execution_contexts[0].operation_id
+    assert tool.execution_contexts[0].idempotency_key is None
 
 
 @pytest.mark.asyncio

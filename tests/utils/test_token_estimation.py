@@ -27,7 +27,7 @@ def test_estimate_prompt_tokens_chain_falls_back_without_provider_counter() -> N
     )
 
     assert tokens > 0
-    assert source == "tiktoken"
+    assert source == "tiktoken:cl100k_base:generic_fallback"
 
 
 def test_estimate_prompt_tokens_chain_falls_back_when_provider_counter_fails() -> None:
@@ -38,7 +38,7 @@ def test_estimate_prompt_tokens_chain_falls_back_when_provider_counter_fails() -
     )
 
     assert tokens > 0
-    assert source == "tiktoken"
+    assert source == "tiktoken:cl100k_base:generic_fallback"
 
 
 def test_estimate_prompt_tokens_uses_conservative_fallback_when_tiktoken_fails(
@@ -63,7 +63,7 @@ def test_estimate_prompt_tokens_uses_conservative_fallback_when_tiktoken_fails(
     assert tokens == len(content.encode("utf-8")) + 4
     assert tokens >= actual_tokens
     assert chain_tokens == tokens
-    assert source == "heuristic"
+    assert source == "heuristic:utf8_bytes"
 
 
 def test_estimate_message_tokens_uses_canonical_byte_fallback(monkeypatch) -> None:
@@ -155,3 +155,62 @@ def test_estimate_prompt_tokens_recomputes_when_tool_items_change(monkeypatch) -
     after_tools = "\n" + json.dumps(tools, ensure_ascii=False)
     assert before_tools in fake_encoding.encoded
     assert after_tools in fake_encoding.encoded
+
+
+def test_model_families_select_and_report_their_tokenizer(monkeypatch) -> None:
+    helpers._get_token_encoding.cache_clear()
+    selected: list[str] = []
+
+    class FakeEncoding:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def encode(self, text: str) -> list[int]:
+            return list(range(len(text)))
+
+    def fake_get_encoding(name: str) -> FakeEncoding:
+        selected.append(name)
+        return FakeEncoding(name)
+
+    monkeypatch.setattr(helpers.tiktoken, "get_encoding", fake_get_encoding)
+    messages = [{"role": "user", "content": "你好"}]
+    o_tokens, o_source = estimate_prompt_tokens_chain(
+        _NoCounterProvider(), "gpt-4o-mini", messages
+    )
+    legacy_tokens, legacy_source = estimate_prompt_tokens_chain(
+        _NoCounterProvider(), "vendor-unknown-model", messages
+    )
+
+    assert o_tokens > 0 and legacy_tokens > 0
+    assert "o200k_base" in selected
+    assert "cl100k_base" in selected
+    assert o_source == "tiktoken:o200k_base:model_family"
+    assert legacy_source == "tiktoken:cl100k_base:generic_fallback"
+    assert token_estimation.tokenizer_encoding_name("gpt-4o") == "o200k_base"
+    assert token_estimation.tokenizer_encoding_name("vendor-unknown-model") == "cl100k_base"
+
+
+def test_tool_schema_token_cache_is_separate_per_encoding(monkeypatch) -> None:
+    helpers._get_token_encoding.cache_clear()
+    helpers._TOOLS_TOKEN_CACHE.clear()
+
+    class FakeEncoding:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def encode(self, text: str) -> list[int]:
+            width = 2 if self.name == "o200k_base" else 1
+            return list(range(max(1, len(text) // width)))
+
+    monkeypatch.setattr(
+        helpers.tiktoken,
+        "get_encoding",
+        lambda name: FakeEncoding(name),
+    )
+    tools = [{"type": "function", "function": {"name": "lookup", "description": "x" * 400}}]
+    messages = [{"role": "user", "content": "hi"}]
+
+    o_tokens = estimate_prompt_tokens(messages, tools, model="gpt-4o")
+    legacy_tokens = estimate_prompt_tokens(messages, tools, model="unknown-vendor")
+
+    assert o_tokens < legacy_tokens

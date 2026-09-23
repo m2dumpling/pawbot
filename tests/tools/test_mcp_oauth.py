@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 from urllib.parse import parse_qs, urlsplit
 
-import httpx
+import httpx2 as httpx
 import pytest
+from mcp.client.auth import AuthorizationCodeResult
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 from pawbot.agent.tools.mcp_oauth import (
@@ -164,8 +165,8 @@ async def test_create_mcp_oauth_auth_uses_browser_handlers_and_persists_redirect
     async def redirect(_url: str) -> None:
         return None
 
-    async def callback() -> tuple[str, str | None]:
-        return "code", "state"
+    async def callback() -> AuthorizationCodeResult:
+        return AuthorizationCodeResult(code="code", state="state")
 
     handlers = MCPOAuthHandlers(
         redirect_uri="https://agent.example/auth/mcp/callback",
@@ -242,9 +243,13 @@ async def test_official_mcp_sdk_completes_discovery_registration_and_token_excha
         nonlocal authorization_url
         authorization_url = url
 
-    async def callback() -> tuple[str, str | None]:
+    async def callback() -> AuthorizationCodeResult:
         state = parse_qs(urlsplit(authorization_url).query)["state"][0]
-        return "authorization-code", state
+        return AuthorizationCodeResult(
+            code="authorization-code",
+            state=state,
+            iss="https://auth.example.com",
+        )
 
     auth = await create_mcp_oauth_auth(
         "company-mcp",
