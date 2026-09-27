@@ -32,8 +32,6 @@ supported surface and known boundaries of each published version.
 
 ## 0.7.1 - 2026-09-27
 
-## 0.7.1 - 2026-09-27
-
 ### Fixed
 
 - Improved Agent reply and WebUI response speed by moving event-journal and

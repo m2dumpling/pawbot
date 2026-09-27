@@ -179,6 +179,10 @@ The same actions are available as slash commands:
 
 **Keep for regression** creates a permanent sample for later Replay. **Add to task eval** promotes the sample and registers it in the local custom evaluation set. If the original turn had no TaskContract, its task result may be `not_evaluable`, while its trajectory can still be checked. **Ignore** moves it to reviewed evidence.
 
+After keeping a candidate, the saved sample also has an **Add to task eval**
+action in the Saved regression samples list. Removing a custom entry from the
+evaluation set keeps the regression sample available for Replay.
+
 ## 5. Personalization and memory
 
 Open **Settings → Personalization** to edit the free-form personal instructions
@@ -323,7 +327,7 @@ checks return `not_evaluable` instead of trusting the Agent's own completion cla
 
 ## 9. Run the Agent Task Eval Set
 
-The built-in Task Eval Set is a small provider-free regression suite above the Harness:
+The built-in Task Eval Set is a small provider-free regression suite above the Harness. It can also include saved local regression samples that you explicitly add from the WebUI:
 
 ```bash
 pawbot eval list
@@ -334,6 +338,10 @@ pawbot eval run --json
 In the WebUI, open **Settings → Execution & regression → Agent task evaluation set → Run evaluation**. The report separates task results, trajectory results, `not_evaluable`, tool failures, model requests, tool calls, and elapsed time.
 
 The built-in cases cover normal tool use, tool failure recovery, file change and verification, investigation and summary, human approval, and budget boundaries.
+
+Built-in cases use scripted providers and in-memory tools. Added regression
+samples use their recorded provider and tool rails. Both paths avoid new real
+provider requests and real tool side effects.
 
 The distinction is:
 
