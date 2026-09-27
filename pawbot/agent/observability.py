@@ -613,6 +613,26 @@ class TraceHook(AgentHook):
             ttft_ms=getattr(response, "ttft_ms", None),
             error=_response_error(response),
         )
+        if finish_reason == "length":
+            for tool_call in context.tool_calls:
+                self._trace.emit(
+                    "tool.discarded",
+                    status="blocked",
+                    iteration=context.iteration,
+                    call_id=str(getattr(tool_call, "id", "") or "") or None,
+                    tool_name=str(getattr(tool_call, "name", "") or "unknown"),
+                    side_effect="not_started",
+                    error={
+                        "type": "output_limit_error",
+                        "code": "OUTPUT_LIMIT_EXCEEDED",
+                        "message": (
+                            "Tool call was discarded because the model response reached its "
+                            "output limit before the call could be verified as complete."
+                        ),
+                        "retryable": False,
+                        "recovery_strategy": "chunk_output",
+                    },
+                )
 
     async def on_model_request_started(self, context: AgentHookContext) -> None:
         attempt = self._model_attempts.get(context.iteration, 0) + 1
@@ -921,7 +941,10 @@ class TraceHook(AgentHook):
         self._trace.emit(
             "agent.error",
             status="error",
-            error=_error_payload(context.error or context.exception),
+            error=_error_payload(
+                context.error or context.exception,
+                code=context.error_code,
+            ),
             stop_reason=context.stop_reason,
             budget=context.budget,
             outcome=context.outcome,
@@ -960,7 +983,7 @@ class TraceHook(AgentHook):
         )
 
 
-def _error_payload(value: Any) -> dict[str, Any] | None:
+def _error_payload(value: Any, *, code: str | None = None) -> dict[str, Any] | None:
     if value is None:
         return None
     if isinstance(value, BaseException):
@@ -972,7 +995,7 @@ def _error_payload(value: Any) -> dict[str, Any] | None:
         }
     return {
         "type": "agent_error",
-        "code": "AGENT_ERROR",
+        "code": code or "AGENT_ERROR",
         "message": redact_text(value),
         "retryable": False,
     }

@@ -87,6 +87,7 @@ _WEBUI_OAUTH_TIMEOUT_S = 600
 _MODEL_CONFIGURATION_SLUG_RE = re.compile(r"[^a-z0-9_-]+")
 _ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _REDACTED_PROVIDER_SECRET = "••••••••"
+_DEEPSEEK_DEFAULT_MAX_TOKENS = 65_536
 _PROVIDER_STRUCTURED_FIELDS = ("extra_headers", "extra_body", "extra_query")
 _PROVIDER_SECRET_KEYS = frozenset({
     "auth",
@@ -939,6 +940,17 @@ def _model_configuration_slug(label: str) -> str:
     return normalized
 
 
+def _is_deepseek_model(model: str, provider: str) -> bool:
+    model_id = model.strip().lower().rsplit("/", 1)[-1]
+    return provider.strip().lower() == "deepseek" or model_id.startswith("deepseek-")
+
+
+def _default_max_tokens_for_model(model: str, provider: str, fallback: int) -> int:
+    if _is_deepseek_model(model, provider):
+        return _DEEPSEEK_DEFAULT_MAX_TOKENS
+    return fallback
+
+
 def _model_configuration_name(value: str) -> str:
     """Validate a user-facing preset name without inventing a second identity."""
     name = value.strip()
@@ -1309,6 +1321,13 @@ def create_model_configuration(
         query_first_alias(query, "max_tokens", "maxTokens"),
         "max_tokens",
     )
+    base_max_tokens = base.max_tokens
+    if (
+        _is_deepseek_model(base.model, base.provider)
+        and base_max_tokens == _DEEPSEEK_DEFAULT_MAX_TOKENS
+    ):
+        base_max_tokens = config.resolve_default_preset().max_tokens
+    default_max_tokens = _default_max_tokens_for_model(model, provider, base_max_tokens)
     context_window_tokens = _parse_positive_int(
         query_first_alias(query, "context_window_tokens", "contextWindowTokens"),
         "context_window_tokens",
@@ -1322,7 +1341,7 @@ def create_model_configuration(
     config.model_presets[name] = ModelPresetConfig(
         model=model,
         provider=provider,
-        max_tokens=max_tokens if max_tokens is not None else base.max_tokens,
+        max_tokens=max_tokens if max_tokens is not None else default_max_tokens,
         context_window_tokens=(
             context_window_tokens
             if context_window_tokens is not None

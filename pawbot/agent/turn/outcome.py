@@ -217,7 +217,11 @@ class TurnOutcome:
             else "not_needed"
         )
 
+        result_error_code = _text(getattr(result, "error_code", None), limit=160)
         error_code = (
+            result_error_code
+            if result_error_code is not None
+            else
             "TASK_VERIFICATION_FAILED"
             if task_status == "failed"
             else "TURN_CANCELLED"

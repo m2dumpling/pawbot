@@ -853,7 +853,67 @@ def _rolling_candidates_sync(agent: Any) -> dict[str, Any]:
     rolling = _rolling_blackbox(agent)
     if rolling is None or not callable(getattr(rolling, "list_candidates", None)):
         return {"candidates": []}
-    return {"candidates": _json_safe(rolling.list_candidates())}
+    names = _session_display_names(agent)
+    candidates = rolling.list_candidates()
+    root = getattr(rolling, "candidates_directory", None)
+    enriched: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        row = cast(dict[str, Any], candidate)
+        session_key = row.get("session_key")
+        session_name = names.get(session_key) if isinstance(session_key, str) else None
+        preview = ""
+        candidate_id = row.get("candidate_id")
+        if isinstance(root, Path) and isinstance(candidate_id, str) and candidate_id:
+            candidate_directory = (root / candidate_id).resolve()
+            if candidate_directory.parent == root.resolve():
+                preview = _candidate_user_preview(candidate_directory)
+        enriched.append({
+            **row,
+            "session_name": session_name,
+            "display_title": session_name or preview,
+            "turn_preview": preview,
+        })
+    return {"candidates": _json_safe(enriched)}
+
+
+def _candidate_user_preview(directory: Path) -> str:
+    """Extract a short readable fallback when a conversation has no title yet."""
+    turns_path = directory / "turns.jsonl"
+    try:
+        with turns_path.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                if not isinstance(record, dict):
+                    continue
+                record_mapping = cast(dict[str, Any], record)
+                if record_mapping.get("kind") != "turn":
+                    continue
+                raw_messages = record_mapping.get("initial_messages")
+                if not isinstance(raw_messages, list):
+                    continue
+                for message in cast(list[Any], raw_messages):
+                    if not isinstance(message, dict):
+                        continue
+                    message_mapping = cast(dict[str, Any], message)
+                    if message_mapping.get("role") != "user":
+                        continue
+                    content = message_mapping.get("content")
+                    if isinstance(content, str):
+                        return _compact_session_label(content)
+                    if isinstance(content, list):
+                        text = " ".join(
+                            str(cast(dict[str, Any], part).get("text") or "")
+                            for part in cast(list[Any], content)
+                            if isinstance(part, dict)
+                        )
+                        return _compact_session_label(text)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return ""
+    return ""
 
 
 async def _rolling_candidates(agent: Any) -> dict[str, Any]:
@@ -890,7 +950,7 @@ async def _reject_candidate(agent: Any, payload: dict[str, Any]) -> dict[str, An
     return {"rejected": True, "directory": str(directory), "candidate_id": candidate_id}
 
 
-async def _add_candidate_to_eval(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+def _add_candidate_to_eval_sync(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
     rolling = _rolling_blackbox(agent)
     candidate_id = str(payload.get("candidate_id") or "").strip()
     add_to_eval = getattr(rolling, "add_candidate_to_eval", None) if rolling is not None else None
@@ -907,6 +967,63 @@ async def _add_candidate_to_eval(agent: Any, payload: dict[str, Any]) -> dict[st
     except (OSError, ValueError) as exc:
         raise BlackboxActionError(422, f"无法加入任务评测集：{exc}") from exc
     return {"added": True, "case": _json_safe(case)}
+
+
+async def _add_candidate_to_eval(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return await asyncio.to_thread(_add_candidate_to_eval_sync, agent, payload)
+
+
+def _add_recording_to_eval_sync(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    rolling = _rolling_blackbox(agent)
+    add_recording = getattr(rolling, "add_recording_to_eval", None) if rolling is not None else None
+    if not callable(add_recording):
+        raise BlackboxActionError(503, "滚动回放缓存不可用")
+    raw_directory = str(payload.get("directory") or "").strip()
+    if not raw_directory:
+        raise BlackboxActionError(400, "directory is required")
+    directory = _resolve_directory(agent, raw_directory)
+
+    rolling_samples = getattr(rolling, "samples_directory", None)
+    allowed_root: Path | None = None
+    if directory.parent == _blackbox_root(agent):
+        allowed_root = _blackbox_root(agent)
+    elif isinstance(rolling_samples, Path) and directory.parent == rolling_samples.resolve():
+        allowed_root = rolling_samples.resolve()
+    if allowed_root is None:
+        raise BlackboxActionError(400, "只能将已保存的回归样本加入任务评测集")
+    if _recording_summary(directory).get("status") != "ready":
+        raise BlackboxActionError(409, "样本尚未完整保存，不能加入任务评测集")
+
+    try:
+        case = add_recording(
+            directory,
+            title=str(payload.get("title") or "").strip() or None,
+            allowed_roots=(allowed_root,),
+        )
+    except (OSError, ValueError) as exc:
+        raise BlackboxActionError(422, f"无法加入任务评测集：{exc}") from exc
+    return {"added": True, "case": _json_safe(case)}
+
+
+async def _add_recording_to_eval(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return await asyncio.to_thread(_add_recording_to_eval_sync, agent, payload)
+
+
+def _remove_eval_case_sync(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    rolling = _rolling_blackbox(agent)
+    remove_case = getattr(rolling, "remove_eval_case", None) if rolling is not None else None
+    if not callable(remove_case):
+        raise BlackboxActionError(503, "滚动回放缓存不可用")
+    case_id = str(payload.get("case_id") or "").strip()
+    if not case_id:
+        raise BlackboxActionError(400, "case_id is required")
+    if not remove_case(case_id):
+        raise BlackboxActionError(404, "任务评测条目不存在")
+    return {"deleted": True, "case_id": case_id}
+
+
+async def _remove_eval_case(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return await asyncio.to_thread(_remove_eval_case_sync, agent, payload)
 
 
 def _eval_list_sync(agent: Any) -> dict[str, Any]:
@@ -1080,6 +1197,14 @@ async def _delete(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
         if Path(active_directory).resolve() == directory:
             raise BlackboxActionError(409, "请先停止正在进行的录制")
 
+    rolling = _rolling_blackbox(agent)
+    remove_sample_refs = (
+        getattr(rolling, "remove_eval_cases_for_sample", None)
+        if rolling is not None
+        else None
+    )
+    if callable(remove_sample_refs):
+        remove_sample_refs(directory)
     shutil.rmtree(directory)
     return {"deleted": True, "directory": str(directory)}
 
@@ -1361,10 +1486,14 @@ def blackbox_action_factory(
             return await _reject_candidate(agent, payload)
         if action == "rolling.add_to_eval":
             return await _add_candidate_to_eval(agent, payload)
+        if action == "rolling.add_recording_to_eval":
+            return await _add_recording_to_eval(agent, payload)
         if action == "eval.list":
             return await _eval_list(agent)
         if action == "eval.run":
             return await _eval_run(agent, payload)
+        if action == "eval.remove":
+            return await _remove_eval_case(agent, payload)
         if action == "detail":
             return await _detail(agent, payload)
         if action == "delete":

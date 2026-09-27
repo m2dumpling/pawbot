@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from pawbot.agent.blackbox.manifest import finalize_recording_manifest
 from pawbot.agent.blackbox.rolling import RollingBlackboxController
 from pawbot.agent.hook import AgentRunHookContext
 
@@ -84,3 +85,107 @@ def test_successful_rolling_turn_is_not_promoted(tmp_path: Path) -> None:
 
     assert not list((tmp_path / "blackbox" / "candidates").iterdir())
     assert directory.exists()
+
+
+def test_saved_recording_can_be_added_and_removed_from_task_eval(tmp_path: Path) -> None:
+    controller = RollingBlackboxController(tmp_path / "runtime" / "blackbox")
+    sample = controller.samples_directory / "kept-run"
+    sample.mkdir()
+    (sample / "turns.jsonl").write_text(
+        json.dumps({
+            "kind": "turn",
+            "complete": True,
+            "turn_id": "turn-1",
+            "task_contract": {"expected_final": "done"},
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (sample / "tools.jsonl").write_text(
+        json.dumps({"kind": "llm", "turn_id": "turn-1"}) + "\n",
+        encoding="utf-8",
+    )
+    finalize_recording_manifest(sample)
+
+    case = controller.add_recording_to_eval(
+        sample,
+        title="会话摘要标题",
+        allowed_roots=(controller.samples_directory,),
+    )
+
+    assert case["title"] == "会话摘要标题"
+    assert case["task_contract"] == {"expected_final": "done"}
+    assert controller.list_eval_cases() == [case]
+    assert controller.remove_eval_case(str(case["id"])) is True
+    assert controller.list_eval_cases() == []
+    assert sample.is_dir()
+
+
+def test_eval_case_removal_by_sample_drops_only_the_index_reference(tmp_path: Path) -> None:
+    controller = RollingBlackboxController(tmp_path / "runtime" / "blackbox")
+    sample = controller.samples_directory / "kept-run"
+    sample.mkdir()
+    (sample / "turns.jsonl").write_text(
+        json.dumps({"kind": "turn", "complete": True, "turn_id": "turn-1"}) + "\n",
+        encoding="utf-8",
+    )
+    (sample / "tools.jsonl").write_text(
+        json.dumps({"kind": "llm", "turn_id": "turn-1"}) + "\n",
+        encoding="utf-8",
+    )
+    finalize_recording_manifest(sample)
+    controller.add_recording_to_eval(
+        sample,
+        allowed_roots=(controller.samples_directory,),
+    )
+
+    assert controller.remove_eval_cases_for_sample(sample) == 1
+    assert controller.list_eval_cases() == []
+    assert sample.exists()
+
+
+def test_candidate_add_to_eval_promotes_only_after_replayability_check(tmp_path: Path) -> None:
+    controller = RollingBlackboxController(tmp_path / "runtime" / "blackbox")
+    candidate = controller.candidates_directory / "candidate-ready"
+    candidate.mkdir()
+    (candidate / "candidate.json").write_text(
+        json.dumps({"candidate_id": candidate.name, "status": "candidate"}),
+        encoding="utf-8",
+    )
+    (candidate / "turns.jsonl").write_text(
+        json.dumps({"kind": "turn", "complete": True, "turn_id": "turn-1"}) + "\n",
+        encoding="utf-8",
+    )
+    (candidate / "tools.jsonl").write_text(
+        json.dumps({"kind": "llm", "turn_id": "turn-1"}) + "\n",
+        encoding="utf-8",
+    )
+    finalize_recording_manifest(candidate)
+
+    case = controller.add_candidate_to_eval(candidate.name, title="Readable title")
+
+    sample = controller.samples_directory / candidate.name
+    assert case["title"] == "Readable title"
+    assert sample.is_dir()
+    assert not candidate.exists()
+    assert json.loads((sample / "candidate.json").read_text(encoding="utf-8"))["eval_case_id"] == case["id"]
+
+
+def test_incomplete_candidate_is_not_moved_when_eval_registration_fails(tmp_path: Path) -> None:
+    controller = RollingBlackboxController(tmp_path / "runtime" / "blackbox")
+    candidate = controller.candidates_directory / "candidate-incomplete"
+    candidate.mkdir()
+    (candidate / "candidate.json").write_text(
+        json.dumps({"candidate_id": candidate.name, "status": "candidate"}),
+        encoding="utf-8",
+    )
+    (candidate / "turns.jsonl").write_text(
+        json.dumps({"kind": "turn", "complete": True, "turn_id": "turn-1"}) + "\n",
+        encoding="utf-8",
+    )
+    finalize_recording_manifest(candidate)
+
+    with pytest.raises(ValueError, match="not replayable"):
+        controller.add_candidate_to_eval(candidate.name)
+
+    assert candidate.is_dir()
+    assert not (controller.samples_directory / candidate.name).exists()

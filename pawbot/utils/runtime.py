@@ -17,8 +17,8 @@ _MAX_REPEAT_WORKSPACE_VIOLATIONS = 2
 _LENGTH_RECOVERY_TAIL_CHARS = 64
 
 EMPTY_FINAL_RESPONSE_MESSAGE = (
-    "I completed the tool steps but couldn't produce a final answer. "
-    "Please try again or narrow the task."
+    "The agent did not produce a final response. Check the execution trace for completed "
+    "tools before retrying."
 )
 
 FINALIZATION_RETRY_PROMPT = (
@@ -38,6 +38,13 @@ LENGTH_RECOVERY_PROMPT = (
     "exact endpoint. Output only new continuation text in the same language and style. "
     "Do not acknowledge this instruction, restart the response, repeat its title or any "
     "existing text, recap, or apologize."
+)
+
+TRUNCATED_TOOL_CALL_RECOVERY_PROMPT = (
+    "The previous response reached its output limit while constructing tool input. "
+    "Those tool calls were discarded and were not executed. Do not continue partial JSON "
+    "or repeat the same large call. Restart with valid tool inputs and split large file "
+    "writes or patches into small independent calls."
 )
 
 def empty_tool_result_message(tool_name: str) -> str:
@@ -88,6 +95,34 @@ def build_length_recovery_message(content: str) -> dict[str, str]:
         "Begin with the text that belongs immediately after this tail."
     )
     return {"role": "user", "content": prompt}
+
+
+def build_truncated_tool_call_recovery_message(
+    tool_names: list[str],
+    *,
+    max_tokens: int | None,
+) -> dict[str, Any]:
+    """Tell the model to change strategy after a cut-off tool call.
+
+    A normal length recovery appends prose.  That is unsafe when the cut-off
+    bytes belong to a function argument: there is no complete call to resume
+    and replaying it can repeat an invalid or oversized write.
+    """
+    names = ", ".join(dict.fromkeys(name for name in tool_names if name)) or "unknown"
+    budget = (
+        f" The configured output limit is {max_tokens} tokens."
+        if max_tokens is not None
+        else ""
+    )
+    return {
+        "role": "user",
+        "content": (
+            f"{TRUNCATED_TOOL_CALL_RECOVERY_PROMPT}{budget}\n\n"
+            f"Discarded tool calls: {names}.\n"
+            "For a large artifact, create a small initial file and add subsequent pieces "
+            "with separate calls. Verify progress after each successful write."
+        ),
+    }
 
 
 def external_lookup_signature(tool_name: str, arguments: Any) -> str | None:

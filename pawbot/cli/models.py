@@ -20,17 +20,26 @@ from pawbot.providers.registry import (
 )
 
 
-def _model_matches(model_name: str, candidate: str) -> bool:
+def _model_matches(
+    model_name: str,
+    candidate: str,
+    aliases: tuple[str, ...] = (),
+) -> bool:
     """Match a model ID with or without a provider/gateway prefix."""
     normalized_model = model_name.strip().lower().rstrip("/")
-    normalized_candidate = candidate.strip().lower().rstrip("/")
     return bool(
         normalized_model
-        and normalized_candidate
-        and (
-            normalized_model == normalized_candidate
-            or normalized_model.endswith(f"/{normalized_candidate}")
-            or normalized_model.rsplit("/", 1)[-1] == normalized_candidate
+        and any(
+            normalized_candidate
+            and (
+                normalized_model == normalized_candidate
+                or normalized_model.endswith(f"/{normalized_candidate}")
+                or normalized_model.rsplit("/", 1)[-1] == normalized_candidate
+            )
+            for normalized_candidate in {
+                value.strip().lower().rstrip("/")
+                for value in (candidate, *aliases)
+            }
         )
     )
 
@@ -83,7 +92,7 @@ def get_all_models() -> list[str]:
 def find_model_info(model_name: str) -> dict[str, Any] | None:
     """Return curated metadata for a model ID, including gateway prefixes."""
     for provider, model in _model_specs():
-        if _model_matches(model_name, model.id):
+        if _model_matches(model_name, model.id, model.aliases):
             return _model_payload(provider, model)
 
     # Gateway model IDs are often owned by a different provider, for example
@@ -100,7 +109,7 @@ def get_model_context_limit(model: str, provider: str = "auto") -> int | None:
     """Return a curated context limit, or ``None`` for an unknown model."""
     if provider.strip() and provider.strip() != "auto":
         for _provider_name, candidate in _model_specs(provider):
-            if _model_matches(model, candidate.id) and candidate.context_window:
+            if _model_matches(model, candidate.id, candidate.aliases) and candidate.context_window:
                 return candidate.context_window
         capability = model_capability_for(provider, model)
         return capability.context_window if capability is not None else None

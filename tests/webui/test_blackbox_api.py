@@ -8,14 +8,19 @@ from typing import Any, cast
 
 import pytest
 
+from pawbot.agent.blackbox.manifest import finalize_recording_manifest
+from pawbot.agent.blackbox.rolling import RollingBlackboxController
 from pawbot.agent.observability import TraceStore
 from pawbot.webui import blackbox_api
 from pawbot.webui.blackbox_api import (
     BlackboxActionError,
+    _add_recording_to_eval,
     _delete,
     _detail,
     _list,
+    _remove_eval_case,
     _replay,
+    _rolling_candidates,
     _trace_detail,
     _trace_list,
     _turn_diagnostics,
@@ -279,6 +284,89 @@ async def test_trace_surfaces_the_webui_conversation_name(monkeypatch, tmp_path:
     )
     recordings = await _list(agent)
     assert recordings["recordings"][0]["session_names"] == ["洛杉矶天气与本地新闻"]
+
+
+@pytest.mark.asyncio
+async def test_rolling_candidates_use_the_webui_conversation_title(monkeypatch, tmp_path: Path) -> None:
+    rolling = RollingBlackboxController(tmp_path / "runtime" / "blackbox")
+    candidate_id = "candidate-1790511611632-turn-1"
+    directory = rolling.candidates_directory / candidate_id
+    directory.mkdir()
+    (directory / "candidate.json").write_text(
+        json.dumps({
+            "candidate_id": candidate_id,
+            "session_key": "websocket:chat-1",
+            "reasons": ["tool_error"],
+            "created_at_ms": 1790511611632,
+            "status": "candidate",
+        }),
+        encoding="utf-8",
+    )
+    (directory / "turns.jsonl").write_text(
+        json.dumps({
+            "kind": "turn",
+            "complete": True,
+            "turn_id": "turn-1",
+            "initial_messages": [{"role": "user", "content": "请检查这个项目的错误"}],
+        }) + "\n",
+        encoding="utf-8",
+    )
+    sessions = SimpleNamespace(list_sessions=lambda: [{
+        "key": "websocket:chat-1",
+        "title": "",
+        "preview": "项目错误定位与修复",
+    }])
+    monkeypatch.setattr(blackbox_api, "list_webui_sessions", lambda _sessions: [])
+    monkeypatch.setattr(blackbox_api, "read_webui_sidebar_state", lambda: {"title_overrides": {}})
+    agent = SimpleNamespace(workspace=tmp_path, rolling_blackbox=rolling, sessions=sessions)
+
+    result = await _rolling_candidates(agent)
+
+    assert result["candidates"][0]["session_name"] == "项目错误定位与修复"
+    assert result["candidates"][0]["display_title"] == "项目错误定位与修复"
+    assert result["candidates"][0]["candidate_id"] == candidate_id
+
+
+@pytest.mark.asyncio
+async def test_saved_sample_can_join_and_leave_task_eval_without_deleting_sample(
+    tmp_path: Path,
+) -> None:
+    rolling = RollingBlackboxController(tmp_path / "runtime" / "blackbox")
+    sample = tmp_path / "blackbox" / "saved-regression"
+    sample.mkdir(parents=True)
+    (sample / "turns.jsonl").write_text(
+        json.dumps({"kind": "turn", "complete": True, "turn_id": "turn-1"}) + "\n",
+        encoding="utf-8",
+    )
+    (sample / "tools.jsonl").write_text(
+        json.dumps({"kind": "llm", "turn_id": "turn-1"}) + "\n",
+        encoding="utf-8",
+    )
+    finalize_recording_manifest(sample)
+    agent = SimpleNamespace(
+        workspace=tmp_path,
+        rolling_blackbox=rolling,
+        blackbox=None,
+    )
+
+    added = await _add_recording_to_eval(agent, {
+        "directory": str(sample),
+        "title": "已保存的任务样本",
+    })
+    case_id = added["case"]["id"]
+
+    assert added["case"]["title"] == "已保存的任务样本"
+    assert rolling.list_eval_cases()[0]["id"] == case_id
+    removed = await _remove_eval_case(agent, {"case_id": case_id})
+    assert removed["deleted"] is True
+    assert sample.is_dir()
+    assert rolling.list_eval_cases() == []
+
+    await _add_recording_to_eval(agent, {"directory": str(sample)})
+    deleted = await _delete(agent, {"directory": str(sample)})
+    assert deleted["deleted"] is True
+    assert not sample.exists()
+    assert rolling.list_eval_cases() == []
 
 
 @pytest.mark.asyncio

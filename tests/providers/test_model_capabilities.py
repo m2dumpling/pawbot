@@ -4,20 +4,28 @@ from pawbot.providers.registry import (
 )
 
 
-def test_deepseek_v4_flash_has_official_long_context_metadata() -> None:
-    capability = model_capability_for("deepseek", "deepseek-v4-flash")
+def test_deepseek_flash_has_official_long_context_metadata() -> None:
+    capability = model_capability_for("deepseek", "deepseek-flash")
 
     assert capability is not None
     assert capability.context_window == 1_048_576
     assert capability.max_output_tokens == 384_000
     assert capability.supports_tools is True
     assert capability.supports_reasoning is True
+    assert capability.supports_vision is True
+
+
+def test_deepseek_flash_legacy_gateway_id_resolves_to_the_current_model() -> None:
+    capability = model_capability_for("openrouter", "deepseek/deepseek-v4-flash")
+
+    assert capability is not None
+    assert capability.id == "deepseek-flash"
 
 
 def test_capability_lookup_matches_gateway_model_ids() -> None:
     assert context_window_tokens_for(
         "openrouter",
-        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-flash",
         128_000,
     ) == 1_048_576
 

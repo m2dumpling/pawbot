@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agent.runner_helpers import make_run_spec
+from pawbot.agent.tools.base import Tool
+from pawbot.agent.tools.registry import ToolRegistry
 from pawbot.config.schema import AgentDefaults
 from pawbot.providers.base import (
     LLMProvider,
@@ -21,6 +23,29 @@ from pawbot.providers.base import (
 )
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
+
+
+class _RequiredPathTool(Tool):
+    """A tool used to verify retry behavior for schema failures."""
+
+    @property
+    def name(self) -> str:
+        return "write_file"
+
+    @property
+    def description(self) -> str:
+        return "write a file"
+
+    @property
+    def parameters(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        }
+
+    async def execute(self, **kwargs):
+        raise AssertionError(f"The invalid call must not execute: {kwargs}")
 
 
 def _make_usage_spec(provider, tools):
@@ -1119,6 +1144,139 @@ async def test_runner_length_recovery_does_not_leak_across_tool_calls():
 
     assert result.final_content == "final answer"
     assert result.tools_used == ["read_file"]
+
+
+@pytest.mark.asyncio
+async def test_runner_discards_truncated_tool_call_and_requests_chunked_recovery():
+    """A cut-off function argument must never reach the tool executor."""
+    from pawbot.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    responses = [
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(
+                id="cutoff-write",
+                name="write_file",
+                arguments='{"path":"report.html","content":"<unfinished',
+            )],
+            finish_reason="length",
+        ),
+        LLMResponse(content="I will write the artifact in small verified pieces.", finish_reason="stop"),
+    ]
+    request_messages: list[list[dict]] = []
+
+    async def chat_with_retry(*, messages, **kwargs):
+        del kwargs
+        request_messages.append([dict(message) for message in messages])
+        return responses.pop(0)
+
+    provider.chat_with_retry = AsyncMock(side_effect=chat_with_retry)
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock()
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "create a report"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=3,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        max_tokens=8192,
+    ))
+
+    tools.execute.assert_not_awaited()
+    assert result.final_content == "I will write the artifact in small verified pieces."
+    assert provider.chat_with_retry.await_count == 2
+    second_request = request_messages[1]
+    recovery = second_request[-1]
+    assert "Discarded tool calls: write_file." in recovery["content"]
+    assert "split large file writes" in recovery["content"]
+    assert result.tool_states[0]["state"] == "blocked"
+    assert result.tool_states[0]["side_effect"] == "not_started"
+    assert not any(message.get("tool_calls") for message in result.messages)
+
+
+@pytest.mark.asyncio
+async def test_runner_stops_after_repeated_truncated_tool_calls_with_truthful_error():
+    """One strategy retry is enough; a second cut-off call must end the turn."""
+    from pawbot.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    def truncated_write() -> LLMResponse:
+        return LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(
+                id="cutoff-write",
+                name="write_file",
+                arguments='{"path":"report.html","content":"<unfinished',
+            )],
+            finish_reason="length",
+        )
+
+    provider.chat_with_retry = AsyncMock(side_effect=[truncated_write(), truncated_write()])
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock()
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "create a report"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=8,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    tools.execute.assert_not_awaited()
+    assert provider.chat_with_retry.await_count == 2
+    assert result.stop_reason == "output_limit_exceeded"
+    assert result.error_code == "OUTPUT_LIMIT_EXCEEDED"
+    assert result.outcome is not None
+    assert result.outcome.error_code == "OUTPUT_LIMIT_EXCEEDED"
+    assert result.outcome.side_effect_status == "not_applicable"
+    assert "Those calls were not executed and caused no side effects." in result.final_content
+    assert "completed the tool steps" not in result.final_content.lower()
+
+
+@pytest.mark.asyncio
+async def test_runner_stops_after_two_identical_unstarted_tool_failures():
+    """Schema failures must not consume the whole tool-iteration budget."""
+    from pawbot.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(id="bad-1", name="write_file", arguments={})],
+            finish_reason="tool_calls",
+        ),
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(id="bad-2", name="write_file", arguments={})],
+            finish_reason="tool_calls",
+        ),
+    ])
+    tools = ToolRegistry()
+    tools.register(_RequiredPathTool())
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "create a report"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=8,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    assert provider.chat_with_retry.await_count == 2
+    assert result.stop_reason == "tool_retry_stalled"
+    assert result.error_code == "NO_PROGRESS_RETRY_LIMIT"
+    assert result.outcome is not None
+    assert result.outcome.error_code == "NO_PROGRESS_RETRY_LIMIT"
+    assert all(state["side_effect"] == "not_started" for state in result.tool_states)
+    assert "write_file; TOOL_PARAMETER_INVALID" in result.final_content
 
 
 @pytest.mark.asyncio

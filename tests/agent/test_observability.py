@@ -133,6 +133,51 @@ async def test_trace_reports_prompt_estimate_source_without_prompt_text(tmp_path
     assert "private prompt text" not in json.dumps(request, ensure_ascii=False)
 
 
+async def test_trace_marks_truncated_tool_calls_as_not_started(tmp_path: Path) -> None:
+    store = TraceStore(tmp_path / "traces")
+    trace = store.start_turn(
+        session_key="websocket:chat-1",
+        turn_id="truncated-tool-call",
+        channel="websocket",
+        chat_id="chat-1",
+    )
+    assert trace is not None
+    hook = trace.hook(initial_messages=[], tools_count=1)
+    context = AgentHookContext(
+        iteration=0,
+        messages=[],
+        response=LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(
+                id="call-cutoff",
+                name="write_file",
+                arguments='{"path":"result.html","content":"<unfinished',
+            )],
+            finish_reason="length",
+        ),
+    )
+    context.tool_calls = list(context.response.tool_calls)
+
+    await hook.on_model_response(context)
+    await hook.on_error(AgentRunHookContext(
+        messages=[],
+        stop_reason="output_limit_exceeded",
+        error="The tool call was not executed.",
+        error_code="OUTPUT_LIMIT_EXCEEDED",
+    ))
+    trace.finish(status="error", stop_reason="output_limit_exceeded")
+
+    path = tmp_path / "traces" / "websocket_chat-1" / "truncated-tool-call.jsonl"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    discarded = next(row for row in rows if row["event"] == "tool.discarded")
+    error = next(row for row in rows if row["event"] == "agent.error")
+    assert discarded["tool_name"] == "write_file"
+    assert discarded["side_effect"] == "not_started"
+    assert discarded["error"]["code"] == "OUTPUT_LIMIT_EXCEEDED"
+    assert discarded["error"]["recovery_strategy"] == "chunk_output"
+    assert error["error"]["code"] == "OUTPUT_LIMIT_EXCEEDED"
+
+
 @pytest.mark.asyncio
 async def test_trace_records_task_verification_as_a_separate_outcome(tmp_path: Path) -> None:
     store = TraceStore(tmp_path / "traces")

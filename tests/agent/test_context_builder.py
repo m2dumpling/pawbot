@@ -159,6 +159,15 @@ class TestLoadBootstrapFiles:
 
         assert "default workspace rules" not in result
 
+    def test_system_prompt_instructs_large_artifacts_to_use_small_complete_tool_calls(self, tmp_path):
+        result = ContextBuilder(tmp_path).build_system_prompt(
+            include_memory_recent_history=False,
+        )
+
+        assert "Large Generated Artifacts" in result
+        assert "small complete skeleton" in result
+        assert "Never continue a partial JSON tool argument." in result
+
     def test_unmodified_agents_and_user_templates_are_skipped(self, tmp_path):
         from pawbot.utils.helpers import sync_workspace_templates
 

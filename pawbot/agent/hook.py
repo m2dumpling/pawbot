@@ -54,6 +54,7 @@ class AgentRunHookContext:
     usage: LLMUsage | None = None
     stop_reason: str | None = None
     error: str | None = None
+    error_code: str | None = None
     tool_events: list[dict[str, str]] = field(default_factory=list)
     tool_states: list[dict[str, Any]] = field(default_factory=list)
     had_injections: bool = False
