@@ -1224,13 +1224,40 @@ class AgentLoop(TurnStagesMixin):
 
         Returns the total number of cancelled tasks, subagents, and exec sessions.
         """
-        tasks = tuple(self._active_tasks.pop(key, set()))
-        cancelled = sum(1 for t in tasks if not t.done() and t.cancel())
+        active_tasks = self._active_tasks.get(key)
+        tasks = tuple(active_tasks or ())
+        cancelled = sum(1 for task in tasks if not task.done())
+        for task in tasks:
+            if not task.done() and task.cancelling() == 0:
+                task.cancel()
+
+        # Stop child work before joining its owning turn. A long-running shell
+        # session or subagent can otherwise keep the turn in cancellation
+        # cleanup while its process is still alive.
+        subagent_cleanup, exec_cleanup = await asyncio.gather(
+            self.subagents.cancel_by_session(key),
+            self._exec_session_manager.terminate_by_owner(key),
+            return_exceptions=True,
+        )
         for t in tasks:
             with suppress(asyncio.CancelledError, Exception):
                 await t
-        sub_cancelled = await self.subagents.cancel_by_session(key)
-        exec_cancelled = await self._exec_session_manager.terminate_by_owner(key)
+
+        if active_tasks is not None and not active_tasks and self._active_tasks.get(key) is active_tasks:
+            self._active_tasks.pop(key, None)
+
+        cleanup_errors = [
+            result
+            for result in (subagent_cleanup, exec_cleanup)
+            if isinstance(result, BaseException)
+        ]
+        if cleanup_errors:
+            if len(cleanup_errors) == 1:
+                raise cleanup_errors[0]
+            raise BaseExceptionGroup("failed to cancel session work", cleanup_errors)
+
+        sub_cancelled = cast(int, subagent_cleanup)
+        exec_cancelled = cast(int, exec_cleanup)
         return cancelled + sub_cancelled + exec_cancelled
 
     async def discard_session(self, key: str) -> None:

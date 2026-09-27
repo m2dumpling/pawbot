@@ -300,6 +300,7 @@ export function usePawbotStream(
   const streamFrameRef = useRef<number | null>(null);
   const streamTimerRef = useRef<number | null>(null);
   const suppressStreamUntilTurnEndRef = useRef(false);
+  const stopRequestedRef = useRef(false);
   const sideChannelTurnIdsRef = useRef<Set<string>>(new Set());
 
   const dismissStreamError = useCallback(() => setStreamError(null), []);
@@ -673,6 +674,7 @@ export function usePawbotStream(
     clearPendingStreamWork();
     sideChannelTurnIdsRef.current.clear();
     suppressStreamUntilTurnEndRef.current = false;
+    stopRequestedRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, client, clearActivitySegment, clearPendingStreamWork]);
 
@@ -684,6 +686,7 @@ export function usePawbotStream(
     if (!chatId) return;
 
     const handle = (ev: InboundEvent) => {
+      if (stopRequestedRef.current && ev.event !== "turn_end") return;
       if (ev.event === "error") {
         if (ev.detail === "message_too_big") {
           applyStreamError({
@@ -872,6 +875,7 @@ export function usePawbotStream(
           return finalized;
         });
         suppressStreamUntilTurnEndRef.current = false;
+        stopRequestedRef.current = false;
         setToolApprovalRequests([]);
         notifyInBackground(t("recovery.completed", { defaultValue: "Task completed" }));
         onTurnEnd?.();
@@ -1184,6 +1188,7 @@ export function usePawbotStream(
       const sideChannel = options?.sideChannel === true;
       const finalizeActiveTurn = options?.finalizeActiveTurn === true;
       const continueActiveTurn = options?.continueActiveTurn === true;
+      if (!sideChannel && !continueActiveTurn) stopRequestedRef.current = false;
       const outboundContent = options?.quotedContext
         ? formatQuotedUserMessage(content, options.quotedContext)
         : content;
@@ -1248,6 +1253,7 @@ export function usePawbotStream(
 
   const stop = useCallback(() => {
     if (!chatId) return;
+    stopRequestedRef.current = true;
     setToolApprovalRequests([]);
     flushPendingStreamEvents();
     setIsStreaming(false);
