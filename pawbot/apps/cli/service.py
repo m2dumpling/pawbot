@@ -43,6 +43,51 @@ _MAX_ARTIFACT_REPORT = 12
 _SAFE_NAME_RE = re.compile(r"[^a-z0-9_-]+")
 _SAFE_NPM_DIR_RE = re.compile(r"^[a-z0-9._-]+$", re.IGNORECASE)
 _MENTION_RE = re.compile(r"(^|[\s([{])@([a-z0-9_-]+)\b", re.IGNORECASE)
+
+
+def _available_entry_points(
+    names: Iterable[str], *, windows: bool | None = None,
+) -> dict[str, bool]:
+    """Resolve catalog executables without stat-ing every PATH entry per app."""
+    unique = {name for name in names if name}
+    if windows is None:
+        windows = os.name == "nt"
+    if not windows:
+        return {name: shutil.which(name) is not None for name in unique}
+
+    # On Windows, shutil.which performs a filesystem stat for each PATHEXT
+    # candidate in each PATH directory. A catalog has many missing commands,
+    # so scan directory names once and verify only plausible matches with
+    # shutil.which to retain its exact executable and search-order semantics.
+    extensions = {
+        value.strip().strip('"').casefold()
+        for value in (os.environ.get("PATHEXT", "") + ";.COM;.EXE;.BAT;.CMD").split(os.pathsep)
+        if value.strip()
+    }
+    simple = {name for name in unique if not os.path.dirname(name) and ":" not in name}
+    candidates = {
+        name: {name.casefold()} | {(name + ext).casefold() for ext in extensions}
+        for name in simple
+    }
+    possible: set[str] = set()
+    directories = [os.getcwd(), *os.environ.get("PATH", os.defpath).split(os.pathsep)]
+    for directory in directories:
+        if len(possible) == len(simple):
+            break
+        try:
+            with os.scandir(directory or os.curdir) as entries:
+                present = {entry.name.casefold() for entry in entries}
+        except OSError:
+            continue
+        for name in simple - possible:
+            if candidates[name] & present:
+                possible.add(name)
+    return {
+        name: shutil.which(name) is not None if name in possible or name not in simple else False
+        for name in unique
+    }
+
+
 _SHELL_META_CHARS = ("|", "&&", "||", ";", "$(", "`", ">", "<")
 _ENDORSEMENT_WORD_RE = re.compile(r"\bofficial\s+", re.IGNORECASE)
 _ARTIFACT_EXTENSIONS = frozenset({
@@ -671,12 +716,18 @@ class CliAppManager:
         self,
         app: dict[str, Any],
         installed: dict[str, Any],
+        *,
+        availability: dict[str, bool] | None = None,
     ) -> dict[str, Any]:
         name = str(app["name"])
         entry_point = str(app.get("entry_point") or "")
         install_supported = self._install_supported(app)
         is_installed = name in installed
-        available = bool(entry_point and shutil.which(entry_point))
+        available = (
+            availability.get(entry_point, False)
+            if availability is not None
+            else bool(entry_point and shutil.which(entry_point))
+        )
         if is_installed and available:
             status = "installed"
         elif is_installed:
@@ -710,11 +761,7 @@ class CliAppManager:
         strategy = self._strategy(app)
         name = ""
         if strategy == "pip":
-            try:
-                uninstall = self._pip_uninstall_argv(app)
-            except CliAppError:
-                uninstall = None
-            name = uninstall[-1] if uninstall else ""
+            name = self._pip_distribution_name(app)
         elif strategy == "npm":
             name = str(app.get("npm_package") or "").strip()
         elif strategy in {"brew", "uv"}:
@@ -787,7 +834,8 @@ class CliAppManager:
     def payload(self, *, force_refresh: bool = False, cache_only: bool = False) -> dict[str, Any]:
         apps, updated = self.catalog(force_refresh=force_refresh, cache_only=cache_only)
         installed = self._load_installed()
-        rows = [self._app_payload(app, installed) for app in apps]
+        availability = _available_entry_points(str(app.get("entry_point") or "") for app in apps)
+        rows = [self._app_payload(app, installed, availability=availability) for app in apps]
         rows.sort(key=lambda item: (str(item["category"]), str(item["display_name"]).lower()))
         return {
             "apps": rows,
@@ -803,6 +851,11 @@ class CliAppManager:
             for app in cached_apps
             if app.get("name")
         }
+        availability = _available_entry_points(
+            str(entry.get("entry_point") or "")
+            for raw in installed.values()
+            if (entry := _as_object_dict(raw)) is not None
+        )
         rows: list[dict[str, Any]] = []
         for name, raw_entry in sorted(installed.items()):
             entry = _as_object_dict(raw_entry)
@@ -824,7 +877,7 @@ class CliAppManager:
                 "logo_url": cached_app.get("logo_url") or entry.get("logo_url"),
                 "brand_color": cached_app.get("brand_color") or entry.get("brand_color"),
             }
-            rows.append(self._app_payload(app, installed))
+            rows.append(self._app_payload(app, installed, availability=availability))
         return {
             "apps": rows,
             "installed_count": len(rows),
@@ -889,15 +942,28 @@ class CliAppManager:
         distribution = str((installed_entry or {}).get("pip_distribution") or "").strip()
         if distribution:
             return [*prefix, distribution]
+        packages = _pip_uninstall_args_from_command(str(app.get("uninstall_cmd") or ""))
+        if packages:
+            return [*prefix, *packages]
+        return [*prefix, self._pip_distribution_name(app)]
+
+    def _pip_distribution_name(
+        self,
+        app: dict[str, Any],
+        installed_entry: dict[str, Any] | None = None,
+    ) -> str:
+        distribution = str((installed_entry or {}).get("pip_distribution") or "").strip()
+        if distribution:
+            return distribution
         uninstall_cmd = str(app.get("uninstall_cmd") or "")
         packages = _pip_uninstall_args_from_command(uninstall_cmd)
         if packages:
-            return [*prefix, *packages]
+            return packages[-1]
         package = str(app.get("pip_package") or "").strip() or self._pip_package_from_install(app)
         if not package:
             entry_point = str(app.get("entry_point") or "").strip()
             package = entry_point if entry_point.startswith("cli-anything-") else f"cli-anything-{_brand_key(str(app['name']))}"
-        return [*prefix, package]
+        return package
 
     def _npm_argv(self, app: dict[str, Any], action: str) -> list[str]:
         npm = shutil.which("npm")

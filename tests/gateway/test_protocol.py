@@ -26,6 +26,58 @@ def test_event_journal_assigns_monotonic_sequences_and_replays(tmp_path: Path) -
     assert journal.latest_sequences()["client:chat"] == 3
 
 
+def test_event_journal_compaction_is_bounded_across_many_streams(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import pawbot.gateway.protocol as protocol
+
+    monkeypatch.setattr(protocol, "_MAX_EVENT_RECORDS", 20)
+    journal = GatewayEventJournal(tmp_path / "events.jsonl", max_events_per_stream=10)
+    journal.append("client:inactive", "message", {"event": "message"})
+    for index in range(30):
+        journal.append(f"client:{index % 6}", "message", {"event": "message"})
+
+    assert len(journal._read_events()) <= 20
+    assert journal.latest_sequences()["client:0"] == 5
+    assert journal.replay("client:0", 0).gap is True
+    forgotten = journal.replay("client:inactive", 0)
+    assert forgotten.events == ()
+    assert forgotten.gap is True
+    assert journal.validate() == []
+
+
+def test_event_journal_does_not_scan_on_every_append(tmp_path: Path, monkeypatch) -> None:
+    journal = GatewayEventJournal(tmp_path / "events.jsonl", max_events_per_stream=32)
+    reads = 0
+    read_events = journal._read_events
+
+    def counted_read():
+        nonlocal reads
+        reads += 1
+        return read_events()
+
+    monkeypatch.setattr(journal, "_read_events", counted_read)
+    for _ in range(33):
+        journal.append("client:chat", "delta", {"event": "delta", "text": "x"})
+
+    assert reads == 1  # one compaction at 33 events, then headroom
+    for _ in range(5):
+        journal.append("client:chat", "delta", {"event": "delta", "text": "x"})
+    assert reads == 1
+    assert journal.latest_sequences()["client:chat"] == 38
+
+
+def test_event_journal_cache_detects_another_writer(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    first = GatewayEventJournal(path)
+    second = GatewayEventJournal(path)
+
+    assert first.append("client:chat", "message", {"event": "message"})["seq"] == 1
+    assert second.append("client:chat", "message", {"event": "message"})["seq"] == 2
+    assert first.append("client:chat", "message", {"event": "message"})["seq"] == 3
+    assert [event["seq"] for event in first.replay("client:chat", 0).events] == [1, 2, 3]
+
+
 def test_event_journal_redacts_sensitive_payloads_and_doctor_can_validate(tmp_path: Path) -> None:
     journal = GatewayEventJournal(tmp_path / "events.jsonl")
     journal.append(

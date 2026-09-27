@@ -154,6 +154,50 @@ describe("PawbotClient", () => {
     expect(received).toEqual([1, 2, 3]);
   });
 
+  it("continues replay after retained events have a gap", () => {
+    const client = new PawbotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    const received: number[] = [];
+    const updates: string[] = [];
+    client.onChat("chat-x", (event) => {
+      const seq = (event as { seq?: unknown }).seq;
+      if (event.event === "message" && typeof seq === "number") {
+        received.push(seq);
+      }
+    });
+    client.onSessionUpdate((chatId, scope) => {
+      if (scope === "thread") updates.push(chatId);
+    });
+    client.connect();
+    const socket = lastSocket();
+    socket.fakeOpen();
+    socket.fakeMessage({ event: "ready", chat_id: "default", client_id: "client-1" });
+    socket.fakeMessage({
+      event: "message", chat_id: "chat-x", text: "one", stream_id: "client-1:chat-x", seq: 1,
+    });
+    socket.fakeMessage({
+      event: "message", chat_id: "chat-x", text: "five", stream_id: "client-1:chat-x", seq: 5,
+    });
+    socket.fakeMessage({
+      event: "gateway_gap", stream_id: "client-1:control",
+      replay_stream_id: "client-1:chat-x", after_seq: 1, oldest_seq: 4, latest_seq: 5,
+    });
+    socket.fakeMessage({
+      event: "message", chat_id: "chat-x", text: "four", stream_id: "client-1:chat-x",
+      seq: 4, replayed: true,
+    });
+    socket.fakeMessage({
+      event: "message", chat_id: "chat-x", text: "five", stream_id: "client-1:chat-x",
+      seq: 5, replayed: true,
+    });
+
+    expect(received).toEqual([1, 4, 5]);
+    expect(updates).toEqual(["chat-x"]);
+  });
+
   it("reconciles simultaneous client submissions to the gateway-owned turn", () => {
     const client = new PawbotClient({
       url: "ws://test",

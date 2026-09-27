@@ -10,6 +10,7 @@ method while retaining ``self`` access to the orchestrator's collaborators.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import time
 from collections.abc import Awaitable, Callable
@@ -72,6 +73,7 @@ class _TurnStagesHost(Protocol):
     _clear_pending_user_turn: Any
     _clear_runtime_checkpoint: Any
     _assemble_outbound: Any
+    _unified_session: bool
 
 
 class TurnStagesMixin:
@@ -255,7 +257,8 @@ class TurnStagesMixin:
             from pawbot.agent.token_estimation import system_prompt_tokens
 
             scope = self.workspace_scopes.for_message(ctx.msg, session.metadata)
-            system_prompt = self.context.build_system_prompt(
+            system_prompt = await asyncio.to_thread(
+                self.context.build_system_prompt,
                 channel=ctx.delivery.route.channel,
                 session_summary=ctx.pending_summary,
                 workspace=scope.project_path,
@@ -263,8 +266,12 @@ class TurnStagesMixin:
                 include_memory_recent_history=not ctx.ephemeral,
                 memory_use_override=memory_use_override_from_metadata(session.metadata),
                 session_key=session.key,
+                unified_session=self._unified_session,
             )
-            reserved_system_tokens = system_prompt_tokens(system_prompt, runtime.model)
+            reserved_system_tokens = await asyncio.to_thread(
+                system_prompt_tokens, system_prompt, runtime.model
+            )
+            ctx.system_prompt = system_prompt
 
         _hist_kwargs: dict[str, Any] = {
             "max_tokens": self._replay_token_budget(
@@ -272,7 +279,7 @@ class TurnStagesMixin:
             ),
             "extend_to_user": is_subagent,
         }
-        ctx.history = session.get_history(**_hist_kwargs)
+        ctx.history = await asyncio.to_thread(session.get_history, **_hist_kwargs)
         stored_state = session.provider_state
         subagent_followup_persisted = False
         if is_subagent:
@@ -356,7 +363,7 @@ class TurnStagesMixin:
             # Upgrade the replay-safe baseline to the resumable state before
             # prompt assembly and the first model checkpoint.
             self.sessions.save(session)
-        ctx.initial_messages = self._build_initial_messages(ctx)
+        ctx.initial_messages = await asyncio.to_thread(self._build_initial_messages, ctx)
         if ctx.trace is not None:
             ctx.trace.emit(
                 "context.ready",

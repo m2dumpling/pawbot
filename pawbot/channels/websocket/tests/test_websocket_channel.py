@@ -3817,6 +3817,36 @@ async def test_end_to_end_client_receives_ready_and_agent_sees_inbound(bus: Magi
 
 
 @pytest.mark.asyncio
+async def test_journal_write_does_not_block_websocket_loop(bus: MagicMock, monkeypatch) -> None:
+    channel = _ch(bus)
+    connection = AsyncMock()
+    channel._connection_protocol_enabled.add(connection)
+    channel._connection_client_ids[connection] = "test-client"
+    append = channel.gateway.event_journal.append
+
+    def slow_append(*args):
+        time.sleep(0.1)
+        return append(*args)
+
+    monkeypatch.setattr(channel.gateway.event_journal, "append", slow_append)
+    first = asyncio.create_task(channel._safe_send_to(
+        connection,
+        json.dumps({"event": "message", "chat_id": "chat-1", "text": "one"}),
+    ))
+    await asyncio.sleep(0.01)
+    assert not first.done()
+    second = asyncio.create_task(channel._safe_send_to(
+        connection,
+        json.dumps({"event": "message", "chat_id": "chat-1", "text": "two"}),
+    ))
+    await asyncio.gather(first, second)
+
+    frames = [json.loads(call.args[0]) for call in connection.send.await_args_list]
+    assert [frame["text"] for frame in frames] == ["one", "two"]
+    assert frames[1]["seq"] == frames[0]["seq"] + 1
+
+
+@pytest.mark.asyncio
 async def test_gateway_protocol_negotiates_event_sequence_and_resume_route(bus: MagicMock) -> None:
     port = 29879
     channel = _ch(bus, port=port)

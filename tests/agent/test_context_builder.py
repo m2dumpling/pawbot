@@ -368,6 +368,27 @@ class TestBuildSystemPrompt:
 
 
 class TestBuildMessages:
+    def test_plain_message_skips_explicit_skill_discovery(self, tmp_path, monkeypatch):
+        builder = _builder(tmp_path)
+
+        def unexpected_scan(*_args, **_kwargs):
+            raise AssertionError("skills were scanned without a skill reference")
+
+        monkeypatch.setattr(builder.skills, "list_skills", unexpected_scan)
+        assert builder.skills.get_explicitly_invoked_skills("你好，请打个招呼") == []
+
+    def test_prebuilt_system_prompt_is_reused(self, tmp_path, monkeypatch):
+        builder = _builder(tmp_path)
+        prompt = builder.build_system_prompt(channel="websocket")
+
+        def unexpected_rebuild(**_kwargs):
+            raise AssertionError("system prompt was rebuilt")
+
+        monkeypatch.setattr(builder, "build_system_prompt", unexpected_rebuild)
+        messages = builder.build_messages([], "hello", system_prompt=prompt)
+
+        assert messages[0]["content"] == prompt
+
     def test_optional_arguments_are_keyword_only(self, tmp_path):
         builder = _builder(tmp_path)
 
