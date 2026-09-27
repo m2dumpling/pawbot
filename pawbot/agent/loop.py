@@ -1097,6 +1097,7 @@ class AgentLoop(TurnStagesMixin):
             memory_use_override=memory_use_override_from_metadata(ctx.session.metadata),
             session_key=ctx.session.key,
             unified_session=self._unified_session,
+            system_prompt=ctx.system_prompt,
         )
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:
@@ -1141,8 +1142,9 @@ class AgentLoop(TurnStagesMixin):
         ]
         blocks = runtime_context_blocks_from_metadata(request.metadata)
         blocks.extend(await resolve_runtime_context(providers, request))
-        skill_context = self.context.skills.build_explicit_skill_runtime_context(
-            request.original_user_text or ""
+        skill_context = await asyncio.to_thread(
+            self.context.skills.build_explicit_skill_runtime_context,
+            request.original_user_text or "",
         )
         if skill_context is not None and skill_context not in blocks:
             blocks.append(skill_context)

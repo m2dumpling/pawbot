@@ -340,13 +340,14 @@ class ContextBuilder:
         memory_use_override: bool | None = None,
         session_key: str | None = None,
         unified_session: bool = False,
+        system_prompt: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
         root = workspace or self.workspace
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
-                "content": self.build_system_prompt(
+                "content": system_prompt if system_prompt is not None else self.build_system_prompt(
                     channel=channel,
                     session_summary=session_summary,
                     workspace=root,

@@ -164,7 +164,7 @@ class SkillsLoader:
 
     def get_explicitly_invoked_skills(self, text: str) -> list[str]:
         """Resolve ``$skill-name`` references to enabled, available skills."""
-        if not text:
+        if not text or _SKILL_REFERENCE.search(text) is None:
             return []
         available = {
             entry["name"]

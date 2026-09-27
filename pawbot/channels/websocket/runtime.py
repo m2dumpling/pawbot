@@ -382,6 +382,7 @@ class WebSocketChannel(BaseChannel):
         self._reasoning_text_buffers: dict[tuple[str, str], list[str]] = {}
         self._connection_client_ids: dict[ServerConnection, str] = {}
         self._connection_protocol_enabled: set[ServerConnection] = set()
+        self._send_locks: dict[ServerConnection, asyncio.Lock] = {}
 
     # -- Subscription bookkeeping -------------------------------------------
 
@@ -808,6 +809,7 @@ class WebSocketChannel(BaseChannel):
             self.logger.debug("connection ended: {}", e)
         finally:
             await self._cleanup_connection(connection)
+            self._send_locks.pop(connection, None)
 
     # -- Inbound WebSocket envelopes ---------------------------------------
 
@@ -857,7 +859,7 @@ class WebSocketChannel(BaseChannel):
         ):
             await self._send_event(connection, "error", detail="invalid gateway resume request")
             return
-        replay = self.gateway.event_journal.replay(stream_id, after_seq)
+        replay = await asyncio.to_thread(self.gateway.event_journal.replay, stream_id, after_seq)
         if replay.gap:
             await self._send_event(
                 connection,
@@ -926,6 +928,7 @@ class WebSocketChannel(BaseChannel):
         self._conn_default.clear()
         self._connection_client_ids.clear()
         self._connection_protocol_enabled.clear()
+        self._send_locks.clear()
 
     async def _safe_send_to(
         self,
@@ -936,6 +939,18 @@ class WebSocketChannel(BaseChannel):
         journal: bool = True,
     ) -> None:
         """Send a raw frame to one connection, cleaning up on ConnectionClosed."""
+        lock = self._send_locks.setdefault(connection, asyncio.Lock())
+        async with lock:
+            await self._send_to_locked(connection, raw, label=label, journal=journal)
+
+    async def _send_to_locked(
+        self,
+        connection: ServerConnection,
+        raw: str,
+        *,
+        label: str,
+        journal: bool,
+    ) -> None:
         try:
             outgoing = raw
             if journal and connection in self._connection_protocol_enabled:
@@ -955,7 +970,8 @@ class WebSocketChannel(BaseChannel):
                         if isinstance(chat_id, str)
                         else f"{client_id}:control"
                     )
-                    event = self.gateway.event_journal.append(
+                    event = await asyncio.to_thread(
+                        self.gateway.event_journal.append,
                         stream_id,
                         cast(str, payload_value["event"]),
                         payload_value,

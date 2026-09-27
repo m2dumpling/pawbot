@@ -94,6 +94,30 @@ class GatewayEventJournal:
         self.state_path = self.path.with_suffix(self.path.suffix + ".state.json")
         self.lock = FileLock(str(self.path) + ".lock")
         self.max_events_per_stream = max(1, max_events_per_stream)
+        self._cached_signature: tuple[int, int] | None = None
+        self._event_count = 0
+        self._stream_counts: dict[str, int] = {}
+
+    def _file_signature(self) -> tuple[int, int] | None:
+        try:
+            stat = self.path.stat()
+        except FileNotFoundError:
+            return None
+        return stat.st_size, stat.st_mtime_ns
+
+    def _refresh_counts_locked(self) -> None:
+        signature = self._file_signature()
+        if signature == self._cached_signature:
+            return
+        events = self._read_events()
+        self._event_count = len(events)
+        counts: dict[str, int] = {}
+        for event in events:
+            stream = event.get("stream_id")
+            if isinstance(stream, str):
+                counts[stream] = counts.get(stream, 0) + 1
+        self._stream_counts = counts
+        self._cached_signature = signature
 
     def _read_events(self) -> list[dict[str, Any]]:
         if not self.path.exists():
@@ -132,6 +156,7 @@ class GatewayEventJournal:
         stream = stream_id.strip()[:256] or "gateway"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.lock:
+            self._refresh_counts_locked()
             sequences = self._read_sequences()
             sequence = sequences.get(stream, 0) + 1
             event = {
@@ -150,7 +175,14 @@ class GatewayEventJournal:
                 os.fsync(handle.fileno())
             sequences[stream] = sequence
             _atomic_write_json(self.state_path, sequences)
-            self._compact_locked()
+            self._event_count += 1
+            self._stream_counts[stream] = self._stream_counts.get(stream, 0) + 1
+            self._cached_signature = self._file_signature()
+            if (
+                self._event_count > _MAX_EVENT_RECORDS
+                or self._stream_counts[stream] > self.max_events_per_stream
+            ):
+                self._compact_locked()
             return event
 
     def _compact_locked(self) -> None:
@@ -165,10 +197,20 @@ class GatewayEventJournal:
             for stream_events in by_stream.values()
         ):
             return
-        kept: list[dict[str, Any]] = []
+        # Leave headroom so a busy stream doesn't rewrite the whole journal
+        # again for its very next event. Small limits keep exact test/operator
+        # semantics; large limits compact in amortized batches.
+        stream_keep = (
+            self.max_events_per_stream
+            if self.max_events_per_stream <= 16
+            else max(16, self.max_events_per_stream * 3 // 4)
+        )
+        selected: set[int] = set()
         for stream_events in by_stream.values():
-            kept.extend(stream_events[-self.max_events_per_stream :])
-        kept.sort(key=lambda item: str(item.get("occurred_at", "")))
+            selected.update(id(event) for event in stream_events[-stream_keep:])
+        kept = [event for event in events if id(event) in selected]
+        if len(kept) > _MAX_EVENT_RECORDS:
+            kept = kept[-max(1, _MAX_EVENT_RECORDS * 3 // 4):]
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         with open(temporary, "w", encoding="utf-8") as handle:
             for event in kept:
@@ -177,18 +219,28 @@ class GatewayEventJournal:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, self.path)
+        self._event_count = len(kept)
+        self._stream_counts = {}
+        for event in kept:
+            stream = event.get("stream_id")
+            if isinstance(stream, str):
+                self._stream_counts[stream] = self._stream_counts.get(stream, 0) + 1
+        self._cached_signature = self._file_signature()
 
     def replay(self, stream_id: str, after_seq: int, *, limit: int = 512) -> EventReplay:
         stream = stream_id.strip()[:256]
-        events = [
-            event
-            for event in self._read_events()
-            if event.get("stream_id") == stream and isinstance(event.get("seq"), int)
-        ]
+        with self.lock:
+            events = [
+                event
+                for event in self._read_events()
+                if event.get("stream_id") == stream and isinstance(event.get("seq"), int)
+            ]
+            latest = self._read_sequences().get(stream, 0)
         events.sort(key=lambda item: int(item["seq"]))
-        latest = self._read_sequences().get(stream, 0)
         oldest = int(events[0]["seq"]) if events else None
-        gap = oldest is not None and after_seq + 1 < oldest
+        gap = (oldest is None and latest > after_seq) or (
+            oldest is not None and after_seq + 1 < oldest
+        )
         pending = [event for event in events if int(event["seq"]) > after_seq]
         return EventReplay(tuple(pending[:limit]), gap, oldest, latest)
 

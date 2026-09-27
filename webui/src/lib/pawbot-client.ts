@@ -1160,6 +1160,23 @@ export class PawbotClient {
       console.log("[pawbot ws inbound]", summarizeInboundWsPayload(parsed));
     }
 
+    if (parsed.event === "gateway_gap") {
+      const target = parsed.replay_stream_id;
+      if (typeof target === "string" && this.gatewayResumeRequests.has(target)) {
+        const oldest = parsed.oldest_seq;
+        const baseline = typeof oldest === "number" && oldest > 0
+          ? oldest - 1
+          : parsed.latest_seq;
+        this.gatewaySeqByStream.set(target, baseline);
+        const prefix = this.gatewayClientId ? `${this.gatewayClientId}:` : "";
+        if (prefix && target.startsWith(prefix)) {
+          const chatId = target.slice(prefix.length);
+          if (chatId && chatId !== "control") this.emitSessionUpdate(chatId, "thread");
+        }
+      }
+      return;
+    }
+
     if (parsed.event === "webui_response") {
       const pending = this.pendingWebUIRequests.get(parsed.request_id);
       if (!pending) return;
