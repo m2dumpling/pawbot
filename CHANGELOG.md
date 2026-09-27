@@ -3,6 +3,35 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.7.2 - 2026-09-28
+
+### Added
+
+- Added safe recovery for model output truncation during tool-call arguments;
+  incomplete calls are discarded and repeated no-progress failures stop with
+  structured error codes instead of looping.
+- Added DeepSeek Flash and DeepSeek V4 Pro capability metadata, compatibility
+  aliases for legacy DeepSeek model IDs, and a DeepSeek-specific 65,536-token
+  output default.
+- Added WebUI management for saved regression samples in the Agent task
+  evaluation set, including add and remove actions.
+
+### Changed
+
+- Candidate problem runs now use WebUI conversation titles or readable user
+  request previews instead of internal candidate IDs.
+- Documented DeepSeek as the most thoroughly validated provider path and added
+  guidance for provider-specific issue and pull-request contributions.
+
+### Verification
+
+- Local Python: 6,996 passed, 54 skipped, 82.90% coverage.
+- Local WebUI: 1,134 passed.
+- GitHub Actions passed Python 3.11/Linux, Python 3.13/Windows, WebUI, native
+  TUI, Record & Replay, package smoke, installer smoke, and quality gates.
+
+## 0.7.1 - 2026-09-27
+
 ## 0.7.1 - 2026-09-27
 
 ### Fixed
