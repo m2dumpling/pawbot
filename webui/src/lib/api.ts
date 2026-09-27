@@ -1162,6 +1162,9 @@ export interface BlackboxCandidate {
   candidate_id: string;
   source_turn_id?: string | null;
   session_key?: string | null;
+  session_name?: string | null;
+  display_title?: string | null;
+  turn_preview?: string | null;
   reasons: string[];
   sample_health?: string;
   created_at_ms?: number;
@@ -1174,6 +1177,8 @@ export interface TaskEvalCase {
   category: string;
   description: string;
   source?: string;
+  sample_directory?: string;
+  created_at_ms?: number;
 }
 
 export interface TaskEvalReport {
@@ -1412,6 +1417,24 @@ export async function blackboxAddCandidateToEval(
     candidate_id: candidateId,
     title: title ?? null,
   });
+}
+
+export async function blackboxAddRecordingToEval(
+  transport: WebUIMutationTransport,
+  directory: string,
+  title?: string,
+): Promise<{ added: boolean; case: TaskEvalCase }> {
+  return mutation(transport, "blackbox.rolling.add_recording_to_eval", {
+    directory,
+    title: title ?? null,
+  });
+}
+
+export async function taskEvalRemoveCase(
+  transport: WebUIMutationTransport,
+  caseId: string,
+): Promise<{ deleted: boolean; case_id: string }> {
+  return mutation(transport, "blackbox.eval.remove", { case_id: caseId });
 }
 
 export async function taskEvalList(

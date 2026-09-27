@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { EnhancementsSettings } from "@/components/settings/EnhancementsSettings";
 import { LiveExecutionSettings } from "@/components/settings/LiveExecutionSettings";
@@ -130,6 +130,129 @@ const providerErrorDetail: BlackboxDetail = {
 
 describe("Record & Replay inspection", () => {
   installSettingsViewTestHooks();
+
+  it("shows candidate conversation titles and manages saved eval samples", async () => {
+    const customCases: Array<{
+      id: string;
+      title: string;
+      category: string;
+      description: string;
+      source: string;
+      sample_directory: string;
+    }> = [];
+    requestMutationMock.mockImplementation(async (action: string) => {
+      if (action === "blackbox.status") {
+        return {
+          recording: false,
+          directory: "",
+          rolling_enabled: true,
+          model: "demo-model",
+          context_window_tokens: 128000,
+          tool_count: 1,
+        };
+      }
+      if (action === "blackbox.list") {
+        return {
+          root: "/tmp/blackbox",
+          recordings: [{
+            directory: "/tmp/blackbox/saved-run",
+            name: "saved-run",
+            session_names: ["已保存会话摘要"],
+            turns: 1,
+            status: "ready",
+            message: "记录完整",
+          }],
+        };
+      }
+      if (action === "blackbox.rolling.candidates") {
+        return {
+          candidates: [{
+            candidate_id: "candidate-1790511611632-c202_179051149240798610",
+            session_name: "问题会话摘要标题",
+            display_title: "问题会话摘要标题",
+            reasons: ["tool_error"],
+            status: "candidate",
+          }],
+        };
+      }
+      if (action === "blackbox.tokens") {
+        return {
+          estimated_tokens: 100,
+          context_window_tokens: 128000,
+          usage_ratio: 0.01,
+          message_count: 1,
+          tool_count: 1,
+          model: "demo-model",
+        };
+      }
+      if (action === "blackbox.eval.list") {
+        return {
+          eval_set: "pawbot-task-eval",
+          version: 1,
+          cases: [{
+            id: "basic-tool-call",
+            title: "Basic tool call",
+            category: "tools",
+            description: "Fixed provider-free test",
+          }],
+          custom_cases: [...customCases],
+        };
+      }
+      if (action === "blackbox.rolling.add_recording_to_eval") {
+        customCases.push({
+          id: "saved-run",
+          title: "已保存会话摘要",
+          category: "recorded",
+          description: "Saved regression sample",
+          source: "saved_recording",
+          sample_directory: "/tmp/blackbox/saved-run",
+        });
+        return { added: true, case: customCases[0] };
+      }
+      if (action === "blackbox.eval.remove") {
+        customCases.splice(0, customCases.length);
+        return { deleted: true, case_id: "saved-run" };
+      }
+      throw new Error(`Unexpected mutation: ${action}`);
+    });
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    render(
+      <ClientProvider client={{ requestMutation: requestMutationMock } as never} token="tok">
+        <EnhancementsSettings />
+      </ClientProvider>,
+    );
+
+    expect(await screen.findByText("问题会话摘要标题")).toBeInTheDocument();
+    expect(screen.queryByText("candidate-1790511611632-c202_179051149240798610")).not.toBeInTheDocument();
+    expect(screen.getByText("已保存会话摘要")).toBeInTheDocument();
+
+    const addButtons = await screen.findAllByRole("button", { name: "Add to task eval" });
+    await user.click(addButtons[1]);
+    expect(requestMutationMock).toHaveBeenCalledWith(
+      "blackbox.rolling.add_recording_to_eval",
+      expect.objectContaining({
+        directory: "/tmp/blackbox/saved-run",
+        title: "已保存会话摘要",
+      }),
+      20_000,
+    );
+    expect(await screen.findByText("Saved regression samples in this set")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Added to task eval" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Remove from task eval" }));
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(requestMutationMock).toHaveBeenCalledWith(
+      "blackbox.eval.remove",
+      { case_id: "saved-run" },
+      20_000,
+    );
+    expect(screen.queryByText("Saved regression samples in this set")).not.toBeInTheDocument();
+    const availableAddButtons = await screen.findAllByRole("button", { name: "Add to task eval" });
+    expect(availableAddButtons[1]).toBeEnabled();
+    confirmSpy.mockRestore();
+  });
 
   it("shows a readable execution trace and keeps raw JSON in the full-screen view", async () => {
     requestMutationMock.mockImplementation(async (action: string) => {

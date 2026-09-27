@@ -13,6 +13,7 @@ import json
 import re
 import shutil
 import time
+from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -394,47 +395,149 @@ class RollingBlackboxController:
         title: str | None = None,
     ) -> dict[str, Any]:
         """Promote a candidate and register it as a local replay eval case."""
+        candidate_directory = (
+            self.candidates_directory / sanitize_turn_name(candidate_id)
+        ).resolve()
+        if candidate_directory.parent != self.candidates_directory.resolve() or not candidate_directory.is_dir():
+            raise ValueError("candidate not found")
+        from pawbot.agent.blackbox.manifest import validate_recording_manifest
+
+        sample_health = validate_recording_manifest(candidate_directory)
+        if sample_health not in {"ready", "legacy_unverified"}:
+            raise ValueError(f"candidate is not replayable: {sample_health}")
         sample = self.promote_candidate(candidate_id, name=eval_id or candidate_id)
+        case = self.add_recording_to_eval(
+            sample,
+            eval_id=eval_id or candidate_id,
+            title=title,
+            source="rolling_candidate",
+            allowed_roots=(self.samples_directory,),
+        )
         candidate_path = sample / "candidate.json"
         try:
             candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
             candidate = {}
         candidate_mapping = cast(dict[str, Any], candidate) if isinstance(candidate, dict) else {}
-        case_id = sanitize_turn_name(eval_id or candidate_id).strip("._") or candidate_id
+        case_id = str(case["id"])
+        candidate_mapping["status"] = "promoted"
+        candidate_mapping["eval_case_id"] = case_id
+        write_json_atomic(candidate_path, candidate_mapping)
+        return case
+
+    def add_recording_to_eval(
+        self,
+        sample_directory: str | Path,
+        *,
+        eval_id: str | None = None,
+        title: str | None = None,
+        source: str = "saved_recording",
+        allowed_roots: Sequence[Path] | None = None,
+    ) -> dict[str, Any]:
+        """Register an existing, replayable sample without moving or copying it."""
+        sample = Path(sample_directory).resolve()
+        roots = (
+            tuple(Path(root).resolve() for root in allowed_roots)
+            if allowed_roots is not None
+            else (self.samples_directory.resolve(),)
+        )
+        if not sample.is_dir() or not any(root in sample.parents for root in roots):
+            raise ValueError("sample directory must be inside an allowed regression-sample folder")
+
+        from pawbot.agent.blackbox.manifest import validate_recording_manifest
+
+        sample_health = validate_recording_manifest(sample)
+        if sample_health not in {"ready", "legacy_unverified"}:
+            raise ValueError(f"sample is not replayable: {sample_health}")
         turn_contract: dict[str, Any] | None = None
         turns_path = sample / "turns.jsonl"
+        if not turns_path.is_file():
+            raise ValueError("sample is missing turns.jsonl")
         try:
             for line in turns_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
                 row = json.loads(line)
                 if isinstance(row, dict):
                     row_mapping = cast(dict[str, Any], row)
                     if isinstance(row_mapping.get("task_contract"), dict):
                         turn_contract = cast(dict[str, Any], row_mapping["task_contract"])
                         break
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            pass
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError("sample turn record is unreadable") from exc
+
+        existing = self.list_eval_cases()
+        sample_text = str(sample)
+        matching = next(
+            (
+                item for item in existing
+                if isinstance(item.get("sample_directory"), str)
+                and str(Path(cast(str, item["sample_directory"])).resolve()) == sample_text
+            ),
+            None,
+        )
+        requested_id = eval_id or (str(matching.get("id")) if matching else sample.name)
+        base_id = sanitize_turn_name(requested_id).strip("._") or "recorded-task"
+        case_id = base_id
+        collision = next(
+            (
+                item for item in existing
+                if item.get("id") == case_id
+                and str(item.get("sample_directory") or "") != sample_text
+            ),
+            None,
+        )
+        if collision is not None:
+            suffix = hashlib.sha256(sample_text.encode("utf-8", errors="replace")).hexdigest()[:8]
+            case_id = f"{base_id[:80]}-{suffix}"
         case = {
             "id": case_id,
             "title": title or case_id,
-            "category": "candidate",
-            "description": "Promoted from a reviewed rolling replay candidate.",
-            "source": "rolling_candidate",
-            "sample_directory": str(sample),
+            "category": "recorded",
+            "description": "Replay a saved regression sample without provider requests or real side effects.",
+            "source": source,
+            "sample_directory": sample_text,
             "task_contract": turn_contract,
             "created_at_ms": int(time.time() * 1000),
         }
-        existing = [item for item in self.list_eval_cases() if item.get("id") != case_id]
-        existing.append(case)
+        updated = [item for item in existing if item.get("id") != case_id]
+        updated.append(case)
         write_json_atomic(self.eval_index, {
             "schema_version": 1,
-            "cases": existing,
+            "cases": updated,
             "updated_at_ms": int(time.time() * 1000),
         })
-        candidate_mapping["status"] = "promoted"
-        candidate_mapping["eval_case_id"] = case_id
-        write_json_atomic(candidate_path, candidate_mapping)
         return case
+
+    def remove_eval_case(self, case_id: str) -> bool:
+        """Remove one custom case from the eval index, keeping its sample intact."""
+        cases = self.list_eval_cases()
+        remaining = [item for item in cases if item.get("id") != case_id]
+        if len(remaining) == len(cases):
+            return False
+        write_json_atomic(self.eval_index, {
+            "schema_version": 1,
+            "cases": remaining,
+            "updated_at_ms": int(time.time() * 1000),
+        })
+        return True
+
+    def remove_eval_cases_for_sample(self, sample_directory: str | Path) -> int:
+        """Drop eval-index references before a saved sample is deleted."""
+        sample_text = str(Path(sample_directory).resolve())
+        cases = self.list_eval_cases()
+        remaining = [
+            item for item in cases
+            if str(item.get("sample_directory") or "") != sample_text
+        ]
+        removed = len(cases) - len(remaining)
+        if removed:
+            write_json_atomic(self.eval_index, {
+                "schema_version": 1,
+                "cases": remaining,
+                "updated_at_ms": int(time.time() * 1000),
+            })
+        return removed
 
     def export_candidate_as_live_eval_case(
         self,

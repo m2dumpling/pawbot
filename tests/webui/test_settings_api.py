@@ -288,6 +288,58 @@ def test_create_model_configuration_accepts_legacy_label_without_changing_call_o
     assert duplicate.value.status == 409
 
 
+def test_create_deepseek_model_configuration_defaults_to_65536_tokens(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.deepseek.api_key = "sk-test"
+    save_config(config, config_path)
+    monkeypatch.setattr("pawbot.config.loader._current_config_path", config_path)
+
+    create_model_configuration(
+        {
+            "name": ["DeepSeek Flash"],
+            "provider": ["deepseek"],
+            "model": ["deepseek-flash"],
+        }
+    )
+
+    saved = load_config(config_path)
+    assert saved.model_presets["DeepSeek Flash"].max_tokens == 65_536
+    assert saved.agents.defaults.max_tokens == 8192
+
+
+def test_create_non_deepseek_configuration_keeps_global_output_default(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.deepseek.api_key = "sk-deepseek-test"
+    config.providers.openai.api_key = "sk-openai-test"
+    config.model_presets["deepseek-flash"] = ModelPresetConfig(
+        model="deepseek-flash",
+        provider="deepseek",
+        max_tokens=65_536,
+    )
+    config.agents.defaults.model_preset = "deepseek-flash"
+    save_config(config, config_path)
+    monkeypatch.setattr("pawbot.config.loader._current_config_path", config_path)
+
+    create_model_configuration(
+        {
+            "name": ["OpenAI Fast"],
+            "provider": ["openai"],
+            "model": ["openai/gpt-4.1-mini"],
+        }
+    )
+
+    saved = load_config(config_path)
+    assert saved.model_presets["OpenAI Fast"].max_tokens == 8192
+
+
 def test_create_model_configuration_preserves_canonical_name(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

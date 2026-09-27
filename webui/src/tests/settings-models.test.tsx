@@ -142,6 +142,75 @@ describe("Settings models", () => {
     );
   });
 
+  it("uses the DeepSeek output default and restores the regular default for other providers", async () => {
+    const base = settingsPayload();
+    const payload: SettingsPayload = {
+      ...base,
+      agent: {
+        ...base.agent,
+        model: "deepseek-flash",
+        provider: "deepseek",
+        resolved_provider: "deepseek",
+        max_tokens: 65_536,
+      },
+      model_presets: [
+        {
+          ...base.model_presets[0],
+          model: "deepseek-flash",
+          provider: "deepseek",
+          resolved_provider: "deepseek",
+          max_tokens: 65_536,
+        },
+      ],
+      providers: [
+        { name: "deepseek", label: "DeepSeek", configured: true },
+        { name: "openai", label: "OpenAI", configured: true },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+    await togglePresetEditor();
+    fireEvent.click(screen.getByRole("button", { name: /Advanced options/ }));
+
+    const providerPicker = screen
+      .getAllByRole("button", { name: /DeepSeek/ })
+      .find((button) => button.getAttribute("aria-haspopup") === "menu");
+    if (!providerPicker) throw new Error("provider picker was not found");
+
+    fireEvent.pointerDown(providerPicker);
+    fireEvent.click(await screen.findByRole("menuitem", { name: /OpenAI/ }));
+    expect(screen.getByLabelText("Max output tokens")).toHaveValue(8192);
+
+    const openaiPicker = screen
+      .getAllByRole("button", { name: /OpenAI/ })
+      .find((button) => button.getAttribute("aria-haspopup") === "menu");
+    if (!openaiPicker) throw new Error("provider picker was not found");
+
+    fireEvent.pointerDown(openaiPicker);
+    fireEvent.click(await screen.findByRole("menuitem", { name: /DeepSeek/ }));
+    expect(screen.getByLabelText("Max output tokens")).toHaveValue(65_536);
+
+    fireEvent.change(screen.getByLabelText("Max output tokens"), {
+      target: { value: "8192" },
+    });
+    const deepseekPicker = screen
+      .getAllByRole("button", { name: /DeepSeek/ })
+      .find((button) => button.getAttribute("aria-haspopup") === "menu");
+    if (!deepseekPicker) throw new Error("provider picker was not found");
+
+    fireEvent.pointerDown(deepseekPicker);
+    fireEvent.click(await screen.findByRole("menuitem", { name: /OpenAI/ }));
+    const nextOpenaiPicker = screen
+      .getAllByRole("button", { name: /OpenAI/ })
+      .find((button) => button.getAttribute("aria-haspopup") === "menu");
+    if (!nextOpenaiPicker) throw new Error("provider picker was not found");
+
+    fireEvent.pointerDown(nextOpenaiPicker);
+    fireEvent.click(await screen.findByRole("menuitem", { name: /DeepSeek/ }));
+    expect(screen.getByLabelText("Max output tokens")).toHaveValue(8192);
+  });
+
   it("edits a legacy case-conflicting preset without treating its own name as a rename", async () => {
     const payload = settingsPayload();
     const primary = {
@@ -1395,12 +1464,14 @@ describe("Settings models", () => {
         ...payload.agent,
         model: "deepseek-reasoner",
         temperature: 0.4,
+        max_tokens: 65_536,
       },
       model_presets: [
         {
         ...payload.model_presets[0],
         model: "deepseek-reasoner",
         temperature: 0.4,
+        max_tokens: 65_536,
         reasoning_effort: "provider-native-mode",
       },
       ],
@@ -1465,6 +1536,7 @@ describe("Settings models", () => {
       expect(saveCall?.[1]).toEqual({
         name: "primary",
         model: "deepseek-reasoner",
+        max_tokens: 65_536,
         context_window_tokens: 65536,
         reasoning_effort: "provider-native-mode",
         temperature: 0.4,

@@ -74,6 +74,19 @@ export const DEFAULT_AGENT_SETTINGS_DRAFT: AgentSettingsDraft = {
   toolHintMaxLength: 40,
 };
 
+const DEFAULT_MAX_TOKENS = 8192;
+const DEEPSEEK_DEFAULT_MAX_TOKENS = 65_536;
+
+function defaultMaxTokensForModel(provider: string, model: string): number {
+  const modelId = model.trim().toLowerCase().split("/").at(-1) ?? "";
+  const isDeepSeek =
+    provider.trim().toLowerCase() === "deepseek" ||
+    modelId.startsWith("deepseek-");
+  return isDeepSeek
+    ? DEEPSEEK_DEFAULT_MAX_TOKENS
+    : DEFAULT_MAX_TOKENS;
+}
+
 export function agentDraftFromPayload(
   payload: SettingsPayload,
   preferredPresetName?: string,
@@ -214,6 +227,7 @@ export function ModelsSettings({
   const [editorRowKey, setEditorRowKey] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [selectedModelInfo, setSelectedModelInfo] = useState<ProviderModelInfo | null>(null);
+  const maxTokensCustomizedRef = useRef(false);
   const [draggedCallOrderIndex, setDraggedCallOrderIndex] = useState<number | null>(null);
   const [dragOverCallOrderIndex, setDragOverCallOrderIndex] = useState<number | null>(null);
 
@@ -250,6 +264,9 @@ export function ModelsSettings({
   useEffect(() => {
     setAdvancedOpen(false);
   }, [editorOpen, selectedPreset?.name]);
+  useEffect(() => {
+    maxTokensCustomizedRef.current = false;
+  }, [creating, selectedPreset?.name]);
 
   const configuredProviders = settings.providers.filter((provider) => provider.configured);
   const selectedProvider = settings.providers.find((provider) => provider.name === form.provider);
@@ -294,6 +311,7 @@ export function ModelsSettings({
       setEditorOpen((open) => !open);
       return;
     }
+    maxTokensCustomizedRef.current = false;
     setForm((prev) => ({
       ...prev,
       modelPreset: preset.name,
@@ -409,11 +427,21 @@ export function ModelsSettings({
           showProviderLogos={showBrandLogos}
           onChange={(provider) => {
             setSelectedModelInfo(null);
-            setForm((prev) => ({
-              ...prev,
-              provider,
-              model: provider === prev.provider ? prev.model : "",
-            }));
+            setForm((prev) => {
+              const previousDefaultMaxTokens = defaultMaxTokensForModel(
+                prev.provider,
+                prev.model,
+              );
+              const usesDefaultMaxTokens =
+                !maxTokensCustomizedRef.current &&
+                (prev.maxTokens === previousDefaultMaxTokens ||
+                  prev.maxTokens === DEFAULT_MAX_TOKENS);
+              const nextModel = provider === prev.provider ? prev.model : "";
+              const maxTokens = usesDefaultMaxTokens
+                ? defaultMaxTokensForModel(provider, nextModel)
+                : prev.maxTokens;
+              return { ...prev, provider, model: nextModel, maxTokens };
+            });
           }}
         />
       </SettingsRow>
@@ -451,6 +479,18 @@ export function ModelsSettings({
           onChange={(model, info) => {
             setSelectedModelInfo(info ?? null);
             setForm((prev) => {
+              const previousDefaultMaxTokens = defaultMaxTokensForModel(
+                prev.provider,
+                prev.model,
+              );
+              const usesDefaultMaxTokens =
+                !maxTokensCustomizedRef.current &&
+                (prev.maxTokens === previousDefaultMaxTokens ||
+                  prev.maxTokens === DEFAULT_MAX_TOKENS);
+              const maxTokens =
+                usesDefaultMaxTokens
+                  ? defaultMaxTokensForModel(prev.provider, model)
+                  : prev.maxTokens;
               const contextWindowTokens = info?.context_window
                 ? normalizeContextWindowTokens(info.context_window)
                 : prev.contextWindowTokens;
@@ -459,7 +499,7 @@ export function ModelsSettings({
               )
                 ? prev.reasoningEffort
                 : "";
-              return { ...prev, model, contextWindowTokens, reasoningEffort };
+              return { ...prev, model, maxTokens, contextWindowTokens, reasoningEffort };
             });
           }}
         />
@@ -503,7 +543,12 @@ export function ModelsSettings({
             temperature={form.temperature}
             reasoningEffort={form.reasoningEffort}
             modelInfo={selectedModelInfo}
-            onChange={(value) => setForm((prev) => ({ ...prev, ...value }))}
+            onChange={(value) => {
+              if (Object.prototype.hasOwnProperty.call(value, "maxTokens")) {
+                maxTokensCustomizedRef.current = true;
+              }
+              setForm((prev) => ({ ...prev, ...value }));
+            }}
           />
         </div>
       ) : null}
@@ -515,6 +560,7 @@ export function ModelsSettings({
             className="self-start rounded-full text-muted-foreground"
             disabled={creatingSaving}
             onClick={() => {
+              maxTokensCustomizedRef.current = false;
               setEditorOpen(false);
               onCancelCreate();
             }}
@@ -826,6 +872,7 @@ export function ModelsSettings({
                     className="rounded-full"
                     disabled={callOrderBusy}
                     onClick={() => {
+                      maxTokensCustomizedRef.current = false;
                       setEditorRowKey(null);
                       setEditorOpen(true);
                       onBeginCreate();

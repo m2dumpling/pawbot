@@ -519,16 +519,19 @@ pin.
 
 #### Provider compatibility note
 
-DeepSeek is the provider path with the deepest validation in this repository:
-the V4 model capability table, 1M-token context metadata, reasoning controls,
-tool-call history normalization, streaming tool-call accumulation, retry/error
-metadata, and the local provider contract tests are maintained together. Other
-providers use the shared adapter and may work well, but their model catalogue,
-reasoning fields, streaming events, tool-call conventions, session headers,
-and error semantics can differ by endpoint or gateway. Treat those integrations
-as compatibility paths rather than assuming DeepSeek-level coverage; verify
-the exact endpoint you use, or contribute a focused adapter test/fix as the
-provider evolves.
+Pawbot includes a dedicated DeepSeek integration: the current DeepSeek Flash
+and DeepSeek V4 Pro capability table, 1M-token context metadata, reasoning
+controls, a 65,536-token DeepSeek output default, tool-call history
+normalization, streaming tool-call accumulation, retry/error metadata, and
+local provider contract tests are maintained together. This is the provider
+path with the deepest validation in the repository.
+
+Other providers use the shared adapter and may work well, but their model
+catalogue, reasoning fields, streaming events, tool-call conventions, session
+headers, and error semantics can differ by endpoint or gateway. If you need
+more precise behavior for another provider, use the DeepSeek integration as a
+reference for a focused adapter and test suite, or open an issue or pull request
+with a sanitized reproduction so the support can be developed together.
 
 For a busy self-hosted process, optional local guardrails are available through
 `PAWBOT_MAX_CONCURRENT_REQUESTS`, `PAWBOT_MAX_CONCURRENT_PER_SENDER`,
