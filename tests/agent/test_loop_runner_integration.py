@@ -329,7 +329,7 @@ async def test_non_goal_direct_turn_cannot_reuse_prior_goal_command(tmp_path):
     assert "create_goal is unavailable for this turn" in str(second_request)
 
 @pytest.mark.asyncio
-async def test_loop_max_iterations_message_stays_stable(tmp_path):
+async def test_loop_repeated_unstarted_tool_failure_stops_before_iteration_budget(tmp_path):
     loop = _make_loop(tmp_path)
     loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
         content="working",
@@ -343,14 +343,13 @@ async def test_loop_max_iterations_message_stays_stable(tmp_path):
         [], runtime=loop.llm_runtime()
     )
 
-    assert result.final_content == (
-        "I reached the maximum number of tool call iterations (2) "
-        "without completing the task. You can try breaking the task into smaller steps."
-    )
+    assert result.stop_reason == "tool_retry_stalled"
+    assert result.error_code == "NO_PROGRESS_RETRY_LIMIT"
+    assert "list_dir; TOOL_PARAMETER_INVALID" in result.final_content
 
 
 @pytest.mark.asyncio
-async def test_loop_goal_turn_uses_standard_iteration_budget(tmp_path):
+async def test_loop_goal_turn_stops_repeated_unstarted_tool_failure(tmp_path):
     loop = _make_loop(tmp_path)
     loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
         content="working",
@@ -372,13 +371,9 @@ async def test_loop_goal_turn_uses_standard_iteration_budget(tmp_path):
         ),
     )
 
-    assert result.stop_reason == "max_iterations"
-    assert loop.provider.chat_with_retry.await_count == 3
-    assert loop.provider.chat_with_retry.await_args_list[-1].kwargs["tools"] is None
-    assert result.final_content == (
-        "I reached the maximum number of tool call iterations (2) "
-        "without completing the task. You can try breaking the task into smaller steps."
-    )
+    assert result.stop_reason == "tool_retry_stalled"
+    assert result.error_code == "NO_PROGRESS_RETRY_LIMIT"
+    assert loop.provider.chat_with_retry.await_count == 2
 
 
 @pytest.mark.asyncio

@@ -112,6 +112,36 @@ describe("Settings models", () => {
     expect(within(editor).queryByText("minimax")).not.toBeInTheDocument();
   });
 
+  it("warns when DeepSeek high reasoning shares a low output budget", async () => {
+    const payload = settingsPayload();
+    payload.agent = {
+      ...payload.agent,
+      model: "deepseek-flash",
+      provider: "deepseek",
+      resolved_provider: "deepseek",
+      reasoning_effort: "high",
+      max_tokens: 8192,
+    };
+    payload.model_presets = [{
+      ...payload.model_presets[0],
+      model: "deepseek-flash",
+      provider: "deepseek",
+      resolved_provider: "deepseek",
+      reasoning_effort: "high",
+      max_tokens: 8192,
+    }];
+    payload.providers = [{ name: "deepseek", label: "DeepSeek", configured: true }];
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+    await togglePresetEditor();
+    fireEvent.click(screen.getByRole("button", { name: /Advanced options/ }));
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "DeepSeek thinking counts against this output budget",
+    );
+  });
+
   it("edits a legacy case-conflicting preset without treating its own name as a rename", async () => {
     const payload = settingsPayload();
     const primary = {

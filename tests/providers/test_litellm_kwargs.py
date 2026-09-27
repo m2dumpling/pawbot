@@ -384,7 +384,7 @@ async def test_deepseek_vision_uses_responses_api_with_image_input() -> None:
 
         provider = OpenAICompatProvider(
             api_key="sk-test-key",
-            default_model="deepseek-v4-flash-vision-exp",
+            default_model="deepseek-flash",
             spec=find_by_name("deepseek"),
         )
         result = await provider.chat(
@@ -1614,7 +1614,7 @@ def test_deepseek_vision_preserves_multimodal_content() -> None:
     kw = p._build_kwargs(
         messages=[{"role": "user", "content": content}],
         tools=None,
-        model="deepseek-v4-flash-vision-exp",
+        model="deepseek-flash",
         max_tokens=1024,
         temperature=0.7,
         reasoning_effort=None,

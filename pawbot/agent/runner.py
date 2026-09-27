@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import os
 import time
 from collections.abc import Awaitable, Callable, Iterable
@@ -68,6 +69,7 @@ from pawbot.utils.runtime import (
     build_budget_exhausted_finalization_message,
     build_finalization_retry_message,
     build_length_recovery_message,
+    build_truncated_tool_call_recovery_message,
     is_blank_text,
 )
 
@@ -84,6 +86,7 @@ _ARREARAGE_ERROR_MESSAGE = (
 _PERSISTED_MODEL_ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model error.]"
 _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
+_MAX_TRUNCATED_TOOL_CALL_RECOVERIES = 1
 _MAX_INJECTIONS_PER_TURN = 3
 _MAX_INJECTION_CYCLES = 5
 _TASK_VERIFICATION_META = "task_verification"
@@ -148,6 +151,7 @@ class AgentRunResult:
     usage: LLMUsage | None = None
     stop_reason: str = "completed"
     error: str | None = None
+    error_code: str | None = None
     tool_events: list[dict[str, str]] = field(default_factory=list)
     had_injections: bool = False
     # Terminal tail to emit when the preceding final-content prefix was already streamed.
@@ -173,12 +177,21 @@ class _TurnState:
     tools_used: list[str] = field(default_factory=list)
     usage: LLMUsage | None = None
     error: str | None = None
+    error_code: str | None = None
     stop_reason: str = "completed"
     tool_events: list[dict[str, str]] = field(default_factory=list)
     external_lookup_counts: dict[str, int] = field(default_factory=dict)
     workspace_violation_counts: dict[str, int] = field(default_factory=dict)
     empty_content_retries: int = 0
     length_recovery_parts: list[str] = field(default_factory=list)
+    truncated_tool_call_recoveries: int = 0
+    no_progress_signature: tuple[
+        str,
+        tuple[str, ...],
+        tuple[str, ...],
+        tuple[str, ...],
+    ] | None = None
+    no_progress_count: int = 0
     had_injections: bool = False
     injection_cycles: int = 0
     compacted_tool_call_ids: set[str] = field(default_factory=set)
@@ -543,6 +556,7 @@ class AgentRunner:
             context.usage = result.usage
             context.stop_reason = result.stop_reason
             context.error = result.error
+            context.error_code = result.error_code
             context.tool_events = deepcopy(result.tool_events)
             context.tool_states = deepcopy(result.tool_states)
             context.had_injections = result.had_injections
@@ -680,6 +694,19 @@ class AgentRunner:
                 await hook.emit_reasoning_end()
                 context.streamed_reasoning = True
 
+            if response.finish_reason == "length" and response.has_tool_calls:
+                should_continue = await self._handle_truncated_tool_calls(
+                    spec,
+                    hook,
+                    messages,
+                    response,
+                    context,
+                    state,
+                )
+                if should_continue:
+                    continue
+                break
+
             if response.should_execute_tools:
                 tool_budget_reason = budget.try_consume_tool_calls(len(response.tool_calls))
                 if tool_budget_reason is None:
@@ -712,6 +739,9 @@ class AgentRunner:
                     state,
                 )
                 state.tool_states.extend(context.tool_states)
+                if self._record_no_progress_tool_failure(response, context, state):
+                    self._finish_no_progress_tool_failure(messages, state)
+                    break
                 continue
 
             outcome = await self._run_terminal_iteration(
@@ -743,6 +773,7 @@ class AgentRunner:
             usage=state.usage,
             stop_reason=state.stop_reason,
             error=state.error,
+            error_code=state.error_code,
             tool_events=state.tool_events,
             had_injections=state.had_injections,
             pending_stream_content=state.pending_stream_content,
@@ -895,6 +926,168 @@ class AgentRunner:
         context.stop_reason = reason
         await hook.after_iteration(context)
         self._append_final_message(messages, blocked_content)
+
+    async def _handle_truncated_tool_calls(
+        self,
+        spec: AgentRunSpec,
+        hook: AgentHook,
+        messages: list[dict[str, Any]],
+        response: Any,
+        context: AgentHookContext,
+        state: _TurnState,
+    ) -> bool:
+        """Discard tool calls cut off by an output limit and request a new strategy.
+
+        A response ending in ``length`` cannot prove that its function arguments
+        are complete.  In particular, a partial ``write_file`` payload must not
+        reach the executor: validation errors hide the real cause and a tool
+        with side effects could receive an incomplete request.
+
+        Returns ``True`` when a single strategy-changing recovery request was
+        queued, or ``False`` after the recovery budget was exhausted.
+        """
+        discarded_calls = list(response.tool_calls)
+        tool_names = [str(call.name) for call in discarded_calls if call.name]
+        completed_tools = list(dict.fromkeys(state.tools_used))
+        response.tool_calls = []
+        response.provider_state = None
+        context.tool_calls = []
+        state.length_recovery_parts.clear()
+
+        for tool_call in discarded_calls:
+            state.tool_events.append({
+                "name": str(tool_call.name or "unknown"),
+                "status": "discarded",
+                "detail": "discarded because model output reached its limit before the call completed",
+            })
+            state.tool_states.append({
+                "call_id": tool_call.id,
+                "name": str(tool_call.name or "unknown"),
+                "state": "blocked",
+                "side_effect": "not_started",
+                "reason": "output_limit_exceeded",
+                "side_effect_class": "none",
+                "recovery_required": False,
+                "recovery_resolution": "strategy_retry",
+            })
+
+        if state.truncated_tool_call_recoveries < _MAX_TRUNCATED_TOOL_CALL_RECOVERIES:
+            state.truncated_tool_call_recoveries += 1
+            recovery_message = build_truncated_tool_call_recovery_message(
+                tool_names,
+                max_tokens=spec.runtime.generation.max_tokens,
+            )
+            recovery_message[HIDDEN_HISTORY_META] = {
+                "kind": "output_limit_recovery",
+                "discarded_tool_calls": tool_names,
+            }
+            messages.append(recovery_message)
+            logger.warning(
+                "Discarded truncated tool calls on turn {} for {}; requesting chunked recovery",
+                context.iteration,
+                spec.session_key or "default",
+            )
+            if hook.wants_streaming():
+                await hook.on_stream_end(context, resuming=True)
+            await hook.after_iteration(context)
+            return True
+
+        discarded_names = ", ".join(dict.fromkeys(tool_names)) or "unknown"
+        completed_names = ", ".join(completed_tools) if completed_tools else "none"
+        state.final_content = (
+            "OUTPUT_LIMIT_EXCEEDED: The model reached its output limit while building tool "
+            f"input for {discarded_names}. Those calls were not executed and caused no side "
+            f"effects. Completed tools in this turn: {completed_names}. Retry by splitting "
+            "large writes or patches into smaller independent calls, or increase the output limit."
+        )
+        state.error = state.final_content
+        state.error_code = "OUTPUT_LIMIT_EXCEEDED"
+        state.stop_reason = "output_limit_exceeded"
+        self._append_final_message(messages, state.final_content)
+        context.final_content = state.final_content
+        context.error = state.error
+        context.stop_reason = state.stop_reason
+        logger.warning(
+            "Stopping turn {} for {} after repeated truncated tool calls",
+            context.iteration,
+            spec.session_key or "default",
+        )
+        if hook.wants_streaming():
+            await hook.on_stream_end(context, resuming=False)
+        await hook.after_iteration(context)
+        return False
+
+    @staticmethod
+    def _record_no_progress_tool_failure(
+        response: Any,
+        context: AgentHookContext,
+        state: _TurnState,
+    ) -> bool:
+        """Return true after two identical failures proven not to have started.
+
+        The guard is deliberately narrow.  A timeout or an interrupted write
+        may have changed an external system, so it must retain the normal
+        recovery/confirmation path.  Parameter and policy failures carry
+        ``side_effect=not_started`` and are safe to stop after the model has
+        already received one opportunity to change its strategy.
+        """
+        tool_calls = list(context.tool_calls)
+        states_by_call_id = {
+            str(item.get("call_id")): item
+            for item in context.tool_states
+            if item.get("call_id")
+        }
+        states = [states_by_call_id.get(str(call.id)) for call in tool_calls]
+        if (
+            not tool_calls
+            or any(item is None for item in states)
+            or any(item.get("side_effect") != "not_started" for item in states if item is not None)
+            or any(item.get("state") not in {"failed", "blocked"} for item in states if item is not None)
+        ):
+            state.no_progress_signature = None
+            state.no_progress_count = 0
+            return False
+
+        error_codes = tuple(
+            str(item.get("error_code") or "TOOL_EXECUTION_ERROR")
+            for item in states
+            if item is not None
+        )
+        argument_signatures = tuple(
+            json.dumps(call.arguments, ensure_ascii=False, sort_keys=True, default=str)
+            for call in tool_calls
+        )
+        signature = (
+            str(response.finish_reason or ""),
+            tuple(str(call.name or "unknown") for call in tool_calls),
+            error_codes,
+            argument_signatures,
+        )
+        if signature == state.no_progress_signature:
+            state.no_progress_count += 1
+        else:
+            state.no_progress_signature = signature
+            state.no_progress_count = 1
+        return state.no_progress_count >= 2
+
+    @staticmethod
+    def _finish_no_progress_tool_failure(
+        messages: list[dict[str, Any]],
+        state: _TurnState,
+    ) -> None:
+        """Close a turn after the same safe-to-retry tool failure repeats."""
+        signature = state.no_progress_signature
+        tool_names = ", ".join(signature[1]) if signature is not None else "unknown"
+        error_codes = ", ".join(signature[2]) if signature is not None else "TOOL_EXECUTION_ERROR"
+        state.final_content = (
+            "NO_PROGRESS_RETRY_LIMIT: The same tool call failed twice before it started "
+            f"({tool_names}; {error_codes}). No side effect occurred. Change the tool input "
+            "or task strategy before retrying."
+        )
+        state.error = state.final_content
+        state.error_code = "NO_PROGRESS_RETRY_LIMIT"
+        state.stop_reason = "tool_retry_stalled"
+        AgentRunner._append_final_message(messages, state.final_content)
 
     async def _run_tool_iteration(
         self,

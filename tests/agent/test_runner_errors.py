@@ -313,7 +313,7 @@ async def test_runner_preserves_tool_error_results_in_messages():
 
 
 @pytest.mark.asyncio
-async def test_length_finish_with_blank_content_routes_to_length_recovery():
+async def test_length_finish_with_blank_content_and_tool_call_routes_to_chunked_recovery():
     """Regression test for #5133.
 
     A response with finish_reason='length' and blank content (e.g. the model
@@ -323,7 +323,7 @@ async def test_length_finish_with_blank_content_routes_to_length_recovery():
     exhaustion.
     """
     from pawbot.agent.runner import AgentRunner
-    from pawbot.utils.runtime import LENGTH_RECOVERY_PROMPT
+    from pawbot.utils.runtime import TRUNCATED_TOOL_CALL_RECOVERY_PROMPT
 
     provider = MagicMock(spec=LLMProvider)
     # First call: truncated (length) with blank content and a dropped tool call.
@@ -349,11 +349,10 @@ async def test_length_finish_with_blank_content_routes_to_length_recovery():
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
     ))
 
-    # The runner must have injected a length-recovery prompt and continued,
-    # rather than exhausting empty-response retries into a generic apology.
+    # The runner must use a tool-specific strategy change instead of trying to
+    # append prose to the middle of an incomplete function argument.
     user_msgs = [m.get("content") or "" for m in result.messages if m.get("role") == "user"]
-    assert any(LENGTH_RECOVERY_PROMPT in c for c in user_msgs), (
-        "expected a length-recovery message to be appended for a "
-        "finish_reason='length' response with blank content"
+    assert any(TRUNCATED_TOOL_CALL_RECOVERY_PROMPT in c for c in user_msgs), (
+        "expected a chunked tool-call recovery message for a truncated tool call"
     )
     assert result.final_content == "done"

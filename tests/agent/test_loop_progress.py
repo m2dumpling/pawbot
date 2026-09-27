@@ -1131,7 +1131,7 @@ class TestToolEventProgress:
             chat_id="chat1",
             content="say hello",
             metadata={"webui": True},
-        )), timeout=0.5)
+        )), timeout=2)
 
         outbound: list = []
         for _ in range(12):

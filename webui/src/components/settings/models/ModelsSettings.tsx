@@ -496,6 +496,8 @@ export function ModelsSettings({
       {advancedOpen ? (
         <div className="bg-muted/12 px-4 py-4 sm:px-5">
           <ModelAdvancedFields
+            provider={providerValue}
+            model={form.model}
             maxTokens={form.maxTokens}
             contextWindowTokens={form.contextWindowTokens}
             temperature={form.temperature}
@@ -854,6 +856,8 @@ export function ModelsSettings({
 }
 
 function ModelAdvancedFields({
+  provider,
+  model,
   maxTokens,
   contextWindowTokens,
   temperature,
@@ -861,6 +865,8 @@ function ModelAdvancedFields({
   modelInfo,
   onChange,
 }: {
+  provider: string;
+  model: string;
   maxTokens: number;
   contextWindowTokens: number;
   temperature: number;
@@ -880,6 +886,16 @@ function ModelAdvancedFields({
   const contextWindowOptions = Array.from(
     new Set([...CONTEXT_WINDOW_TOKEN_OPTIONS, contextWindowTokens]),
   ).sort((left, right) => left - right);
+  const modelSlug = model.trim().toLowerCase().split("/").pop() ?? "";
+  const isDeepSeekThinkingModel =
+    provider.trim().toLowerCase() === "deepseek" &&
+    ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"].includes(
+      modelSlug,
+    );
+  const lowOutputBudgetWarning =
+    isDeepSeekThinkingModel &&
+    maxTokens <= 8_192 &&
+    ["high", "max"].includes(reasoningEffort.trim().toLowerCase());
   return (
     <div className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -917,6 +933,17 @@ function ModelAdvancedFields({
           />
         </label>
       </div>
+      {lowOutputBudgetWarning ? (
+        <p
+          role="status"
+          className="rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-950 dark:text-amber-200"
+        >
+          {tx(
+            "settings.models.deepSeekLowOutputWarning",
+            "DeepSeek thinking counts against this output budget together with visible text and tool input. 8,192 tokens can truncate large file writes; use 65,536 or split the artifact into smaller tool calls.",
+          )}
+        </p>
+      ) : null}
       <div>
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <span className="text-[12px] font-medium text-muted-foreground">

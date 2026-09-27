@@ -1998,7 +1998,7 @@ def test_provider_models_payload_fetches_openai_compatible_models(
     assert payload["models"][1]["context_window"] == 65536
 
 
-def test_provider_models_payload_enriches_deepseek_v4_capabilities(
+def test_provider_models_payload_enriches_deepseek_flash_capabilities(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2011,7 +2011,7 @@ def test_provider_models_payload_enriches_deepseek_v4_capabilities(
     def fake_get(url: str, **kwargs):
         return httpx.Response(
             200,
-            json={"data": [{"id": "deepseek-v4-flash"}]},
+            json={"data": [{"id": "deepseek-flash"}]},
             request=httpx.Request("GET", url),
         )
 
@@ -2021,11 +2021,11 @@ def test_provider_models_payload_enriches_deepseek_v4_capabilities(
 
     assert payload["models"] == [
         {
-            "id": "deepseek-v4-flash",
-            "label": "DeepSeek V4 Flash",
+            "id": "deepseek-flash",
+            "label": "DeepSeek Flash",
             "owned_by": None,
             "context_window": 1_048_576,
-            "description": "DeepSeek V4 Flash with a 1M-token context window.",
+            "description": "DeepSeek V4.1 Flash with a 1M-token context window, image input, and tool calling.",
             "reasoning_effort_values": ["", "low", "high", "max"],
         }
     ]

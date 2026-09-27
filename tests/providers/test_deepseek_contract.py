@@ -14,25 +14,37 @@ def _provider() -> OpenAICompatProvider:
     with patch("pawbot.providers.openai_compat_provider.AsyncOpenAI"):
         return OpenAICompatProvider(
             api_key="test-key",
-            default_model="deepseek-v4-flash",
+            default_model="deepseek-flash",
             spec=find_by_name("deepseek"),
         )
 
 
-def test_deepseek_v4_flash_capability_contract() -> None:
+def test_deepseek_flash_capability_contract() -> None:
     spec = find_by_name("deepseek")
     assert spec is not None
-    assert context_window_tokens_for("deepseek", "deepseek-v4-flash", 128_000) == 1_048_576
-    assert reasoning_effort_values_for("deepseek", "deepseek-v4-flash") == [
+    assert context_window_tokens_for("deepseek", "deepseek-flash", 128_000) == 1_048_576
+    assert reasoning_effort_values_for("deepseek", "deepseek-flash") == [
         "",
         "low",
         "high",
         "max",
     ]
-    model = next(item for item in spec.model_capabilities if item.id == "deepseek-v4-flash")
+    model = next(item for item in spec.model_capabilities if item.id == "deepseek-flash")
     assert model.supports_tools is True
     assert model.supports_reasoning is True
+    assert model.supports_vision is True
     assert model.max_output_tokens == 384_000
+    assert model.aliases == ("deepseek-v4-flash", "deepseek-v4-flash-vision-exp")
+
+
+def test_deepseek_flash_legacy_ids_keep_the_same_capability_contract() -> None:
+    assert context_window_tokens_for("deepseek", "deepseek-v4-flash", 128_000) == 1_048_576
+    assert reasoning_effort_values_for("deepseek", "deepseek-v4-flash-vision-exp") == [
+        "",
+        "low",
+        "high",
+        "max",
+    ]
 
 
 def test_deepseek_request_contract_keeps_tools_reasoning_and_long_context_history() -> None:
@@ -57,14 +69,14 @@ def test_deepseek_request_contract_keeps_tools_reasoning_and_long_context_histor
                 "parameters": {"type": "object", "properties": {}},
             },
         }],
-        model="deepseek-v4-flash",
+        model="deepseek-flash",
         max_tokens=1024,
         temperature=0.1,
         reasoning_effort="high",
         tool_choice=None,
     )
 
-    assert kwargs["model"] == "deepseek-v4-flash"
+    assert kwargs["model"] == "deepseek-flash"
     assert kwargs["tools"]
     assert kwargs["tool_choice"] == "auto"
     assert kwargs["extra_body"] == {"thinking": {"type": "enabled"}}

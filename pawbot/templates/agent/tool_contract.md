@@ -19,6 +19,15 @@
 - For coding and technical tasks, continue through implementation and verification; do not
   stop at a plan, diagnosis, or plausible-looking output.
 
+## Large Generated Artifacts
+
+- Do not place a large generated artifact in one `write_file` or `apply_patch` call when its
+  content may approach the model's output budget.
+- Create the initial file with a small complete skeleton, then add independent sections with
+  separate writes or patches. Verify the file after each meaningful section.
+- If a response was cut off while preparing a tool call, discard that partial call and restart
+  with smaller complete calls. Never continue a partial JSON tool argument.
+
 ## Discovery and Reading
 
 - Use `find_files` or `list_dir` for uncertain paths, `grep` for content, and `read_file` for a known path.

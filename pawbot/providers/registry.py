@@ -31,6 +31,10 @@ class ProviderModelSpec:
     supports_tools: bool | None = None
     supports_reasoning: bool | None = None
     supports_vision: bool | None = None
+    # Legacy provider IDs accepted by the same serving model. Aliases enrich
+    # existing configurations and gateway catalogues but are not listed as
+    # separate curated choices. Kept last for positional-call compatibility.
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -671,9 +675,9 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         supports_max_completion_tokens=True,
     ),
     # DeepSeek: OpenAI-compatible at api.deepseek.com
-    # DeepSeek V4 models (deepseek-v4-*) accept explicit thinking effort via the
-    # Responses API with a low / high / max vocabulary. Older deepseek-chat
-    # models reason implicitly and must not receive the kwarg.
+    # DeepSeek Flash and V4 Pro accept explicit thinking effort via the
+    # Responses API with a low / high / max vocabulary. The retired V4 Flash
+    # names remain aliases for Flash so old configurations keep working.
     ProviderSpec(
         name="deepseek",
         keywords=("deepseek",),
@@ -688,20 +692,26 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             ("max", "max"),
         ),
         responses_models=(
+            "deepseek-flash",
             "deepseek-v4-flash",
             "deepseek-v4-pro",
             "deepseek-v4-flash-vision-exp",
         ),
         model_capabilities=(
             ProviderModelSpec(
-                id="deepseek-v4-flash",
-                label="DeepSeek V4 Flash",
-                description="DeepSeek V4 Flash with a 1M-token context window.",
+                id="deepseek-flash",
+                aliases=("deepseek-v4-flash", "deepseek-v4-flash-vision-exp"),
+                label="DeepSeek Flash",
+                description=(
+                    "DeepSeek V4.1 Flash with a 1M-token context window, image input, "
+                    "and tool calling."
+                ),
                 context_window=1_048_576,
                 max_output_tokens=384_000,
                 reasoning_effort_values=("", "low", "high", "max"),
                 supports_tools=True,
                 supports_reasoning=True,
+                supports_vision=True,
             ),
             ProviderModelSpec(
                 id="deepseek-v4-pro",
@@ -712,17 +722,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
                 reasoning_effort_values=("", "low", "high", "max"),
                 supports_tools=True,
                 supports_reasoning=True,
-            ),
-            ProviderModelSpec(
-                id="deepseek-v4-flash-vision-exp",
-                label="DeepSeek V4 Flash Vision",
-                description="DeepSeek V4 Flash Vision with a 1M-token context window.",
-                context_window=1_048_576,
-                max_output_tokens=384_000,
-                reasoning_effort_values=("", "low", "high", "max"),
-                supports_tools=True,
-                supports_reasoning=True,
-                supports_vision=True,
             ),
         ),
         responses_default_tools=("web_search",),
@@ -1358,11 +1357,17 @@ def model_capability_for(provider_name: str, model: str) -> ProviderModelSpec | 
             if key in seen:
                 continue
             seen.add(key)
-            normalized_capability = capability.id.strip().lower().rstrip("/")
+            normalized_capabilities = {
+                candidate.strip().lower().rstrip("/")
+                for candidate in (capability.id, *capability.aliases)
+            }
             if (
-                normalized_model == normalized_capability
-                or normalized_model.endswith(f"/{normalized_capability}")
-                or normalized_model.rsplit("/", 1)[-1] == normalized_capability
+                any(
+                    normalized_model == candidate
+                    or normalized_model.endswith(f"/{candidate}")
+                    or normalized_model.rsplit("/", 1)[-1] == candidate
+                    for candidate in normalized_capabilities
+                )
             ):
                 return capability
     return None
