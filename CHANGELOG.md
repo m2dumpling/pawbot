@@ -3,7 +3,27 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
-## 0.7.0 - unreleased
+## 0.7.1 - 2026-09-27
+
+### Fixed
+
+- Improved Agent reply and WebUI response speed by moving event-journal and
+  turn-context disk work out of the Gateway event loop.
+- Kept long-running Agent tasks from blocking WebUI settings and controls.
+- Reduced CLI Apps catalog loading on Windows from repeated PATH probing to one
+  directory scan with final checks for installed applications.
+- Preserved WebSocket event ordering and reconnect recovery while bounding the
+  retained event journal.
+
+### Verification
+
+- GitHub Actions passed on the `v0.7.1` release candidate: Python 3.11/Linux,
+  Python 3.13/Windows, WebUI, native TUI, package smoke, Record & Replay,
+  Linux/macOS/Windows installer smoke tests, and the quality gate.
+- A local 100-second WebUI run completed five real Agent turns, including an
+  `exec` tool turn, without a settings timeout.
+
+## 0.7.0 - 2026-09-23
 
 ### Added
 
