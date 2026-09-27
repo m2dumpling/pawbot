@@ -61,7 +61,7 @@ def _available_entry_points(
     # shutil.which to retain its exact executable and search-order semantics.
     extensions = {
         value.strip().strip('"').casefold()
-        for value in (os.environ.get("PATHEXT", "") + ";.COM;.EXE;.BAT;.CMD").split(os.pathsep)
+        for value in (os.environ.get("PATHEXT", "") + ";.COM;.EXE;.BAT;.CMD").split(";")
         if value.strip()
     }
     simple = {name for name in unique if not os.path.dirname(name) and ":" not in name}
@@ -70,7 +70,7 @@ def _available_entry_points(
         for name in simple
     }
     possible: set[str] = set()
-    directories = [os.getcwd(), *os.environ.get("PATH", os.defpath).split(os.pathsep)]
+    directories = [os.getcwd(), *os.environ.get("PATH", os.defpath).split(";")]
     for directory in directories:
         if len(possible) == len(simple):
             break
@@ -877,6 +877,12 @@ class CliAppManager:
                 "logo_url": cached_app.get("logo_url") or entry.get("logo_url"),
                 "brand_color": cached_app.get("brand_color") or entry.get("brand_color"),
             }
+            entry_point = str(app["entry_point"])
+            if entry_point:
+                # Installed applications are few and need an authoritative
+                # final check. A catalog-wide PATH scan may intentionally skip
+                # a command that a wrapper or test-specific resolver exposes.
+                availability[entry_point] = shutil.which(entry_point) is not None
             rows.append(self._app_payload(app, installed, availability=availability))
         return {
             "apps": rows,
