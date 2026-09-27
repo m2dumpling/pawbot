@@ -16,7 +16,7 @@ fallback until the user chooses a value.
 
 | Provider / family | Representative model IDs | Context window | Max output when documented |
 | --- | --- | ---: | ---: |
-| DeepSeek V4 | `deepseek-v4-flash`, `deepseek-v4-pro`, `deepseek-v4-flash-vision-exp` | 1,048,576 | 384,000 |
+| DeepSeek Flash / V4 Pro | `deepseek-flash`, `deepseek-v4-pro` | 1,048,576 | 384,000 |
 | OpenAI GPT-5.6 / GPT-5.5 / GPT-5.4 | `gpt-5.6-*`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` | 1,050,000 | 128,000 |
 | OpenAI GPT-4.1 | `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano` | 1,047,576 | 32,768 |
 | Claude 4.6 / 5 | `claude-opus-5`, `claude-sonnet-5`, `claude-opus-4-6`, `claude-sonnet-4-6` | 1,000,000 | 128,000 |
@@ -27,6 +27,10 @@ fallback until the user chooses a value.
 | Mistral Large / Small / Devstral | `mistral-large-2512`, `mistral-small-2603`, `devstral-2512` | 262,144 | Provider-reported |
 | MiniMax | `minimax-m2.5`, `minimax-m2.7` | 204,800 | Provider-reported |
 | Kimi | `kimi-k2.5`, `kimi-k2.6` | 262,144 | Provider-reported |
+
+`deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` remain accepted as
+compatibility aliases for `deepseek-flash`; they are not separate current
+catalogue entries.
 
 ## Source references
 
