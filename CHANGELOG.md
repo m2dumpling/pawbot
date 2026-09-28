@@ -3,6 +3,23 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## 0.7.3 - 2026-09-28
+
+### Fixed
+
+- Fixed the WebUI mutation route for removing custom task evaluation cases;
+  the evaluation-set delete action now reaches the backend instead of returning
+  `unknown WebUI mutation action`.
+- Improved WebUI stop responsiveness for long-running tasks by terminating
+  child execution before joining the active turn and ignoring late stream
+  events from a turn that the user already stopped.
+
+### Verification
+
+- Local Python: 6,999 passed, 54 skipped, 82.89% coverage.
+- Local WebUI: 1,134 passed; Ruff, basedpyright, frontend lint, and build passed.
+- GitHub Actions passed all CI, smoke, replay, TUI, package, and quality-gate jobs.
+
 ## 0.7.2 - 2026-09-28
 
 ### Added
