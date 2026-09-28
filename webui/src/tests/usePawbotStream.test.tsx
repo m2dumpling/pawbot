@@ -2665,6 +2665,24 @@ describe("usePawbotStream", () => {
     expect(result.current.isStreaming).toBe(false);
     expect(result.current.messages).toHaveLength(1);
     expect(result.current.messages[0].content).toBe("long task");
+
+    act(() => {
+      fake.emit("chat-stop", {
+        event: "goal_status",
+        chat_id: "chat-stop",
+        status: "running",
+        started_at: 1,
+      });
+      fake.emit("chat-stop", {
+        event: "delta",
+        chat_id: "chat-stop",
+        text: "late output",
+      });
+    });
+
+    expect(result.current.isStreaming).toBe(false);
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].content).toBe("long task");
   });
 
   it("does not mark side-channel slash commands as streaming", () => {

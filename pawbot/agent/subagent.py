@@ -566,10 +566,12 @@ class SubagentManager:
         tasks = [self._running_tasks[tid] for tid in self._session_tasks.get(session_key, [])
                  if tid in self._running_tasks and not self._running_tasks[tid].done()]
         for t in tasks:
-            t.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        await self._exec_session_manager.terminate_by_owner(session_key)
+            if t.cancelling() == 0:
+                t.cancel()
+        await asyncio.gather(
+            asyncio.gather(*tasks, return_exceptions=True),
+            self._exec_session_manager.terminate_by_owner(session_key),
+        )
         return len(tasks)
 
     async def close(self) -> None:

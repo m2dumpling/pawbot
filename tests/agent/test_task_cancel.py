@@ -165,6 +165,50 @@ class TestHandleStop:
         assert all(e.is_set() for e in events)
         assert "2 task" in out.content
 
+    @pytest.mark.asyncio
+    async def test_stop_terminates_child_work_before_joining_active_turn(self):
+        from pawbot.bus.events import InboundMessage
+        from pawbot.command.builtin import cmd_stop
+        from pawbot.command.router import CommandContext
+
+        loop, _bus = _make_loop()
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+
+        async def active_turn():
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                await cleanup_started.wait()
+                await release_cleanup.wait()
+                raise
+
+        async def terminate_exec_sessions(_key: str) -> int:
+            cleanup_started.set()
+            await release_cleanup.wait()
+            return 1
+
+        loop._exec_session_manager.terminate_by_owner = terminate_exec_sessions
+        task = asyncio.create_task(active_turn())
+        await asyncio.sleep(0)
+        active_tasks = {task}
+        loop._active_tasks["test:c1"] = active_tasks
+        task.add_done_callback(active_tasks.discard)
+
+        msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="/stop")
+        ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw="/stop", loop=loop)
+        stop_task = asyncio.create_task(cmd_stop(ctx))
+        await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
+
+        assert task.cancelling() == 1
+        assert task in loop._active_tasks["test:c1"]
+
+        release_cleanup.set()
+        out = await asyncio.wait_for(stop_task, timeout=1.0)
+
+        assert task.cancelled()
+        assert "stopped" in out.content.lower()
+
 
 class TestDispatch:
     @pytest.mark.asyncio
@@ -349,6 +393,49 @@ class TestSubagentCancellation:
         await mgr.cancel_by_session("test:c1")
 
         mock_exec_mgr.terminate_by_owner.assert_awaited_once_with("test:c1")
+
+    @pytest.mark.asyncio
+    async def test_cancel_by_session_terminates_exec_before_joining_subagent(self):
+        from pawbot.agent.subagent import SubagentManager
+        from pawbot.bus.queue import MessageBus
+
+        mgr = SubagentManager(
+            workspace=MagicMock(),
+            bus=MessageBus(),
+            max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        )
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+
+        async def terminate_exec_sessions(_key: str) -> int:
+            cleanup_started.set()
+            await release_cleanup.wait()
+            return 1
+
+        mgr._exec_session_manager.terminate_by_owner = terminate_exec_sessions
+
+        async def slow_subagent():
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                await cleanup_started.wait()
+                await release_cleanup.wait()
+                raise
+
+        task = asyncio.create_task(slow_subagent())
+        await asyncio.sleep(0)
+        mgr._running_tasks["sub-1"] = task
+        mgr._session_tasks["test:c1"] = {"sub-1"}
+        cancel_task = asyncio.create_task(mgr.cancel_by_session("test:c1"))
+
+        try:
+            await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
+            assert not task.done()
+        finally:
+            release_cleanup.set()
+
+        assert await asyncio.wait_for(cancel_task, timeout=1.0) == 1
+        assert task.cancelled()
 
     @pytest.mark.asyncio
     async def test_subagent_preserves_reasoning_fields_in_tool_turn(self, monkeypatch, tmp_path):

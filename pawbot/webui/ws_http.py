@@ -203,6 +203,7 @@ _WEBUI_MUTATION_PATHS = {
     "blackbox.rolling.reject": "/api/blackbox/rolling/reject",
     "blackbox.rolling.add_to_eval": "/api/blackbox/rolling/add-to-eval",
     "blackbox.eval.list": "/api/blackbox/eval/list",
+    "blackbox.eval.remove": "/api/blackbox/eval/remove",
     "blackbox.eval.run": "/api/blackbox/eval/run",
     "blackbox.detail": "/api/blackbox/detail",
     "blackbox.delete": "/api/blackbox/delete",
@@ -502,7 +503,7 @@ class GatewayHTTPHandler:
             return True
         if re.match(
             r"^/api/(?:blackbox/(status|start|stop|list|detail|delete|replay|tokens|"
-            r"rolling/(candidates|promote|reject|add-to-eval)|eval/(list|run))|"
+            r"rolling/(candidates|promote|reject|add-to-eval)|eval/(list|remove|run))|"
             r"memory/(list|remember|remember-note|promote|reject|forget|clear)|"
             r"personalization/(get|update|clear))$",
             path,
@@ -836,7 +837,7 @@ class GatewayHTTPHandler:
     ) -> Response | None:
         match = re.fullmatch(
             r"/api/blackbox/(status|start|stop|list|detail|delete|replay|tokens|"
-            r"rolling/(candidates|promote|reject|add-to-eval)|eval/(list|run))",
+            r"rolling/(candidates|promote|reject|add-to-eval)|eval/(list|remove|run))",
             path,
         )
         if match is None:
