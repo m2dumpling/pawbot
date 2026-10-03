@@ -45,10 +45,10 @@ supported surface and known boundaries of each published version.
 - The current fixed diagnostic suite passed 30/30 real-model trials with no
   execution errors. This is not a production success rate or an improvement
   claim; the optional Judge has not been calibrated with independent human labels.
-- The merged implementation at `3a65821` passed all 11 remote CI jobs.
-  The version preparation still needs its own CI before tagging; v0.8.0 has
-  not been published. Setup, report navigation, and case maintenance are
-  documented in the [Promptfoo guide](docs/agent-evaluation-promptfoo.zh-CN.md).
+- The v0.8.0 release-preparation commit passed all 11 remote CI jobs on `main`
+  before its version tag was created. Setup, report navigation, and case
+  maintenance are documented in the
+  [Promptfoo guide](docs/agent-evaluation-promptfoo.zh-CN.md).
 
 ## 0.7.3 - 2026-09-28
 
