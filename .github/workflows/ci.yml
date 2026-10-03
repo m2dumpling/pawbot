@@ -162,7 +162,7 @@ jobs:
       - name: Verify the installed WebUI and settings transport
         shell: bash
         run: |
-          uv sync --dev
+          uv sync --extra dev
           PAWBOT_SMOKE_PYTHON="$RUNNER_TEMP/pawbot-release-venv/bin/python" \
             uv run --no-sync pytest -q tests/webui/test_gateway_webui_smoke.py
 
