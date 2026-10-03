@@ -188,6 +188,9 @@ async def test_gateway_webui_assets_and_settings_mutations(tmp_path: Path) -> No
             http.headers["Authorization"] = f'Bearer {bootstrap["api_token"]}'
             before = (await http.get("/api/settings")).json()
             assert before["agent"]["model"] == "custom/smoke-model"
+            features = (await http.get("/api/settings/pawbot-features")).json()["features"]
+            websocket_feature = next(row for row in features if row["name"] == "websocket")
+            assert websocket_feature["setup"]["official_url"] == "/"
             # Mutations must use the authenticated socket, not a GET link.
             assert (await http.get("/api/settings/update?timezone=UTC")).status_code == 405
 
