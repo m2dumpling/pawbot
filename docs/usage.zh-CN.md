@@ -1,6 +1,6 @@
 # pawbot 使用指南
 
-当前文档对应 `v0.7.3`。真实模型评测和可选 OTLP 配置见[Agent 评测与可观测性指南](agent-evaluation-observability.zh-CN.md)。
+当前文档对应本地最新源码，已发布版本的变更见[更新记录](../CHANGELOG.md)。真实模型评测的 Promptfoo 黑盒回归入口见[Promptfoo 评测说明](agent-evaluation-promptfoo.zh-CN.md)；底层 Trace、Replay 和可选 OTLP 见[Agent 评测与可观测性指南](agent-evaluation-observability.zh-CN.md)。
 
 这篇文档面向已经安装 Pawbot 的用户，集中说明 CLI、WebUI、Trace、滚动回放、Record & Replay、Task Eval Set 和 Harness 的实际用法。
 
@@ -208,17 +208,11 @@ Pawbot 默认开启有限容量的滚动 Replay Buffer：
 
 适合以后反复 Replay，但不把它作为任务评测标准。
 
-### 加入任务评测
+### 提取评测用例
 
-把候选样本加入本机的自定义 Eval Set。之后运行评测时，系统会用当前 Agent 代码离线回放它，并报告：
-
-```text
-任务状态
-轨迹状态
-回放是否一致
-```
-
-如果原始回合没有 TaskContract，任务状态可能是 `not_evaluable`，但仍然可以检查轨迹是否退化。
+回放样本用于排查与复现，不直接批准为评测标准。确认 Agent 责任后，将最小脱敏任务、
+固定工具样本和明确期望结果写入 [Promptfoo 用例](../evals/promptfoo/README.md)。
+评测在 Promptfoo 运行，旧的“加入任务评测”管理按钮已移除。
 
 ### 忽略
 
@@ -422,23 +416,9 @@ pawbot eval run
 pawbot eval run --json
 ```
 
-WebUI：
-
-```text
-设置 → 执行与回归 → Agent 任务评测集 → 运行评测
-```
-
-报告分别展示：
-
-```text
-任务通过数
-轨迹通过数
-not_evaluable 数量
-工具失败
-模型请求数
-工具调用数
-耗时
-```
+该固定无模型套件保留为开发者 CLI/CI 检查；旧 WebUI 运行入口已移除。
+真实模型、多 Trial 和报告查看使用 [Promptfoo](../evals/promptfoo/README.md)。
+报告仍分别给出任务/轨迹状态、not_evaluable、工具失败、模型请求、调用数和耗时。
 
 Task Eval Set 和 Harness 的区别：
 

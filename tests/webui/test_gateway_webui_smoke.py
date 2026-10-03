@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
 from urllib.parse import quote
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -67,14 +69,16 @@ def _start_gateway(config_path: Path, log_path: Path) -> subprocess.Popen[bytes]
     try:
         process = subprocess.Popen(
             [
-                sys.executable,
+                os.environ.get("PAWBOT_SMOKE_PYTHON", sys.executable),
                 "-m",
                 "pawbot",
                 "gateway",
                 "--config",
                 str(config_path),
             ],
-            cwd=Path(__file__).resolve().parents[2],
+            # Exercise the installed wheel when CI supplies another interpreter;
+            # never let the repository shadow its bundled Python/static files.
+            cwd=config_path.parent,
             stdout=log_file,
             stderr=subprocess.STDOUT,
         )
@@ -135,6 +139,91 @@ async def _recv_until(ws: websockets.WebSocketClientProtocol, event: str) -> dic
         if payload.get("event") == event:
             return payload
     raise AssertionError(f"websocket event {event!r} was not received")
+
+
+async def _mutation(ws, action: str, payload: dict, *, status: int = 200) -> dict:
+    request_id = uuid4().hex
+    await ws.send(json.dumps({
+        "type": "webui_request", "request_id": request_id, "action": action, "payload": payload,
+    }))
+    response = await _recv_until(ws, "webui_response")
+    assert response["request_id"] == request_id
+    if status != 200:
+        assert response["ok"] is False, response
+        assert response["error"]["status"] == status, response
+        return response
+    assert response["ok"] is True, response
+    return response["result"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_webui_assets_and_settings_mutations(tmp_path: Path) -> None:
+    """Test real settings-button transport, persistence and every lazy asset."""
+    ws_port, gateway_port = _free_port(), _free_port()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config_path, log_path = tmp_path / "config.json", tmp_path / "gateway.log"
+    _write_smoke_config(config_path, workspace=workspace, ws_port=ws_port, gateway_port=gateway_port)
+    process = _start_gateway(config_path, log_path)
+    base_url = f"http://127.0.0.1:{ws_port}"
+    try:
+        bootstrap = _wait_for_bootstrap(base_url, process, log_path)
+        async with httpx.AsyncClient(base_url=base_url, timeout=10, trust_env=False) as http:
+            assert (await http.get("/webui/bootstrap")).status_code == 401
+            assert (await http.get("/api/settings")).status_code == 401
+            assert (await http.get("/")).status_code == 200
+            manifest_response = await http.get("/asset-manifest.json")
+            manifest_response.raise_for_status()
+            assets = set()
+            for entry in manifest_response.json().values():
+                assets.add(entry["file"])
+                assets.update(entry.get("css", []))
+                assets.update(entry.get("assets", []))
+            assert any("SettingsView" in path for path in assets)
+            for path in sorted(assets):
+                asset = await http.get(f"/{path}")
+                assert asset.status_code == 200, path
+                assert "text/html" not in asset.headers["content-type"], path
+
+            http.headers["Authorization"] = f'Bearer {bootstrap["api_token"]}'
+            before = (await http.get("/api/settings")).json()
+            assert before["agent"]["model"] == "custom/smoke-model"
+            # Mutations must use the authenticated socket, not a GET link.
+            assert (await http.get("/api/settings/update?timezone=UTC")).status_code == 405
+
+            ws_url = f'{bootstrap["ws_url"]}?token={bootstrap["token"]}&client_id=settings-smoke'
+            async with websockets.connect(ws_url, origin=base_url) as ws:
+                await _recv_until(ws, "ready")
+                updated = await _mutation(ws, "settings.agent.update", {"timezone": "UTC", "tool_hint_max_length": 120})
+                assert updated["agent"]["timezone"] == "UTC"
+                created = await _mutation(ws, "settings.model_configuration.create", {
+                    "name": "Smoke spare", "provider": "custom", "model": "custom/spare-model",
+                })
+                assert created["created_model_preset"] == "Smoke spare"
+                await _mutation(ws, "settings.model_configuration.create", {
+                    "name": "Smoke spare", "provider": "custom", "model": "custom/spare-model",
+                }, status=409)
+                changed = await _mutation(ws, "settings.model_configuration.update", {
+                    "name": "Smoke spare", "temperature": 0.2,
+                })
+                assert next(row for row in changed["model_presets"] if row["name"] == "Smoke spare")["temperature"] == 0.2
+                deleted = await _mutation(ws, "settings.model_configuration.delete", {"name": "Smoke spare"})
+                assert "Smoke spare" not in {row["name"] for row in deleted["model_presets"]}
+                network = await _mutation(ws, "settings.network_safety.update", {"webui_allow_local_service_access": False})
+                assert network["advanced"]["webui_allow_local_service_access"] is False
+                await _mutation(ws, "settings.agent.update", {"timezone": "invalid/zone"}, status=400)
+                await _mutation(ws, "blackbox.status", {})
+                await _mutation(ws, "trace.list", {"limit": 5})
+                await _mutation(ws, "blackbox.eval.list", {}, status=404)
+
+            persisted = (await http.get("/api/settings")).json()
+            assert persisted["agent"]["timezone"] == "UTC"
+            assert persisted["advanced"]["webui_allow_local_service_access"] is False
+            saved = json.loads(config_path.read_text(encoding="utf-8"))
+            assert saved["agents"]["defaults"]["timezone"] == "UTC"
+            assert saved["tools"]["webuiAllowLocalServiceAccess"] is False
+    finally:
+        _stop_gateway(process)
 
 
 @pytest.mark.asyncio

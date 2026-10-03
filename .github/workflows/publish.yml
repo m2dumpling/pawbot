@@ -1,8 +1,12 @@
 name: Publish package
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Exact release tag, after all matching TUI archives are uploaded
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -16,13 +20,24 @@ jobs:
       - name: Check out release
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ inputs.tag }}
+          # A published release alone is insufficient: native sidecars must exist first.
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.11"
           enable-cache: true
+
+      - name: Verify tag version and matching native sidecars
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isDraft,assets > "$RUNNER_TEMP/pawbot-release-assets.json"
+          uv run --no-project --python 3.11 python scripts/check_release.py \
+            "$RELEASE_TAG" "$RUNNER_TEMP/pawbot-release-assets.json"
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2

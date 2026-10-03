@@ -483,20 +483,24 @@ not a general model-accuracy score. A real failure can be promoted from the
 rolling replay buffer into a permanent sample after reviewing its sensitive
 content.
 
-For on-demand live model measurement, Pawbot also provides a versioned
-20-case incident-triage catalog with isolated fake APIs and workspaces:
+Real-model evaluation now uses the pinned [Promptfoo integration](evals/promptfoo/README.md).
+It runs ten reviewed diagnostic/evidence tasks with local fixture tools, three
+independent trials per case, deterministic assertions, optional soft LLM Judge,
+and JSON/HTML reports. It does not require starting the Gateway:
 
 ```bash
-pawbot eval live list
-pawbot eval live run --trials 3 --seed 42 --max-total-cost-usd 1.00 --label baseline --output eval-reports/baseline.json
-pawbot eval live compare --baseline eval-reports/baseline.json --candidate eval-reports/candidate.json
+cd evals/promptfoo
+npm ci
+npm run validate
+npm run eval
+npm run view
 ```
 
-This live set makes real provider requests and needs configured token prices and
-an explicit spend cap. The included fixtures are synthetic; reports separate
-outcome, trajectory, safety, estimated cost, and latency. It is not a production
-incident success-rate claim. See the [evaluation and observability guide](docs/agent-evaluation-observability.md)
-for case format, trace privacy, candidate review, and optional OTLP setup.
+The cases are sanitized reconstructions and synthetic controls, not production
+success-rate evidence. Runtime Harness, TaskContract, Trace and Record & Replay
+remain; the self-built evaluation workbench, APIs and `pawbot eval live` were
+removed. See the [integration README](evals/promptfoo/README.md) for Python setup,
+case boundaries, cost accounting, and comparable baseline/candidate runs.
 
 When a WebUI chat uses **Workspace access**, write, execute, and network-capable
 Tools pause for an explicit approval. **Full access** remains the opt-in mode

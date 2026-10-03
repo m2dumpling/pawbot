@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { EnhancementsSettings } from "@/components/settings/EnhancementsSettings";
 import { LiveExecutionSettings } from "@/components/settings/LiveExecutionSettings";
@@ -131,15 +131,7 @@ const providerErrorDetail: BlackboxDetail = {
 describe("Record & Replay inspection", () => {
   installSettingsViewTestHooks();
 
-  it("shows candidate conversation titles and manages saved eval samples", async () => {
-    const customCases: Array<{
-      id: string;
-      title: string;
-      category: string;
-      description: string;
-      source: string;
-      sample_directory: string;
-    }> = [];
+  it("keeps recording titles and replay without the retired task eval workbench", async () => {
     requestMutationMock.mockImplementation(async (action: string) => {
       if (action === "blackbox.status") {
         return {
@@ -185,39 +177,9 @@ describe("Record & Replay inspection", () => {
           model: "demo-model",
         };
       }
-      if (action === "blackbox.eval.list") {
-        return {
-          eval_set: "pawbot-task-eval",
-          version: 1,
-          cases: [{
-            id: "basic-tool-call",
-            title: "Basic tool call",
-            category: "tools",
-            description: "Fixed provider-free test",
-          }],
-          custom_cases: [...customCases],
-        };
-      }
-      if (action === "blackbox.rolling.add_recording_to_eval") {
-        customCases.push({
-          id: "saved-run",
-          title: "已保存会话摘要",
-          category: "recorded",
-          description: "Saved regression sample",
-          source: "saved_recording",
-          sample_directory: "/tmp/blackbox/saved-run",
-        });
-        return { added: true, case: customCases[0] };
-      }
-      if (action === "blackbox.eval.remove") {
-        customCases.splice(0, customCases.length);
-        return { deleted: true, case_id: "saved-run" };
-      }
       throw new Error(`Unexpected mutation: ${action}`);
     });
 
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const user = userEvent.setup();
     render(
       <ClientProvider client={{ requestMutation: requestMutationMock } as never} token="tok">
         <EnhancementsSettings />
@@ -228,30 +190,10 @@ describe("Record & Replay inspection", () => {
     expect(screen.queryByText("candidate-1790511611632-c202_179051149240798610")).not.toBeInTheDocument();
     expect(screen.getByText("已保存会话摘要")).toBeInTheDocument();
 
-    const addButtons = await screen.findAllByRole("button", { name: "Add to task eval" });
-    await user.click(addButtons[1]);
-    expect(requestMutationMock).toHaveBeenCalledWith(
-      "blackbox.rolling.add_recording_to_eval",
-      expect.objectContaining({
-        directory: "/tmp/blackbox/saved-run",
-        title: "已保存会话摘要",
-      }),
-      20_000,
-    );
-    expect(await screen.findByText("Saved regression samples in this set")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Added to task eval" })).toBeDisabled();
-
-    await user.click(screen.getByRole("button", { name: "Remove from task eval" }));
-    expect(confirmSpy).toHaveBeenCalled();
-    expect(requestMutationMock).toHaveBeenCalledWith(
-      "blackbox.eval.remove",
-      { case_id: "saved-run" },
-      20_000,
-    );
-    expect(screen.queryByText("Saved regression samples in this set")).not.toBeInTheDocument();
-    const availableAddButtons = await screen.findAllByRole("button", { name: "Add to task eval" });
-    expect(availableAddButtons[1]).toBeEnabled();
-    confirmSpy.mockRestore();
+    expect(screen.queryByRole("button", { name: "Add to task eval" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run evaluation" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Validate offline" })).toBeEnabled();
+    expect(requestMutationMock.mock.calls.some(([action]) => String(action).startsWith("blackbox.eval."))).toBe(false);
   });
 
   it("shows a readable execution trace and keeps raw JSON in the full-screen view", async () => {

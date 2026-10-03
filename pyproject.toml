@@ -140,9 +140,8 @@ include = [
     "pawbot/channels/*/webui/**/*",
     "pawbot/web/dist/**/*",
 ]
-# pawbot/web/dist/ is produced by `cd webui && bun run build` and is
-# git-ignored. List it as an artifact so hatch ships it in both wheel and
-# sdist even though VCS does not track it.
+# pawbot/web/dist/ is rebuilt with `cd webui && bun run build` and tracked for
+# source installers. Include rebuilt chunks in both wheels and sdists as well.
 artifacts = [
     "pawbot/web/dist/**/*",
 ]
@@ -190,6 +189,9 @@ source = ["pawbot"]
 omit = ["tests/*", "**/tests/*"]
 
 [tool.coverage.report]
+# Keep package-internal pytest modules out of the product-code coverage
+# denominator even when a platform collects them as files under ``pawbot``.
+omit = ["tests/*", "**/tests/*"]
 fail_under = 75
 exclude_lines = [
     "pragma: no cover",

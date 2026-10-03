@@ -1,6 +1,6 @@
 # pawbot Usage Guide
 
-This guide corresponds to `v0.7.3`. Live model evaluation and optional OTLP setup are documented in the [Agent evaluation and observability guide](agent-evaluation-observability.md).
+This guide describes the current source tree; published-version changes are recorded in the [changelog](../CHANGELOG.md). The Promptfoo black-box regression entry point is documented in [Promptfoo evaluation](agent-evaluation-promptfoo.zh-CN.md); local Trace, Replay, and optional OTLP are documented in the [Agent evaluation and observability guide](agent-evaluation-observability.md).
 
 This guide explains how to use the released Pawbot features from the CLI and WebUI: Trace, the rolling replay buffer, Record & Replay, TaskContract, the Task Eval Set, and the Agent Harness.
 
@@ -161,11 +161,10 @@ Rolling evidence is stored below Pawbot's runtime data directory. Legacy samples
 
 ## 4. Review candidate problem runs
 
-Open **Settings → Execution & regression**. Candidate runs show their reason and offer three actions:
+Open **Settings → Execution & regression**. Candidate runs show their reason and offer two actions:
 
 ```text
 Keep for regression
-Add to task eval
 Ignore
 ```
 
@@ -177,7 +176,7 @@ The same actions are available as slash commands:
 /record reject <candidate-id>
 ```
 
-**Keep for regression** creates a permanent sample for later Replay. **Add to task eval** promotes the sample and registers it in the local custom evaluation set. If the original turn had no TaskContract, its task result may be `not_evaluable`, while its trajectory can still be checked. **Ignore** moves it to reviewed evidence.
+**Keep for regression** creates a permanent Replay sample. **Ignore** moves it to reviewed evidence. A saved failure is not an approved task oracle. After confirming Agent responsibility, sanitize a minimal task and expected result in the [Promptfoo suite](../evals/promptfoo/README.md).
 
 ## 5. Personalization and memory
 
@@ -331,7 +330,7 @@ pawbot eval run
 pawbot eval run --json
 ```
 
-In the WebUI, open **Settings → Execution & regression → Agent task evaluation set → Run evaluation**. The report separates task results, trajectory results, `not_evaluable`, tool failures, model requests, tool calls, and elapsed time.
+This provider-free set remains a developer CLI/CI check; its WebUI workbench has been removed. Real model trials and reports use [Promptfoo](../evals/promptfoo/README.md). The fixed report separates task/trajectory results, `not_evaluable`, tool failures, model requests, tool calls, and elapsed time.
 
 The built-in cases cover normal tool use, tool failure recovery, file change and verification, investigation and summary, human approval, and budget boundaries.
 
@@ -342,7 +341,7 @@ Harness: does the Runtime obey failure, cancellation, budget, and approval rules
 Task Eval Set: does a fixed task still produce the expected result and path?
 ```
 
-Reviewed rolling candidates can be added to the local custom Eval Set from the WebUI.
+Reviewed rolling samples remain available for Replay; Promptfoo cases require a sanitized fixture and explicit expected result.
 
 ## 10. Run the Agent Harness
 

@@ -69,6 +69,11 @@ Messages flow through an async `MessageBus` (`pawbot/bus/queue.py`) that decoupl
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for contribution flow and PR guidelines.
 
+## Branch Naming
+
+Branch names must not contain `codex`. Use a task name such as `promptfoo-evaluation`
+or a functional prefix such as `fix/`, `docs/`, or `release/`.
+
 ## Code Style
 
 - Python 3.11+, asyncio throughout.

@@ -37,8 +37,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
-  blackboxAddCandidateToEval,
-  blackboxAddRecordingToEval,
   blackboxCandidates,
   blackboxDelete,
   blackboxDetail,
@@ -50,9 +48,6 @@ import {
   blackboxStatus,
   blackboxStop,
   blackboxTokens,
-  taskEvalList,
-  taskEvalRemoveCase,
-  taskEvalRun,
   type BlackboxBreakpoint,
   type BlackboxCandidate,
   type BlackboxDetail,
@@ -60,8 +55,6 @@ import {
   type BlackboxReplayResult,
   type BlackboxStatus,
   type BlackboxTokens,
-  type TaskEvalCase,
-  type TaskEvalReport,
 } from "@/lib/api";
 import { useClient } from "@/providers/ClientProvider";
 
@@ -120,12 +113,6 @@ function recordingDisplayName(recording: BlackboxRecording, t: Translate): strin
   return generatedRecordingDisplayName(recording.name, t);
 }
 
-function recordingEvalTitle(recording: BlackboxRecording, t: Translate): string {
-  const names = (recording.session_names ?? []).filter(Boolean);
-  if (names.length > 0) return names.join(" · ");
-  return recordingDisplayName(recording, t);
-}
-
 function candidateDisplayName(candidate: BlackboxCandidate, t: Translate): string {
   const title = candidate.session_name?.trim() || candidate.display_title?.trim();
   if (title) return title;
@@ -135,12 +122,6 @@ function candidateDisplayName(candidate: BlackboxCandidate, t: Translate): strin
     ? new Date(candidate.created_at_ms).toLocaleString()
     : "";
   return `${tx(t, "settings.enhancements.recording.candidateFallback", "Problem run")}${timestamp ? ` · ${timestamp}` : ""}`;
-}
-
-function sameSamplePath(left: string | undefined, right: string): boolean {
-  if (!left) return false;
-  return left.replaceAll("\\", "/").replace(/\/$/, "").toLocaleLowerCase()
-    === right.replaceAll("\\", "/").replace(/\/$/, "").toLocaleLowerCase();
 }
 
 function recordingSessionLabel(recording: BlackboxRecording, t: Translate): string | null {
@@ -1772,9 +1753,6 @@ export function EnhancementsSettings() {
   const [status, setStatus] = useState<BlackboxStatus | null>(null);
   const [recordings, setRecordings] = useState<BlackboxRecording[]>([]);
   const [candidates, setCandidates] = useState<BlackboxCandidate[]>([]);
-  const [evalCases, setEvalCases] = useState<TaskEvalCase[]>([]);
-  const [customEvalCases, setCustomEvalCases] = useState<TaskEvalCase[]>([]);
-  const [evalReport, setEvalReport] = useState<TaskEvalReport | null>(null);
   const [tokens, setTokens] = useState<BlackboxTokens | null>(null);
   const [replay, setReplay] = useState<BlackboxReplayResult | null>(null);
   const [breakpoint, setBreakpoint] = useState<BlackboxBreakpoint | null>(null);
@@ -1787,13 +1765,12 @@ export function EnhancementsSettings() {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [statusResult, recordingsResult, candidatesResult, tokensResult, evalResult] =
+    const [statusResult, recordingsResult, candidatesResult, tokensResult] =
       await Promise.allSettled([
         blackboxStatus(client),
         blackboxList(client),
         blackboxCandidates(client),
         blackboxTokens(client, null),
-        taskEvalList(client),
       ]);
 
     const errors: string[] = [];
@@ -1805,11 +1782,6 @@ export function EnhancementsSettings() {
     else errors.push(candidatesResult.reason instanceof Error ? candidatesResult.reason.message : String(candidatesResult.reason));
     if (tokensResult.status === "fulfilled") setTokens(tokensResult.value);
     else errors.push(tokensResult.reason instanceof Error ? tokensResult.reason.message : String(tokensResult.reason));
-    if (evalResult.status === "fulfilled") {
-      setEvalCases(evalResult.value.cases);
-      setCustomEvalCases(evalResult.value.custom_cases ?? []);
-    }
-    else errors.push(evalResult.reason instanceof Error ? evalResult.reason.message : String(evalResult.reason));
     setError(errors.length > 0 ? errors[0] : null);
   }, [client]);
 
@@ -1856,76 +1828,12 @@ export function EnhancementsSettings() {
     }
   }
 
-  async function addCandidateToEval(candidate: BlackboxCandidate) {
-    setBusy(`eval-candidate:${candidate.candidate_id}`);
-    setError(null);
-    try {
-      await blackboxAddCandidateToEval(client, candidate.candidate_id, candidateDisplayName(candidate, t));
-      setEvalReport(null);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function addRecordingToEval(recording: BlackboxRecording) {
-    setBusy(`eval-recording:${recording.directory}`);
-    setError(null);
-    try {
-      await blackboxAddRecordingToEval(client, recording.directory, recordingEvalTitle(recording, t));
-      setEvalReport(null);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function removeEvalCase(evalCase: TaskEvalCase) {
-    const confirmed = window.confirm(
-      tx(
-        t,
-        "settings.enhancements.recording.eval.removeConfirm",
-        "Remove “{{name}}” from the task evaluation set? Its saved regression sample will remain.",
-        { name: evalCase.title || evalCase.id },
-      ),
-    );
-    if (!confirmed) return;
-
-    setBusy(`remove-eval:${evalCase.id}`);
-    setError(null);
-    try {
-      await taskEvalRemoveCase(client, evalCase.id);
-      setEvalReport(null);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function rejectCandidate(candidate: BlackboxCandidate) {
     setBusy(`reject:${candidate.candidate_id}`);
     setError(null);
     try {
       await blackboxRejectCandidate(client, candidate.candidate_id);
       await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function runTaskEval() {
-    setBusy("eval");
-    setError(null);
-    try {
-      setEvalReport(await taskEvalRun(client));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2191,15 +2099,6 @@ export function EnhancementsSettings() {
                       {tx(t, "settings.enhancements.recording.keepCandidate", "Keep for regression")}
                     </Button>
                     <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => void addCandidateToEval(candidate)}
-                      disabled={busy !== null}
-                    >
-                      {busy === `eval-candidate:${candidate.candidate_id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}
-                      {tx(t, "settings.enhancements.recording.addToEval", "Add to task eval")}
-                    </Button>
-                    <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => void rejectCandidate(candidate)}
@@ -2212,81 +2111,6 @@ export function EnhancementsSettings() {
                 </div>
               ))}
             </div>
-          </div>
-        ) : null}
-
-        {evalCases.length > 0 ? (
-          <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50/70 p-4 dark:border-violet-900 dark:bg-violet-950/15">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h4 className="text-sm font-semibold text-violet-950 dark:text-violet-100">
-                  {tx(t, "settings.enhancements.recording.eval.title", "Agent task evaluation set")}
-                </h4>
-                <p className="mt-1 text-xs text-violet-900/70 dark:text-violet-200/70">
-                  {tx(t, "settings.enhancements.recording.eval.description", "Run fixed, provider-free tasks to check task results and execution paths after a code change.")}
-                </p>
-              </div>
-              <Button variant="outline" size="sm" onClick={() => void runTaskEval()} disabled={busy !== null}>
-                {busy === "eval" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                {tx(t, "settings.enhancements.recording.eval.run", "Run evaluation")}
-              </Button>
-            </div>
-            {evalReport ? (
-              <div className="mt-3 rounded-lg border border-violet-200 bg-white/80 px-3 py-2 text-xs text-settings-foreground dark:border-violet-900 dark:bg-black/20">
-                <div className="flex flex-wrap gap-x-4 gap-y-1">
-                  <span>{tx(t, "settings.enhancements.recording.eval.summary", "Tasks: {{passed}}/{{total}} passed", { passed: evalReport.summary.task_passed, total: evalReport.summary.task_evaluable })}</span>
-                  <span>{tx(t, "settings.enhancements.recording.eval.trajectory", "Trajectories: {{passed}}/{{total}} passed", { passed: evalReport.summary.trajectory_passed, total: evalReport.summary.total })}</span>
-                  <span>{tx(t, "settings.enhancements.recording.eval.notEvaluable", "Not evaluable: {{count}}", { count: evalReport.summary.task_not_evaluable })}</span>
-                </div>
-                <div className="mt-2 flex flex-col gap-1">
-                  {evalReport.cases.map((item) => (
-                    <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-settings-border px-2 py-1.5">
-                      <span>{item.title}</span>
-                      <span className="text-settings-muted">{item.task_status} · {item.trajectory_status} · {item.elapsed_ms}ms</span>
-                    </div>
-                  ))}
-                  {(evalReport.custom_cases ?? []).map((item) => (
-                    <div key={`custom-${item.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded border border-violet-200 px-2 py-1.5 text-violet-900 dark:border-violet-900 dark:text-violet-200">
-                      <span>{item.title || item.id || tx(t, "settings.enhancements.eval.customCase", "Custom recorded task")}</span>
-                      <span className="text-settings-muted">{item.task_status ?? "not_evaluable"} · {item.trajectory_status ?? "unknown"}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            {customEvalCases.length > 0 ? (
-              <div className="mt-3 rounded-lg border border-violet-200 bg-white/80 px-3 py-3 dark:border-violet-900 dark:bg-black/20">
-                <div className="mb-2 text-xs font-semibold text-settings-foreground">
-                  {tx(t, "settings.enhancements.recording.eval.customTitle", "Saved regression samples in this set")}
-                </div>
-                <div className="flex flex-col gap-1">
-                  {customEvalCases.map((item) => (
-                    <div key={item.id} className="flex items-center justify-between gap-3 rounded border border-settings-border px-2 py-1.5">
-                      <span className="min-w-0 truncate text-sm text-settings-foreground">
-                        {item.title || tx(t, "settings.enhancements.eval.customCase", "Custom recorded task")}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="shrink-0"
-                        onClick={() => void removeEvalCase(item)}
-                        disabled={busy !== null}
-                        title={tx(t, "settings.enhancements.recording.eval.remove", "Remove from task eval")}
-                        aria-label={tx(t, "settings.enhancements.recording.eval.remove", "Remove from task eval")}
-                      >
-                        {busy === `remove-eval:${item.id}`
-                          ? <Loader2 className="h-4 w-4 animate-spin" />
-                          : <Trash2 className="h-4 w-4" />}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-                <p className="mt-2 text-[11px] text-settings-muted">
-                  {tx(t, "settings.enhancements.recording.eval.removeHint", "Removing an entry only removes it from this set; the regression sample stays saved.")}
-                </p>
-              </div>
-            ) : null}
           </div>
         ) : null}
 
@@ -2328,9 +2152,6 @@ export function EnhancementsSettings() {
               const isReady = recording.status === "ready";
               const replayBusy = busy === `replay:${recording.directory}`;
               const deleteBusy = busy === `delete:${recording.directory}`;
-              const inEvalSet = customEvalCases.some((item) =>
-                sameSamplePath(item.sample_directory, recording.directory),
-              );
               return (
                 <div
                   key={recording.directory}
@@ -2374,19 +2195,6 @@ export function EnhancementsSettings() {
                       {breakAt
                         ? tx(t, "settings.enhancements.recording.breakpointReplay", "Validate to breakpoint")
                         : tx(t, "settings.enhancements.recording.replay", "Validate offline")}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void addRecordingToEval(recording)}
-                      disabled={busy !== null || !isReady || inEvalSet}
-                    >
-                      {busy === `eval-recording:${recording.directory}`
-                        ? <Loader2 className="h-4 w-4 animate-spin" />
-                        : <FileCheck2 className="h-4 w-4" />}
-                      {inEvalSet
-                        ? tx(t, "settings.enhancements.recording.eval.added", "Added to task eval")
-                        : tx(t, "settings.enhancements.recording.addToEval", "Add to task eval")}
                     </Button>
                     <Button
                       variant="ghost"

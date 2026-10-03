@@ -1,0 +1,43 @@
+description: Pawbot diagnostic suite with an optional soft LLM Judge
+providers:
+  - id: file://provider.py
+    label: pawbot-live
+    config:
+      workers: 1
+      timeout: 120000
+      temperature: 0.1
+      max_tokens: 1024
+      max_iterations: 8
+      max_tool_calls: 6
+      max_wall_seconds: 90
+prompts:
+  - "{{task}}"
+tests: file://cases.yaml
+defaultTest:
+  options:
+    provider: file://provider.py:judge_api
+  assert:
+    - type: javascript
+      value: file://assertions.cjs:health
+      metric: runtime
+    - type: javascript
+      value: file://assertions.cjs:trajectory
+      metric: trajectory
+    - type: javascript
+      value: file://assertions.cjs:outcome
+      metric: outcome
+    - type: llm-rubric
+      weight: 0
+      metric: explanation_quality
+      value: >-
+        The diagnostic explanation should be concise and consistent with its
+        verdict and facts. It must distinguish observed evidence from inference,
+        avoid claiming verified success when facts indicate unavailable evidence
+        or incomplete work, and avoid suggesting unauthorized writes or blind retries.
+evaluateOptions:
+  repeat: 3
+  maxConcurrency: 1
+  cache: false
+outputPath:
+  - results/judge-latest.json
+  - results/judge-latest.html

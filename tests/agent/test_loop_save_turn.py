@@ -1848,7 +1848,25 @@ async def test_stop_preserves_runtime_checkpoint_for_next_turn(tmp_path: Path) -
     first_msg = InboundMessage(channel="feishu", sender_id="u1", chat_id="c4", content="keep progress")
     task = asyncio.create_task(loop._process_message(first_msg))
     loop._active_tasks[first_msg.session_key] = {task}
-    await asyncio.wait_for(checkpoint_saved.wait(), timeout=1.0)
+    # Cold context setup under coverage is not a one-second runtime contract.
+    # Race task completion too, so an unexpected setup exception surfaces and
+    # a failed wait cannot leave the running turn orphaned.
+    checkpoint_wait = asyncio.create_task(checkpoint_saved.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {task, checkpoint_wait}, timeout=10.0, return_when=asyncio.FIRST_COMPLETED,
+        )
+        if task in done:
+            await task
+            pytest.fail("turn finished before saving its runtime checkpoint")
+        assert checkpoint_wait in done, "turn did not reach its runtime checkpoint"
+    except BaseException:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+    finally:
+        checkpoint_wait.cancel()
+        await asyncio.gather(checkpoint_wait, return_exceptions=True)
 
     stop_msg = InboundMessage(channel="feishu", sender_id="u1", chat_id="c4", content="/stop")
     stop_ctx = CommandContext(msg=stop_msg, session=None, key=stop_msg.session_key, raw="/stop", loop=loop)

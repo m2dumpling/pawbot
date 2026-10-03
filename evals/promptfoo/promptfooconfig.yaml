@@ -1,0 +1,33 @@
+description: Pawbot diagnostic decisions and evidence honesty (fixed local tool fixtures)
+providers:
+  - id: file://provider.py
+    label: pawbot-live
+    config:
+      workers: 1
+      timeout: 120000
+      temperature: 0.1
+      max_tokens: 1024
+      max_iterations: 8
+      max_tool_calls: 6
+      max_wall_seconds: 90
+prompts:
+  - "{{task}}"
+tests: file://cases.yaml
+defaultTest:
+  assert:
+    - type: javascript
+      value: file://assertions.cjs:health
+      metric: runtime
+    - type: javascript
+      value: file://assertions.cjs:trajectory
+      metric: trajectory
+    - type: javascript
+      value: file://assertions.cjs:outcome
+      metric: outcome
+evaluateOptions:
+  repeat: 3
+  maxConcurrency: 1
+  cache: false
+outputPath:
+  - results/latest.json
+  - results/latest.html

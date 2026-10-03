@@ -1,0 +1,51 @@
+description: Offline integration smoke; real AgentRunner with scripted model responses
+providers:
+  - id: file://provider.py
+    label: pawbot-scripted-smoke
+    config:
+      mode: smoke
+      workers: 1
+      timeout: 30000
+prompts:
+  - "{{task}}"
+tests:
+  - description: Read fixture through AgentRunner and grade the observed result
+    vars:
+      case_id: adapter-smoke
+      task: Read receipt R-1 and report whether it confirms completion.
+      fixture:
+        - name: read_receipt
+          description: Read a local receipt fixture.
+          parameters:
+            type: object
+            properties:
+              receipt_id: {type: string}
+            required: [receipt_id]
+            additionalProperties: false
+          responses:
+            - arguments: {receipt_id: R-1}
+              result: {receipt_id: R-1, committed: true}
+      script:
+        - tool_calls:
+            - id: smoke-read
+              name: read_receipt
+              arguments: {receipt_id: R-1}
+        - content: '{"verdict":"completed","facts":{"committed":true},"evidence":["R-1"],"reason":"Receipt R-1 explicitly confirms that the transaction committed."}'
+      expected:
+        allow_simulation: true
+        answer: {verdict: completed, facts: {committed: true}}
+        evidence: [R-1]
+        required_calls:
+          - name: read_receipt
+            arguments: {receipt_id: R-1}
+    assert:
+      - type: javascript
+        value: file://assertions.cjs:health
+      - type: javascript
+        value: file://assertions.cjs:trajectory
+      - type: javascript
+        value: file://assertions.cjs:outcome
+evaluateOptions:
+  repeat: 1
+  maxConcurrency: 1
+  cache: false

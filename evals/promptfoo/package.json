@@ -1,0 +1,18 @@
+{
+  "name": "pawbot-promptfoo-evals",
+  "private": true,
+  "description": "Promptfoo adapter and reviewed case suite for Pawbot",
+  "engines": {
+    "node": ">=22.22.0"
+  },
+  "scripts": {
+    "test": "node --test assertions.test.cjs",
+    "eval": "node cli.cjs eval --config promptfooconfig.yaml --no-cache",
+    "view": "node cli.cjs view --port 15500 --no",
+    "validate": "node cli.cjs eval --config promptfooconfig.smoke.yaml --no-write --no-cache --no-table",
+    "eval:judge": "node cli.cjs eval --config promptfooconfig.judge.yaml --no-cache"
+  },
+  "devDependencies": {
+    "promptfoo": "0.123.1"
+  }
+}

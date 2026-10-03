@@ -1,27 +1,36 @@
 name: Publish native TUI
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
         description: Release tag whose TUI assets should be built
         required: true
         type: string
-      source_ref:
-        description: Optional source ref for a post-release test/build fix
-        required: false
-        type: string
+      compliance_reviewed:
+        description: I reviewed pinned licenses, retrievable runtime source and the source/relinking offer for this exact tag
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 env:
-  RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+  RELEASE_TAG: ${{ inputs.tag }}
 
 jobs:
+  review:
+    name: Require the release compliance review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the owner confirmation
+        env:
+          REVIEWED: ${{ inputs.compliance_reviewed }}
+        run: test "$REVIEWED" = "true"
+
   build:
+    needs: review
     name: TUI ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -43,7 +52,16 @@ jobs:
       - name: Check out release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref || env.RELEASE_TAG }}
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install packaging Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify release tag matches the package version
+        shell: bash
+        run: python scripts/check_release.py "$RELEASE_TAG"
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
@@ -81,6 +99,7 @@ jobs:
             tui/dist/pawbot-tui-*.zip
             tui/dist/pawbot-tui-*.zip.sha256
           if-no-files-found: error
+          retention-days: 3
 
   upload:
     name: Attach TUI assets to Release

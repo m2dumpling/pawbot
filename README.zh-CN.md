@@ -435,18 +435,21 @@ pawbot eval run --json
 和耗时。这是代码和编排的回归门禁，不是通用模型准确率评分。滚动缓存中的真实失败回合，
 在确认其中没有不应保留的敏感内容后，也可以提升为永久回归样本。
 
-按需测量真实模型时，可运行版本化的 20 个事件分诊用例；每个 trial 都使用隔离的假 API
-和临时 Workspace：
+真实模型评测使用固定版本的 [Promptfoo 接入](evals/promptfoo/README.md)。当前有 10 个
+脱敏诊断/证据用例，各 3 次独立 Trial，由公共确定性断言检查，支持可选软 LLM Judge
+及 JSON/HTML 报告，无需启动 Gateway：
 
 ```bash
-pawbot eval live list
-pawbot eval live run --trials 3 --seed 42 --max-total-cost-usd 1.00 --label baseline --output eval-reports/baseline.json
-pawbot eval live compare --baseline eval-reports/baseline.json --candidate eval-reports/candidate.json
+cd evals/promptfoo
+npm ci
+npm run validate
+npm run eval
+npm run view
 ```
 
-Live 命令会请求真实 Provider，需要配置 token 单价并显式设置成本上限。内置用例是合成数据，
-不代表生产事故成功率。报告分别展示结果、轨迹、安全、估算成本和延迟。详细说明见
-[评测与可观测性文档](docs/agent-evaluation-observability.zh-CN.md)。
+这些是失败模式重建和合成对照，不代表生产成功率。内部 Harness、TaskContract、Trace
+与 Record & Replay 保留；自研评测工作台、管理 API 和 `pawbot eval live` 已移除。
+Python 环境、成本口径、用例边界和 baseline/candidate 用法见[完整说明](evals/promptfoo/README.md)。
 
 WebUI 使用“工作区访问”时，写入、执行和网络 Tool 会在真正运行前等待明确批准；
 “完全访问”仍表示用户主动授予这些 Tool 直接执行权限。原生 TUI 使用同一套确认协议。
