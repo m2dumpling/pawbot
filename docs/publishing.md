@@ -7,13 +7,36 @@ source releases and PyPI package releases are separate steps.
 
 1. Wait for the `CI` workflow on `main` to finish successfully.
 2. Open **Releases → Draft a new release** in the repository.
-3. Create or select the new version tag (for example, `v0.5.1`) targeting the latest green `main` commit.
+3. Create or select the new version tag (`vX.Y.Z`) targeting the reviewed, green
+   `main` commit whose `pyproject.toml` declares version `X.Y.Z`.
 4. Use the matching file under `docs/release-notes/` as the release description.
 
-Publishing the GitHub Release triggers both `.github/workflows/publish.yml` for
-the Python package and `.github/workflows/publish-tui.yml` for the native TUI
-archives. The latter attaches matching archives for Linux x64/ARM64, macOS
-Intel/Apple Silicon, and Windows x64 to the same release.
+Publishing the GitHub Release does not start either publishing workflow.
+Both use **Actions → Run workflow** and require an exact existing release tag.
+Creating the release alone does not make the installer ready for users.
+
+## Publish native TUI, then Python
+
+1. Complete the owner compliance review described in the
+   [release packaging contract](../CONTRIBUTING.md#release-packaging-contract),
+   including the pinned runtime licenses, source offers, and relinking materials.
+   Set `compliance_reviewed` only after that review has actually been completed.
+2. Run **Publish native TUI** (`publish-tui.yml`) with the exact release `tag`
+   and the completed review confirmation. It attaches archives for Linux
+   x64/ARM64, macOS Intel/Apple Silicon, and Windows x64 to the same release.
+3. Wait for every build and the asset-upload job to succeed. Confirm that all
+   five nonempty archives and their five `.sha256` files are attached.
+4. Publish the matching GitHub Release if it is still a draft. Run **Publish
+   package** (`publish.yml`) with the same `tag`. Its preflight rejects drafts,
+   tag/version mismatches, and missing or empty native archives/checksums.
+5. Verify the public installation below after PyPI publication succeeds. Update
+   version-pinned installation links only when the corresponding tag and
+   required artifacts are available.
+
+For local version preparation, `python scripts/check_release.py vX.Y.Z` checks
+the package/tag version agreement only; it does not check remote assets or
+publish anything. Pass downloaded release JSON as a second argument to check
+the published-release and native-asset requirements as well.
 
 ## One-time PyPI setup
 
@@ -90,13 +113,14 @@ gateway health port private; an SSH tunnel is the safer alternative.
 ## Release safety
 
 - Do not add `PYPI_TOKEN` or provider credentials to the repository.
-- The publish workflow only runs for a published GitHub Release.
+- Both publishing workflows are manually dispatched for an exact tag; neither
+  runs automatically on tag pushes or GitHub Release publication.
 - Keep the version in `pyproject.toml`, the release tag, and the release notes
   aligned.
 - Wait for the CI installer smoke jobs on Ubuntu, macOS, and Windows before
   publishing a release.
-- Wait for the native TUI matrix and the TUI asset-upload job after publishing;
-  a release is ready for terminal users only when its matching archives are
-  attached.
+- Wait for the native TUI matrix and asset-upload job before publishing the
+  Python package; a release is ready for terminal users only when its matching
+  archives and checksums are attached.
 - If the workflow fails, fix the publisher or build issue before retrying; do
   not create a second tag for the same version.

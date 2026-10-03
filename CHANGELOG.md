@@ -5,6 +5,8 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
+## 0.8.0 - Planned
+
 ### Added
 
 - Added a pinned Promptfoo integration with 10 sanitized diagnostic cases,
@@ -27,6 +29,8 @@ supported surface and known boundaries of each published version.
 
 ### Fixed
 
+- The Channels → WebSocket local WebUI link now follows the current browser
+  origin, including custom ports, instead of opening a hard-coded localhost port.
 - Included hashed WebUI chunks in normal Git commits and validated local
   asset references during bundle inspection and wheel/sdist builds.
 - Rejected extra outcome facts and corrected advisory Judge score and token
@@ -41,9 +45,10 @@ supported surface and known boundaries of each published version.
 - The current fixed diagnostic suite passed 30/30 real-model trials with no
   execution errors. This is not a production success rate or an improvement
   claim; the optional Judge has not been calibrated with independent human labels.
-- These changes have not yet run in remote CI or been published. Setup,
-  report navigation, and case maintenance are documented in the
-  [Promptfoo guide](docs/agent-evaluation-promptfoo.zh-CN.md).
+- The merged implementation at `3a65821` passed all 11 remote CI jobs.
+  The version preparation still needs its own CI before tagging; v0.8.0 has
+  not been published. Setup, report navigation, and case maintenance are
+  documented in the [Promptfoo guide](docs/agent-evaluation-promptfoo.zh-CN.md).
 
 ## 0.7.3 - 2026-09-28
 
