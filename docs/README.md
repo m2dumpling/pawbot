@@ -9,8 +9,9 @@ public technical documents that are useful for users and contributors.
 - [Record & Replay](record-replay.md)
 - [Agent Harness Benchmark](agent-harness.md)
 - [Agent Harness experiment baseline](experiments/agent-harness-baseline.md)
+- [Promptfoo evaluation guide (Chinese)](agent-evaluation-promptfoo.zh-CN.md)
 - [Model capability registry](model-capabilities.md)
-- [Release notes](release-notes/0.5.1.md)
+- [v0.8.0 release notes (planned)](release-notes/0.8.0.md)
 - [Changelog](../CHANGELOG.md)
 
 The detailed interview learning materials under `docs/interview/` are local
