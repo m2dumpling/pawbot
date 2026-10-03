@@ -5,7 +5,7 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
-## 0.8.0 - Planned
+## 0.8.0
 
 ### Added
 
