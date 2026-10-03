@@ -189,6 +189,9 @@ source = ["pawbot"]
 omit = ["tests/*", "**/tests/*"]
 
 [tool.coverage.report]
+# Keep package-internal pytest modules out of the product-code coverage
+# denominator even when a platform collects them as files under ``pawbot``.
+omit = ["tests/*", "**/tests/*"]
 fail_under = 75
 exclude_lines = [
     "pragma: no cover",
