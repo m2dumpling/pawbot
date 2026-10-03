@@ -36,7 +36,8 @@ pawbot 最适合 Agent 开发者的能力是 **Record & Replay（录制与回放
 | 了解回放能力 | [Record & Replay](#record--replay录制与回放) |
 | 验证 AI 修改后的代码 | [Agent Harness Benchmark](#agent-harness-benchmark) |
 | 理解 Agent 控制流、审批与恢复 | [控制流与恢复契约](docs/agent-control-flow.md) |
-| 运行真实模型评测或启用 OTLP | [评测与可观测性说明](docs/agent-evaluation-observability.zh-CN.md) |
+| 使用 Promptfoo 运行真实模型评测 | [Promptfoo 使用指南](docs/agent-evaluation-promptfoo.zh-CN.md) |
+| 查看 Trace 或启用 OTLP | [评测与可观测性说明](docs/agent-evaluation-observability.zh-CN.md) |
 | 查看完整使用方法 | [使用指南](docs/usage.zh-CN.md) |
 | 修改 Agent 或增加工具 | [开发](#开发) |
 
@@ -137,7 +138,11 @@ Shell、文件访问、网络工具和 MCP Server 都是明确的能力，并有
 
 ### 已发布 Python 包
 
-包发布后，可以一条命令完成安装并打开 WebUI。
+当前稳定版：**[v0.8.0](https://github.com/m2dumpling/pawbot/releases/tag/v0.8.0)**
+（[发布说明](docs/release-notes/0.8.0.md)、
+[PyPI](https://pypi.org/project/pawbot-ai/0.8.0/)）。
+
+可以一条命令安装最新已发布版本并打开 WebUI。
 
 macOS / Linux：
 
@@ -173,19 +178,19 @@ v0.4.2 开始，`pawbot update` 会把升级交给辅助进程，等当前启动
 macOS/Linux 可以直接通过 GitHub 一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.7.3/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.8.0/scripts/install.sh | sh
 ```
 
 如果系统没有 `curl`，也可以使用 `wget`：
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.7.3/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.8.0/scripts/install.sh | sh
 ```
 
 Windows 原生 PowerShell：
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.7.3/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.8.0/scripts/install.ps1)
 ```
 
 安装器会按顺序选择当前虚拟环境、`uv`、`pipx` 或独立的

@@ -29,6 +29,22 @@ Creating the release alone does not make the installer ready for users.
    version-pinned installation links only when the corresponding tag and
    required artifacts are available.
 
+## Update public documentation after publication
+
+Finish these steps before announcing the release:
+
+- In both `README.md` and `README.zh-CN.md`, update the current stable release,
+  release-note/PyPI links, and all three version-pinned installer commands
+  (`curl`, `wget`, and PowerShell) to the published tag.
+- Mark the release notes as published and update `docs/README.md` and
+  `docs/release-notes/unreleased.md` to identify
+  the latest published version. Keep historical release notes unchanged.
+- Verify that the public tag's `scripts/install.sh` and `scripts/install.ps1`
+  URLs respond successfully and that PyPI lists the matching version.
+- Merge the documentation update into `main` so the GitHub repository homepage
+  presents the released version. Do not move an already published tag or
+  republish the package for this documentation-only update.
+
 For local version preparation, `python scripts/check_release.py vX.Y.Z` checks
 the package/tag version agreement only; it does not check remote assets or
 publish anything. Pass downloaded release JSON as a second argument to check

@@ -4,6 +4,10 @@ pawbot is a self-hosted, replayable AI agent. The repository README is the
 short product and installation overview; this directory contains the focused
 public technical documents that are useful for users and contributors.
 
+Current stable release: [v0.8.0](https://github.com/m2dumpling/pawbot/releases/tag/v0.8.0).
+The Python package is available on
+[PyPI](https://pypi.org/project/pawbot-ai/0.8.0/).
+
 ## Core documents
 
 - [Record & Replay](record-replay.md)

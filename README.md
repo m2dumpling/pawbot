@@ -37,7 +37,8 @@ without another model request, another token bill, or real tool side effects.
 | Understand the replay feature | [Record & Replay](#record--replay) |
 | Verify an AI-assisted code change | [Agent Harness Benchmark](#agent-harness-benchmark) |
 | Understand Agent state, approvals, and recovery | [Control flow and recovery](docs/agent-control-flow.md) |
-| Run a live task evaluation or enable OTLP | [Evaluation and observability guide](docs/agent-evaluation-observability.md) |
+| Run real-model evaluations with Promptfoo | [Promptfoo setup and usage](evals/promptfoo/README.md) |
+| Inspect traces or enable OTLP | [Evaluation and observability guide](docs/agent-evaluation-observability.md) |
 | Learn how to use all execution and evaluation features | [Usage guide](docs/usage.md) |
 | Change the agent or add a tool | [Development](#development) |
 
@@ -149,7 +150,11 @@ and MCP servers are explicit capabilities with documented security boundaries.
 
 ### Published package
 
-After the package is published, install and open the WebUI with one command:
+Current stable release: **[v0.8.0](https://github.com/m2dumpling/pawbot/releases/tag/v0.8.0)**
+([release notes](docs/release-notes/0.8.0.md),
+[PyPI](https://pypi.org/project/pawbot-ai/0.8.0/)).
+
+Install the latest published package and open the WebUI with one command:
 
 macOS / Linux:
 
@@ -190,19 +195,19 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.7.3/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.8.0/scripts/install.sh | sh
 ```
 
 If `curl` is not available, use `wget` instead:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.7.3/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.8.0/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.7.3/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.8.0/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a
