@@ -87,7 +87,7 @@ jobs:
         with:
           python-version: "3.11"
           enable-cache: true
-      - run: uv sync --dev
+      - run: uv sync --extra dev
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
