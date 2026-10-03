@@ -109,7 +109,7 @@ const sections = [
   "",
   `Target: ${target}`,
   "Runtime: Bun 1.3.13",
-  "The release archive also contains SOURCE_OFFER.md, RELINKING.md, and the complete TUI application source.",
+  "The release archive also contains RELINKING.md and the complete TUI application source.",
   "",
   "===== pawbot project license =====",
   "",

@@ -724,7 +724,7 @@ def test_release_tui_rejects_an_empty_required_file(
     output = io.BytesIO()
     with zipfile.ZipFile(source) as original, zipfile.ZipFile(output, "w") as rebuilt:
         for entry in original.infolist():
-            content = b"" if entry.filename == "SOURCE_OFFER.md" else original.read(entry)
+            content = b"" if entry.filename == "RELINKING.md" else original.read(entry)
             rebuilt.writestr(entry.filename, content)
     payload = output.getvalue()
     checksum = f"{hashlib.sha256(payload).hexdigest()}  {asset}.zip\n".encode()

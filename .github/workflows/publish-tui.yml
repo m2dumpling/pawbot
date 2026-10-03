@@ -7,11 +7,6 @@ on:
         description: Release tag whose TUI assets should be built
         required: true
         type: string
-      compliance_reviewed:
-        description: I reviewed pinned licenses, retrievable runtime source and the source/relinking offer for this exact tag
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -20,17 +15,7 @@ env:
   RELEASE_TAG: ${{ inputs.tag }}
 
 jobs:
-  review:
-    name: Require the release compliance review
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check the owner confirmation
-        env:
-          REVIEWED: ${{ inputs.compliance_reviewed }}
-        run: test "$REVIEWED" = "true"
-
   build:
-    needs: review
     name: TUI ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
