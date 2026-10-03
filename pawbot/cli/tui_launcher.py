@@ -45,7 +45,6 @@ class TuiSessionError(ValueError):
 _TUI_RELEASE_FILES = (
     "THIRD_PARTY_NOTICES.txt",
     "RELINKING.md",
-    "SOURCE_OFFER.md",
     "LICENSE",
     "BUN-1.3.13-LICENSE.md",
     "LGPL-2.0.txt",
@@ -55,7 +54,6 @@ _TUI_RELEASE_FILES = (
 _TUI_RELEASE_LIMITS = {
     "THIRD_PARTY_NOTICES.txt": 4 * 1024 * 1024,
     "RELINKING.md": 256 * 1024,
-    "SOURCE_OFFER.md": 256 * 1024,
     "LICENSE": 256 * 1024,
     "BUN-1.3.13-LICENSE.md": 1024 * 1024,
     "LGPL-2.0.txt": 256 * 1024,

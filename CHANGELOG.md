@@ -25,7 +25,7 @@ supported surface and known boundaries of each published version.
   Runtime TaskContract verification, Harness/Task Eval, Trace, and Record & Replay remain.
 - Native TUI and PyPI publication now run manually for an exact version tag.
   PyPI publication requires all five matching native archives and checksum
-  sidecars; TUI publication requires the documented compliance review.
+  sidecars; TUI publication runs manually for the exact release tag.
 
 ### Fixed
 

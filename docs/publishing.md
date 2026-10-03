@@ -17,19 +17,15 @@ Creating the release alone does not make the installer ready for users.
 
 ## Publish native TUI, then Python
 
-1. Complete the owner compliance review described in the
-   [release packaging contract](../CONTRIBUTING.md#release-packaging-contract),
-   including the pinned runtime licenses, source offers, and relinking materials.
-   Set `compliance_reviewed` only after that review has actually been completed.
-2. Run **Publish native TUI** (`publish-tui.yml`) with the exact release `tag`
-   and the completed review confirmation. It attaches archives for Linux
+1. Run **Publish native TUI** (`publish-tui.yml`) with the exact release `tag`.
+   It attaches archives for Linux
    x64/ARM64, macOS Intel/Apple Silicon, and Windows x64 to the same release.
-3. Wait for every build and the asset-upload job to succeed. Confirm that all
+2. Wait for every build and the asset-upload job to succeed. Confirm that all
    five nonempty archives and their five `.sha256` files are attached.
-4. Publish the matching GitHub Release if it is still a draft. Run **Publish
+3. Publish the matching GitHub Release if it is still a draft. Run **Publish
    package** (`publish.yml`) with the same `tag`. Its preflight rejects drafts,
    tag/version mismatches, and missing or empty native archives/checksums.
-5. Verify the public installation below after PyPI publication succeeds. Update
+4. Verify the public installation below after PyPI publication succeeds. Update
    version-pinned installation links only when the corresponding tag and
    required artifacts are available.
 

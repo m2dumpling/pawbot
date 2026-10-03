@@ -2,8 +2,7 @@
 
 The pawbot TUI release archive contains the executable, its complete JavaScript/TypeScript
 application source, dependency lockfile, build scripts, and third-party notices. It is built with
-Bun 1.3.13 and OpenTUI 0.5.3. See `SOURCE_OFFER.md` for the corresponding-source
-offer that accompanies the executable. The archive also contains the complete LGPL 2.0 and
+Bun 1.3.13 and OpenTUI 0.5.3. The archive also contains the complete LGPL 2.0 and
 LGPL 2.1 license texts.
 
 Corresponding upstream source:

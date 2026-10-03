@@ -26,7 +26,6 @@ def _source_archive(root: Path) -> bytes:
     included = [
         "README.md",
         "RELINKING.md",
-        "SOURCE_OFFER.md",
         "package.json",
         "bun.lock",
         "tsconfig.json",
@@ -63,7 +62,6 @@ def main() -> None:
         asset: (dist / asset).read_bytes(),
         "THIRD_PARTY_NOTICES.txt": (dist / f"{asset}.THIRD_PARTY_NOTICES.txt").read_bytes(),
         "RELINKING.md": (root / "RELINKING.md").read_bytes(),
-        "SOURCE_OFFER.md": (root / "SOURCE_OFFER.md").read_bytes(),
         "LICENSE": (project_root / "LICENSE").read_bytes(),
         "BUN-1.3.13-LICENSE.md": (root / "licenses" / "BUN-1.3.13-LICENSE.md").read_bytes(),
         "LGPL-2.0.txt": (root / "licenses" / "LGPL-2.0.txt").read_bytes(),
