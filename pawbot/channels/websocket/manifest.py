@@ -6,7 +6,8 @@ from pawbot.channels.websocket.validation import validate
 
 SETUP_SPEC = ChannelSetupSpec(
     fields={},
-    official_url="http://127.0.0.1:8765",
+    # Resolve against the browser origin, including custom ports and HTTPS proxies.
+    official_url="/",
     validator=validate,
 )
 

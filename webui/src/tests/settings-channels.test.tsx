@@ -1252,7 +1252,7 @@ describe("Settings channels", () => {
     expect(within(format).getByRole("radio", { name: "Markdown" })).toBeInTheDocument();
   });
 
-  it("does not offer to disable the websocket channel", async () => {
+  it("keeps WebSocket enabled and links to the current WebUI", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
@@ -1272,6 +1272,7 @@ describe("Settings channels", () => {
             status: "enabled",
             install_supported: true,
             requires_restart: true,
+            setup: { fields: [], official_url: "/" },
           }],
           enabled_count: 1,
         });
@@ -1293,5 +1294,11 @@ describe("Settings channels", () => {
     expect(websocketSwitch).toBeDisabled();
     expect(websocketSwitch).toHaveAttribute("aria-checked", "true");
     expect(requestMutationMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "View WebSocket settings" }));
+    const webuiLink = screen.getByRole("link", { name: "Open local WebUI" });
+    expect(webuiLink).toHaveAttribute("href", "/");
+    for (const webuiUrl of ["http://127.0.0.1:58413/", "https://pawbot.example/"]) {
+      expect(new URL(webuiLink.getAttribute("href")!, webuiUrl).href).toBe(webuiUrl);
+    }
   });
 });
