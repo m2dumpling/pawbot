@@ -3,6 +3,48 @@
 All notable changes to pawbot are recorded here. Release notes describe the
 supported surface and known boundaries of each published version.
 
+## Unreleased
+
+### Added
+
+- Added a pinned Promptfoo integration with 10 sanitized diagnostic cases,
+  isolated Python trials, fixed local tool fixtures, shared deterministic
+  assertions, optional advisory LLM Judge, and JSON/HTML/browser reports.
+- Added an API-key-free Promptfoo CI smoke check and report summaries that
+  separate execution errors, quality failures, Agent/Judge tokens, and
+  comparable baseline/candidate measurements.
+- Added installed-wheel Gateway checks for bundled WebUI assets, authenticated
+  model configuration changes, timezone/network settings, chat, and recovery.
+
+### Changed
+
+- Replaced the self-built live evaluation workbench, management API, catalog,
+  CLI, and dedicated export path with the repository's Promptfoo suite.
+  Runtime TaskContract verification, Harness/Task Eval, Trace, and Record & Replay remain.
+- Native TUI and PyPI publication now run manually for an exact version tag.
+  PyPI publication requires all five matching native archives and checksum
+  sidecars; TUI publication requires the documented compliance review.
+
+### Fixed
+
+- Included hashed WebUI chunks in normal Git commits and validated local
+  asset references during bundle inspection and wheel/sdist builds.
+- Rejected extra outcome facts and corrected advisory Judge score and token
+  reporting, without treating unavailable Judge results as zero quality.
+- Stabilized Markdown setup and runtime checkpoint waits in full test runs.
+
+### Local verification
+
+- Python: 7,011 passed, 54 skipped, 83.03% coverage; WebUI: 1,134 passed;
+  TUI: 164 passed. Lint, strict type checks, builds, and quality gates passed.
+- Three Gateway checks passed against a wheel installed in a clean environment.
+- The current fixed diagnostic suite passed 30/30 real-model trials with no
+  execution errors. This is not a production success rate or an improvement
+  claim; the optional Judge has not been calibrated with independent human labels.
+- These changes have not yet run in remote CI or been published. Setup,
+  report navigation, and case maintenance are documented in the
+  [Promptfoo guide](docs/agent-evaluation-promptfoo.zh-CN.md).
+
 ## 0.7.3 - 2026-09-28
 
 ### Fixed

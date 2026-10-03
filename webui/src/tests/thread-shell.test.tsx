@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, type ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { preloadMarkdownText } from "@/components/MarkdownText";
 import { ThreadCameraController } from "@/components/thread/thread-camera";
@@ -406,6 +406,8 @@ function settingsWithFastPreset(): SettingsPayload {
 }
 
 describe("ThreadShell", () => {
+  // Cold markdown imports are setup, not part of the file-probe latency check.
+  beforeAll(() => preloadMarkdownText(), 30_000);
   beforeEach(() => {
     vi.stubGlobal(
       "fetch",
@@ -464,7 +466,6 @@ describe("ThreadShell", () => {
   });
 
   it("keeps inferred file paths non-interactive when the availability probe fails", async () => {
-    await preloadMarkdownText();
     const client = makeClient();
     let resolveProbe!: (value: Response) => void;
     const probe = new Promise<Response>((resolve) => {

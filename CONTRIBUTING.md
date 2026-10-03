@@ -137,9 +137,16 @@ this order:
 
 1. Set the package version and publish the matching GitHub release tag (`vX.Y.Z`).
 2. Review the pinned Bun/OpenTUI licenses, source offer, and relinking materials for that tag.
-3. Manually run **Publish Terminal UI** for the exact tag and confirm the compliance review input.
+3. Manually run **Publish native TUI** for the exact tag and confirm the compliance review input.
 4. Wait for every platform archive and checksum to appear on the release, then publish the same
-   `X.Y.Z` package to PyPI.
+   `X.Y.Z` package to PyPI by manually running **Publish package** with that tag.
+
+Neither workflow starts merely because a release is published. The package workflow verifies
+the tag against `pyproject.toml` and requires all five platform archives and their checksums.
+Before tagging, merge a reviewed PR only after every CI check passes. The package smoke job
+installs the wheel in a separate environment, starts that installed gateway, and exercises
+the bundled lazy assets and authenticated settings mutations. This is in addition to the
+frontend component tests; a source-only test run is insufficient for release validation.
 
 The wheel contains the built WebUI. The native TUI stays a platform-specific release sidecar so
 users download only the archive for their machine. Each archive must contain the executable,

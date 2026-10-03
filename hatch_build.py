@@ -46,7 +46,6 @@ class WebUIBuildHook(BuildHookInterface):
         webui_dir = root / "webui"
         package_json = webui_dir / "package.json"
         dist_dir = root / "pawbot" / "web" / "dist"
-        index_html = dist_dir / "index.html"
 
         # `pip install -e .` builds an editable wheel; skip the (slow) webui
         # bundle since editable installs target Python development and webui
@@ -59,10 +58,12 @@ class WebUIBuildHook(BuildHookInterface):
             return
 
         if os.environ.get("PAWBOT_SKIP_WEBUI_BUILD") == "1":
+            _load_webui_build_module().webui_bundle_assets(dist_dir)
             self.app.display_info("[webui-build] skipped via PAWBOT_SKIP_WEBUI_BUILD=1")
             return
 
         if not package_json.is_file():
+            _load_webui_build_module().webui_bundle_assets(dist_dir)
             self.app.display_info(
                 "[webui-build] no webui/ source tree, assuming prebuilt pawbot/web/dist/"
             )
@@ -95,9 +96,5 @@ class WebUIBuildHook(BuildHookInterface):
                 f"{exc}. Install `bun` or `npm`, or set PAWBOT_SKIP_WEBUI_BUILD=1 to bypass."
             ) from exc
 
-        if not index_html.is_file():
-            raise RuntimeError(
-                f"[webui-build] build finished but {index_html} is missing; "
-                "check webui/vite.config.ts outDir."
-            )
+        webui_build.webui_bundle_assets(dist_dir)
         self.app.display_info(f"[webui-build] webui ready at {dist_dir}")

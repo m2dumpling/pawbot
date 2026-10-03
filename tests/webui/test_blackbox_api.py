@@ -14,11 +14,9 @@ from pawbot.agent.observability import TraceStore
 from pawbot.webui import blackbox_api
 from pawbot.webui.blackbox_api import (
     BlackboxActionError,
-    _add_recording_to_eval,
     _delete,
     _detail,
     _list,
-    _remove_eval_case,
     _replay,
     _rolling_candidates,
     _trace_detail,
@@ -328,7 +326,7 @@ async def test_rolling_candidates_use_the_webui_conversation_title(monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_saved_sample_can_join_and_leave_task_eval_without_deleting_sample(
+async def test_saved_sample_can_be_deleted_without_the_retired_eval_index(
     tmp_path: Path,
 ) -> None:
     rolling = RollingBlackboxController(tmp_path / "runtime" / "blackbox")
@@ -349,24 +347,9 @@ async def test_saved_sample_can_join_and_leave_task_eval_without_deleting_sample
         blackbox=None,
     )
 
-    added = await _add_recording_to_eval(agent, {
-        "directory": str(sample),
-        "title": "已保存的任务样本",
-    })
-    case_id = added["case"]["id"]
-
-    assert added["case"]["title"] == "已保存的任务样本"
-    assert rolling.list_eval_cases()[0]["id"] == case_id
-    removed = await _remove_eval_case(agent, {"case_id": case_id})
-    assert removed["deleted"] is True
-    assert sample.is_dir()
-    assert rolling.list_eval_cases() == []
-
-    await _add_recording_to_eval(agent, {"directory": str(sample)})
     deleted = await _delete(agent, {"directory": str(sample)})
     assert deleted["deleted"] is True
     assert not sample.exists()
-    assert rolling.list_eval_cases() == []
 
 
 @pytest.mark.asyncio

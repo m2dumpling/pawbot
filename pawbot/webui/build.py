@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
+from urllib.parse import unquote, urlsplit
 
 BuildMode = Literal["auto", "prompt", "warn", "skip"]
 
@@ -35,6 +38,74 @@ _SOURCE_DIRS = ("src", "public")
 
 class WebUIBuildError(RuntimeError):
     """Raised when the local WebUI bundle cannot be built."""
+
+
+class _EntryAssets(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.paths: set[str] = set()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if tag == "script" and values.get("src"):
+            self.paths.add(str(values["src"]))
+        elif tag == "link" and values.get("rel") in {
+            "stylesheet", "modulepreload", "preload", "icon",
+        } and values.get("href"):
+            self.paths.add(str(values["href"]))
+
+
+def webui_bundle_assets(dist_dir: Path) -> list[str]:
+    """Validate entry and lazy-chunk references; return local HTTP asset paths.
+
+    Fresh timestamps cannot prove that Git or a wheel contains every chunk.
+    Vite's manifest covers lazy settings/channel views that index.html cannot.
+    """
+    index = dist_dir / "index.html"
+    if not index.is_file():
+        raise WebUIBuildError("bundled WebUI index.html is missing")
+    parser = _EntryAssets()
+    parser.feed(index.read_text(encoding="utf-8"))
+    references = parser.paths
+    manifest_path = dist_dir / "asset-manifest.json"
+    if manifest_path.is_file():
+        try:
+            raw_manifest: object = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(raw_manifest, dict):
+                raise ValueError("manifest must be an object")
+            manifest = cast(dict[str, Any], raw_manifest)
+            for entry in manifest.values():
+                paths: list[Any] = [entry["file"], *entry.get("css", []), *entry.get("assets", [])]
+                for path in paths:
+                    if not isinstance(path, str):
+                        raise ValueError("asset path must be a string")
+                    references.add(path)
+                for key in (*entry.get("imports", []), *entry.get("dynamicImports", [])):
+                    if key not in manifest:
+                        raise ValueError(f"unknown manifest import: {key}")
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            raise WebUIBuildError(f"invalid WebUI asset manifest: {exc}") from exc
+        references.add("asset-manifest.json")
+    elif any(urlsplit(path).path.endswith(".js") for path in references):
+        raise WebUIBuildError("bundled WebUI asset-manifest.json is missing")
+
+    assets: set[str] = set()
+    root = dist_dir.resolve()
+    missing: list[str] = []
+    for reference in references:
+        url = urlsplit(reference)
+        if url.scheme or url.netloc:
+            continue
+        relative = unquote(url.path).lstrip("/")
+        target = (root / relative).resolve()
+        if not target.is_relative_to(root):
+            raise WebUIBuildError(f"WebUI asset escapes the bundle: {reference}")
+        if not target.is_file():
+            missing.append(relative)
+        assets.add(relative)
+    if missing:
+        raise WebUIBuildError(f"bundled WebUI assets are missing: {', '.join(sorted(missing))}")
+    return sorted(assets)
 
 
 @dataclass(frozen=True)
@@ -107,7 +178,22 @@ def inspect_webui_bundle(
     resolved_dist = dist_dir or default_webui_dist_dir()
     index_html = resolved_dist / "index.html"
 
-    if not (resolved_source / "package.json").is_file():
+    source_available = (resolved_source / "package.json").is_file()
+    if index_html.is_file():
+        try:
+            webui_bundle_assets(resolved_dist)
+        except WebUIBuildError:
+            return WebUIBundleStatus(
+                source_dir=resolved_source,
+                dist_dir=resolved_dist,
+                index_html=index_html,
+                source_available=source_available,
+                dist_available=False,
+                stale=True,
+                reason="missing_assets",
+            )
+
+    if not source_available:
         return WebUIBundleStatus(
             source_dir=resolved_source,
             dist_dir=resolved_dist,
@@ -173,6 +259,8 @@ def describe_webui_bundle_status(status: WebUIBundleStatus) -> str:
     """Return a short user-facing freshness message."""
     if status.reason == "missing_dist":
         return "Bundled WebUI build is missing."
+    if status.reason == "missing_assets":
+        return "Bundled WebUI has missing or invalid assets. Rebuild or reinstall pawbot."
     if status.reason == "source_newer":
         changed = _display_source_path(status)
         return f"WebUI source is newer than the bundled build ({changed})."
@@ -199,8 +287,13 @@ def build_webui_bundle(
         )
 
     _emit(output, f"Building bundled WebUI with `{command_runner}`...")
+    install = [command_runner, "install"]
+    if Path(command_runner).stem.lower() == "bun" and (resolved_source / "bun.lock").is_file():
+        install.append("--frozen-lockfile")
+    elif Path(command_runner).stem.lower() == "npm" and (resolved_source / "package-lock.json").is_file():
+        install = [command_runner, "ci"]
     _run_frontend_command(
-        [command_runner, "install"],
+        install,
         cwd=resolved_source,
         subprocess_run=subprocess_run,
     )
@@ -209,6 +302,7 @@ def build_webui_bundle(
         cwd=resolved_source,
         subprocess_run=subprocess_run,
     )
+    webui_bundle_assets(dist_dir or default_webui_dist_dir())
     return inspect_webui_bundle(source_dir=resolved_source, dist_dir=dist_dir)
 
 

@@ -1171,57 +1171,6 @@ export interface BlackboxCandidate {
   status: "candidate" | "promoted" | string;
 }
 
-export interface TaskEvalCase {
-  id: string;
-  title: string;
-  category: string;
-  description: string;
-  source?: string;
-  sample_directory?: string;
-  created_at_ms?: number;
-}
-
-export interface TaskEvalReport {
-  benchmark: string;
-  version: number;
-  summary: {
-    total: number;
-    passed: number;
-    failed: number;
-    task_passed: number;
-    task_failed: number;
-    task_evaluable: number;
-    task_not_evaluable: number;
-    task_pass_rate: number | null;
-    trajectory_passed: number;
-    trajectory_pass_rate: number | null;
-    unknown_side_effects: number;
-    elapsed_ms: number;
-    status: string;
-  };
-  cases: Array<{
-    id: string;
-    title: string;
-    category: string;
-    task_status: string;
-    trajectory_status: string;
-    execution_status: string;
-    elapsed_ms: number;
-    tool_attempts: number;
-    tool_failures: number;
-    failures: string[];
-  }>;
-  custom_cases?: Array<{
-    id?: string;
-    title?: string;
-    task_status?: string;
-    trajectory_status?: string;
-    turns?: number;
-    source?: string;
-    error?: string;
-  }>;
-}
-
 export interface TurnOutcome {
   schema_version?: number;
   execution_status: "completed" | "failed" | "cancelled" | "limited" | "incomplete" | string;
@@ -1406,50 +1355,6 @@ export async function blackboxRejectCandidate(
   candidateId: string,
 ): Promise<{ rejected: boolean; directory: string; candidate_id: string }> {
   return mutation(transport, "blackbox.rolling.reject", { candidate_id: candidateId });
-}
-
-export async function blackboxAddCandidateToEval(
-  transport: WebUIMutationTransport,
-  candidateId: string,
-  title?: string,
-): Promise<{ added: boolean; case: TaskEvalCase }> {
-  return mutation(transport, "blackbox.rolling.add_to_eval", {
-    candidate_id: candidateId,
-    title: title ?? null,
-  });
-}
-
-export async function blackboxAddRecordingToEval(
-  transport: WebUIMutationTransport,
-  directory: string,
-  title?: string,
-): Promise<{ added: boolean; case: TaskEvalCase }> {
-  return mutation(transport, "blackbox.rolling.add_recording_to_eval", {
-    directory,
-    title: title ?? null,
-  });
-}
-
-export async function taskEvalRemoveCase(
-  transport: WebUIMutationTransport,
-  caseId: string,
-): Promise<{ deleted: boolean; case_id: string }> {
-  return mutation(transport, "blackbox.eval.remove", { case_id: caseId });
-}
-
-export async function taskEvalList(
-  transport: WebUIMutationTransport,
-): Promise<{ eval_set: string; version: number; cases: TaskEvalCase[]; custom_cases?: TaskEvalCase[] }> {
-  return mutation(transport, "blackbox.eval.list");
-}
-
-export async function taskEvalRun(
-  transport: WebUIMutationTransport,
-  caseIds?: string[],
-): Promise<TaskEvalReport> {
-  return mutation<TaskEvalReport>(transport, "blackbox.eval.run", {
-    case_ids: caseIds ?? null,
-  });
 }
 
 export async function blackboxDetail(

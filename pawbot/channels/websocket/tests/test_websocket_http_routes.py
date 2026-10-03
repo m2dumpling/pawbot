@@ -3292,8 +3292,6 @@ async def test_personalization_and_memory_mutations_reach_blackbox_router(
         "personalization.clear",
         "memory.clear",
         "blackbox.rolling.candidates",
-        "blackbox.eval.list",
-        "blackbox.eval.run",
     ):
         response = await _webui_mutate(channel, action, {"enabled": True})
         assert response.status_code == 200
@@ -3304,8 +3302,6 @@ async def test_personalization_and_memory_mutations_reach_blackbox_router(
         "personalization.clear",
         "memory.clear",
         "rolling.candidates",
-        "eval.list",
-        "eval.run",
     ]
 
 

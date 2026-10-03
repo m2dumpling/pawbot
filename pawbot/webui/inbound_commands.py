@@ -64,7 +64,6 @@ _WEBUI_FAST_ACTIONS = frozenset(
         "blackbox.list",
         "blackbox.rolling.candidates",
         "blackbox.tokens",
-        "blackbox.eval.list",
         "memory.list",
         "memory.remember",
         "memory.remember-note",

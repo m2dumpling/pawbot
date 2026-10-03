@@ -201,10 +201,6 @@ _WEBUI_MUTATION_PATHS = {
     "blackbox.rolling.candidates": "/api/blackbox/rolling/candidates",
     "blackbox.rolling.promote": "/api/blackbox/rolling/promote",
     "blackbox.rolling.reject": "/api/blackbox/rolling/reject",
-    "blackbox.rolling.add_to_eval": "/api/blackbox/rolling/add-to-eval",
-    "blackbox.eval.list": "/api/blackbox/eval/list",
-    "blackbox.eval.remove": "/api/blackbox/eval/remove",
-    "blackbox.eval.run": "/api/blackbox/eval/run",
     "blackbox.detail": "/api/blackbox/detail",
     "blackbox.delete": "/api/blackbox/delete",
     "blackbox.replay": "/api/blackbox/replay",
@@ -503,7 +499,7 @@ class GatewayHTTPHandler:
             return True
         if re.match(
             r"^/api/(?:blackbox/(status|start|stop|list|detail|delete|replay|tokens|"
-            r"rolling/(candidates|promote|reject|add-to-eval)|eval/(list|remove|run))|"
+            r"rolling/(candidates|promote|reject))|"
             r"memory/(list|remember|remember-note|promote|reject|forget|clear)|"
             r"personalization/(get|update|clear))$",
             path,
@@ -837,7 +833,7 @@ class GatewayHTTPHandler:
     ) -> Response | None:
         match = re.fullmatch(
             r"/api/blackbox/(status|start|stop|list|detail|delete|replay|tokens|"
-            r"rolling/(candidates|promote|reject|add-to-eval)|eval/(list|remove|run))",
+            r"rolling/(candidates|promote|reject))",
             path,
         )
         if match is None:
@@ -860,8 +856,8 @@ class GatewayHTTPHandler:
                 action = f"trace.{trace_match.group(1)}"
         else:
             action = match.group(1)
-            if action.startswith("rolling/") or action.startswith("eval/"):
-                action = action.replace("/", ".", 1).replace("add-to-eval", "add_to_eval")
+            if action.startswith("rolling/"):
+                action = action.replace("/", ".", 1)
         if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
             return _http_error(405, "Memory and trace actions require an authenticated WebSocket")
         if self.blackbox_action is None:
