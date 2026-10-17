@@ -264,6 +264,13 @@ def _is_session_terminated(exc: BaseException) -> bool:
     error = getattr(exc, "error", None)
     if error is not None:
         messages.append(str(getattr(error, "message", "")))
+        # SDK v2 preserves the server's JSON-RPC body for an expired legacy
+        # HTTP session instead of always synthesizing "Session terminated".
+        if (
+            getattr(error, "code", None) == -32600
+            and str(getattr(error, "message", "")).casefold() == "session not found"
+        ):
+            return True
     return any(
         marker in message.lower()
         for marker in ("session terminated", "connection closed")

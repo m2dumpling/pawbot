@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
+from pawbot.agent.approval import DEFAULT_APPROVAL_CAPABILITIES, ToolApprovalCallback
+
 if TYPE_CHECKING:
     from pawbot.agent.subagent import SubagentManager
     from pawbot.agent.tools.exec_session import ExecSessionManager
@@ -28,6 +30,16 @@ _CURRENT_REQUEST_CONTEXT: ContextVar["RequestContext | None"] = ContextVar(
 
 
 @dataclass(frozen=True)
+class ToolAccessPolicy:
+    """Effective per-task authority; callbacks stay in memory, never in checkpoints."""
+
+    denied_tool_capabilities: frozenset[str] = frozenset()
+    tool_approval_callback: ToolApprovalCallback | None = None
+    recovery_approval_callback: ToolApprovalCallback | None = None
+    approval_capabilities: frozenset[str] = DEFAULT_APPROVAL_CAPABILITIES
+
+
+@dataclass(frozen=True)
 class RequestContext:
     """Per-request context injected into tools at message-processing time."""
     channel: str
@@ -41,6 +53,7 @@ class RequestContext:
     turn_id: str | None = None
     workspace: Path | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
+    tool_policy: ToolAccessPolicy | None = None
 
 
 @runtime_checkable

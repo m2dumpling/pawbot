@@ -1485,13 +1485,15 @@ class AgentLoop(TurnStagesMixin):
                 return row
 
             items: list[dict[str, Any]] = []
-            if first_msg is not None:
+            if first_msg is not None and self.subagents.accept_result(first_msg, consume=True):
                 items.append(await _to_user_message(first_msg))
             while len(items) < limit:
                 try:
-                    items.append(await _to_user_message(pending_queue.get_nowait()))
+                    pending_msg = pending_queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
+                if self.subagents.accept_result(pending_msg, consume=True):
+                    items.append(await _to_user_message(pending_msg))
 
             return items
 
@@ -1770,6 +1772,8 @@ class AgentLoop(TurnStagesMixin):
 
                 raw = msg.content.strip()
                 effective_key = self._effective_session_key(msg)
+                if not self.subagents.accept_result(msg):
+                    continue
                 if await agent_context.handle_runtime_control(self, msg, self.tools):
                     continue
                 if (
@@ -1880,6 +1884,8 @@ class AgentLoop(TurnStagesMixin):
 
     async def _dispatch(self, msg: InboundMessage) -> None:
         """Process a message: per-session serial, cross-session concurrent."""
+        if not self.subagents.accept_result(msg):
+            return
         session_key = self._effective_session_key(msg)
         if session_key != msg.session_key:
             msg = dataclasses.replace(msg, session_key_override=session_key)
@@ -1905,6 +1911,8 @@ class AgentLoop(TurnStagesMixin):
         pending: asyncio.Queue[InboundMessage] | None = None
         try:
             async with lock, gate:
+                if not self.subagents.accept_result(msg):
+                    return
                 # Only the task that owns the session lock may publish the
                 # active mid-turn injection queue for this session.
                 pending = asyncio.Queue(maxsize=20)
@@ -2153,6 +2161,8 @@ class AgentLoop(TurnStagesMixin):
         task_contract: TaskContract | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
+        if not self.subagents.accept_result(msg, consume=True):
+            return None
         self.sync_recording_policy()
         kind = TurnKind.USER if msg.is_user_input else TurnKind.SYSTEM
         if kind is TurnKind.SYSTEM:

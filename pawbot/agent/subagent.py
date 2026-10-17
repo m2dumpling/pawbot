@@ -6,7 +6,7 @@ import time
 import uuid
 import warnings
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, NotRequired, TypedDict
 
@@ -17,6 +17,7 @@ from pawbot.agent.runner import AgentRunner, AgentRunSpec
 from pawbot.agent.tools.base import ToolResult
 from pawbot.agent.tools.context import (
     RequestContext,
+    ToolAccessPolicy,
     ToolContext,
     bind_request_context,
     reset_request_context,
@@ -155,6 +156,8 @@ class SubagentManager:
         self._running_tasks: dict[str, asyncio.Task[str]] = {}
         self._task_statuses: dict[str, SubagentStatus] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+        # Retain authority only while a result is waiting on the bus/pending queue.
+        self._pending_result_sessions: dict[str, str] = {}
 
     def runtime_statuses(self) -> Mapping[str, SubagentStatus]:
         """Return the observable task statuses used by runtime-control snapshots."""
@@ -226,6 +229,15 @@ class SubagentManager:
         ToolLoader().load(ctx, registry, scope="subagent")
         return registry
 
+    def _effective_tool_policy(self, inherited: ToolAccessPolicy | None) -> ToolAccessPolicy:
+        policy = inherited or ToolAccessPolicy()
+        return replace(
+            policy,
+            denied_tool_capabilities=(
+                policy.denied_tool_capabilities | frozenset(self.tools_config.denied_capabilities)
+            ),
+        )
+
     async def spawn(
         self,
         task: str,
@@ -238,6 +250,7 @@ class SubagentManager:
         workspace_scope: WorkspaceScope | None = None,
         *,
         runtime: LLMRuntime | None = None,
+        tool_policy: ToolAccessPolicy | None = None,
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
         if runtime is None:
@@ -271,6 +284,7 @@ class SubagentManager:
                 runtime,
                 origin_message_id,
                 workspace_scope,
+                tool_policy=self._effective_tool_policy(tool_policy),
             )
         )
         self._running_tasks[task_id] = bg_task
@@ -302,6 +316,7 @@ class SubagentManager:
         workspace_scope: WorkspaceScope | None = None,
         *,
         runtime: LLMRuntime | None = None,
+        tool_policy: ToolAccessPolicy | None = None,
     ) -> str:
         """Run a subagent synchronously and return its result to the caller."""
         if runtime is None:
@@ -334,6 +349,7 @@ class SubagentManager:
                 runtime,
                 origin_message_id,
                 workspace_scope,
+                tool_policy=self._effective_tool_policy(tool_policy),
                 announce=False,
             )
         )
@@ -365,6 +381,7 @@ class SubagentManager:
         workspace_scope: WorkspaceScope | None = None,
         *,
         announce: bool = True,
+        tool_policy: ToolAccessPolicy | None = None,
     ) -> str:
         """Wait for capacity, then execute one subagent task."""
         status.phase = "queued"
@@ -380,6 +397,7 @@ class SubagentManager:
                 origin_message_id,
                 workspace_scope,
                 announce=announce,
+                tool_policy=tool_policy,
             )
 
     async def _run_admitted_subagent(
@@ -394,9 +412,11 @@ class SubagentManager:
         workspace_scope: WorkspaceScope | None = None,
         *,
         announce: bool = True,
+        tool_policy: ToolAccessPolicy | None = None,
     ) -> str:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
+        policy = tool_policy if tool_policy is not None else self._effective_tool_policy(None)
 
         async def _on_checkpoint(payload: dict[str, Any]) -> None:
             status.phase = payload.get("phase", status.phase)
@@ -428,6 +448,7 @@ class SubagentManager:
                 message_id=origin_message_id,
                 session_key=sess_key,
                 runtime=runtime,
+                tool_policy=policy,
             ))
             token = bind_workspace_scope(workspace_scope) if workspace_scope is not None else None
             try:
@@ -445,6 +466,12 @@ class SubagentManager:
                     session_key=sess_key,
                     workspace=root,
                     llm_timeout_s=llm_timeout,
+                    denied_tool_capabilities=policy.denied_tool_capabilities,
+                    tool_approval_callback=policy.tool_approval_callback,
+                    recovery_approval_callback=policy.recovery_approval_callback,
+                    approval_capabilities=policy.approval_capabilities,
+                    channel=origin["channel"],
+                    chat_id=origin["chat_id"],
                     llm_usage_source=origin.get(
                         "llm_usage_source",
                         current_llm_usage_source(),
@@ -504,6 +531,9 @@ class SubagentManager:
         origin_message_id: str | None = None,
     ) -> None:
         """Announce the subagent result to the main agent via the message bus."""
+        running = self._running_tasks.get(task_id)
+        if running is not None and running.cancelling():
+            return
         status_text = "completed successfully" if status == "ok" else "failed"
 
         announce_content = render_template(
@@ -520,9 +550,11 @@ class SubagentManager:
         # routed to the correct pending queue (mid-turn injection) instead of
         # being dispatched as a competing independent task.
         override = origin.get("session_key") or f"{origin['channel']}:{origin['chat_id']}"
+        result_token = uuid.uuid4().hex
         metadata: dict[str, Any] = {
             "injected_event": "subagent_result",
             "subagent_task_id": task_id,
+            "subagent_result_token": result_token,
         }
         if origin_message_id:
             metadata["origin_message_id"] = origin_message_id
@@ -535,8 +567,36 @@ class SubagentManager:
             metadata=metadata,
         )
 
-        await self.bus.publish_inbound(msg)
+        self._pending_result_sessions[result_token] = override
+        try:
+            await self.bus.publish_inbound(msg)
+        except BaseException:
+            self._pending_result_sessions.pop(result_token, None)
+            raise
         logger.debug("Subagent [{}] announced result to {}:{}", task_id, origin['channel'], origin['chat_id'])
+
+    def accept_result(self, message: InboundMessage, *, consume: bool = False) -> bool:
+        """Reject cancelled/consumed results at delivery, including already queued ones."""
+        if (
+            message.channel != "system"
+            or message.sender_id != "subagent"
+            or message.metadata.get("injected_event") != "subagent_result"
+        ):
+            return True
+        token = message.metadata.get("subagent_result_token")
+        if token is None:
+            # Legacy integrations may publish their own untracked system notifications.
+            return True
+        if not isinstance(token, str) or self._pending_result_sessions.get(token) != message.session_key:
+            return False
+        if consume:
+            self._pending_result_sessions.pop(token)
+        return True
+
+    def _discard_results_for_session(self, session_key: str) -> None:
+        for token, owner in tuple(self._pending_result_sessions.items()):
+            if owner == session_key:
+                self._pending_result_sessions.pop(token, None)
 
     def _build_subagent_prompt(self, workspace: Path | None = None) -> str:
         """Build a focused system prompt for the subagent."""
@@ -563,15 +623,19 @@ class SubagentManager:
 
     async def cancel_by_session(self, session_key: str) -> int:
         """Cancel all subagents for the given session. Returns count cancelled."""
+        self._discard_results_for_session(session_key)
         tasks = [self._running_tasks[tid] for tid in self._session_tasks.get(session_key, [])
                  if tid in self._running_tasks and not self._running_tasks[tid].done()]
         for t in tasks:
             if t.cancelling() == 0:
                 t.cancel()
-        await asyncio.gather(
-            asyncio.gather(*tasks, return_exceptions=True),
-            self._exec_session_manager.terminate_by_owner(session_key),
-        )
+        try:
+            await asyncio.gather(
+                asyncio.gather(*tasks, return_exceptions=True),
+                self._exec_session_manager.terminate_by_owner(session_key),
+            )
+        finally:
+            self._discard_results_for_session(session_key)
         return len(tasks)
 
     async def close(self) -> None:
@@ -581,6 +645,7 @@ class SubagentManager:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        self._pending_result_sessions.clear()
         await self._exec_session_manager.close_all()
 
     def get_running_count(self) -> int:

@@ -1,6 +1,6 @@
 """Regression test for the MCP reconnect lifecycle.
 
-This test starts a real FastMCP streamable-http server in a child process,
+This test starts a real MCP streamable-http server in a child process,
 lets its idle timeout kill the session, and then exercises pawbot's MCP
 reconnect path.  The bug being reproduced is a gateway crash caused by
 improper cleanup of the old ``streamable_http_client`` async generator during
@@ -12,9 +12,11 @@ Run:
 """
 
 import asyncio
-import multiprocessing
 import socket
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -38,32 +40,44 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
-def _run_mcp_server(port: int, ready_event: multiprocessing.Event) -> None:
-    """FastMCP server target for ``multiprocessing.Process``.
+def _run_mcp_server(port: int) -> None:
+    """Run the fixture server in an interpreter independent of pytest's import mode.
 
     The server exposes a single ``greet`` tool and terminates idle sessions
     after ``_IDLE_TIMEOUT_SECONDS``.
     """
-    from mcp.server.fastmcp import FastMCP
-    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    import uvicorn
+    from mcp.server.mcpserver import MCPServer
+    from mcp.shared.inbound import MCP_METHOD_HEADER
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse, Response
 
-    mcp = FastMCP("IdleTimeoutDemo", json_response=True, port=port)
+    mcp = MCPServer("IdleTimeoutDemo")
 
     @mcp.tool()
     def greet(name: str = "World") -> str:  # noqa: N802
         """Greet someone."""
         return f"Hello, {name}!"
 
-    mcp._session_manager = StreamableHTTPSessionManager(
-        app=mcp._mcp_server,
-        json_response=mcp.settings.json_response,
-        stateless=mcp.settings.stateless_http,
-        security_settings=mcp.settings.transport_security,
-        session_idle_timeout=_IDLE_TIMEOUT_SECONDS,
+    app = mcp.streamable_http_app(
+        json_response=True, session_idle_timeout=_IDLE_TIMEOUT_SECONDS,
     )
 
-    ready_event.set()
-    mcp.run(transport="streamable-http")
+    async def legacy_session_only(request, call_next):
+        # This regression concerns expiring legacy sessions. Modern discovery is
+        # stateless, and an open GET stream intentionally prevents idle expiry.
+        if request.method == "GET":
+            return Response(status_code=405)
+        if request.headers.get(MCP_METHOD_HEADER) == "server/discover":
+            body = await request.json()
+            return JSONResponse({
+                "jsonrpc": "2.0", "id": body["id"],
+                "error": {"code": -32601, "message": "Legacy fixture: no discovery"},
+            })
+        return await call_next(request)
+
+    app.add_middleware(BaseHTTPMiddleware, dispatch=legacy_session_only)
+    uvicorn.run(app, host="127.0.0.1", port=port)
 
 
 async def _wait_for_server(url: str, timeout: float = 10.0) -> bool:
@@ -83,32 +97,33 @@ async def _wait_for_server(url: str, timeout: float = 10.0) -> bool:
 
 
 @pytest.fixture(scope="module")
-def mcp_server_url():
+def mcp_server_url(tmp_path_factory):
     """Start the idle-timeout MCP server and yield its URL."""
-    ctx = multiprocessing.get_context("spawn")
     port = _free_port()
-    ready_event = ctx.Event()
-    process = ctx.Process(
-        target=_run_mcp_server,
-        args=(port, ready_event),
-        daemon=True,
-    )
-    process.start()
-    ready_event.wait(timeout=10.0)
-
-    url = f"http://127.0.0.1:{port}/mcp"
-    if not asyncio.run(_wait_for_server(url, timeout=10.0)):
-        process.terminate()
-        process.join(timeout=5.0)
-        pytest.skip(f"MCP repro server failed to start on {url}")
-
-    yield url
-
-    process.terminate()
-    process.join(timeout=5.0)
-    if process.is_alive():
-        process.kill()
-        process.join(timeout=2.0)
+    log_path = tmp_path_factory.mktemp("mcp-reconnect") / "server.log"
+    with log_path.open("wb") as log:
+        process = subprocess.Popen(
+            [sys.executable, "-c",
+             "import runpy,sys; runpy.run_path(sys.argv[1])['_run_mcp_server'](int(sys.argv[2]))",
+             str(Path(__file__).resolve()), str(port)],
+            stdout=log, stderr=subprocess.STDOUT,
+        )
+    try:
+        url = f"http://127.0.0.1:{port}/mcp"
+        if not asyncio.run(_wait_for_server(url, timeout=10.0)):
+            pytest.fail(
+                f"MCP repro server did not start (exit={process.poll()}):\n"
+                + log_path.read_text(encoding="utf-8", errors="replace")[-8000:]
+            )
+        yield url
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
 
 
 def _make_provider(*, mcp_servers: dict) -> tuple[MCPProvider, ToolRegistry]:
@@ -119,10 +134,10 @@ def _make_provider(*, mcp_servers: dict) -> tuple[MCPProvider, ToolRegistry]:
 @pytest.fixture(autouse=True)
 def allow_loopback_mcp_urls(monkeypatch: pytest.MonkeyPatch):
     """The repro server runs on 127.0.0.1; allow pawbot to talk to it."""
-    class TestPinnedDNSAsyncTransport(security_network.PinnedDNSAsyncTransport):
+    class TestPinnedDNSAsyncTransport(security_network.PinnedDNSAsyncTransport2):
         _resolver_lock = asyncio.Lock()
 
-    monkeypatch.setattr(mcp_module, "PinnedDNSAsyncTransport", TestPinnedDNSAsyncTransport)
+    monkeypatch.setattr(mcp_module, "PinnedDNSAsyncTransport2", TestPinnedDNSAsyncTransport)
     monkeypatch.setattr(
         mcp_module,
         "validate_url_target",
@@ -145,7 +160,7 @@ def allow_loopback_mcp_urls(monkeypatch: pytest.MonkeyPatch):
     )
     monkeypatch.setattr(
         mcp_module,
-        "httpx_env_proxy_mounts",
+        "httpx2_env_proxy_mounts",
         lambda: {},
     )
 
@@ -161,22 +176,25 @@ async def test_mcp_reconnect_after_session_timeout(tmp_path, mcp_server_url):
     )
     provider, registry = _make_provider(mcp_servers={"repro": cfg})
 
-    await asyncio.create_task(provider.connect())
-    assert provider.connected_server_names == {"repro"}
+    try:
+        await asyncio.create_task(provider.connect())
+        assert provider.connected_server_names == {"repro"}
 
-    tool = registry.get("mcp_repro_greet")
-    assert isinstance(tool, MCPToolWrapper)
+        tool = registry.get("mcp_repro_greet")
+        assert isinstance(tool, MCPToolWrapper)
+        initial_session = tool._session
 
-    output = await asyncio.create_task(tool.execute(name="first"))
-    assert "Hello, first" in output
+        output = await asyncio.create_task(tool.execute(name="first"))
+        assert "Hello, first" in output
 
-    # Wait for the server-side idle timeout to terminate the session.
-    await asyncio.sleep(_IDLE_TIMEOUT_SECONDS + _IDLE_EXPIRY_GRACE_SECONDS)
+        # Wait for the server-side idle timeout to terminate the session.
+        await asyncio.sleep(_IDLE_TIMEOUT_SECONDS + _IDLE_EXPIRY_GRACE_SECONDS)
 
-    output = await asyncio.create_task(tool.execute(name="second"))
-    assert "Hello, second" in output
-
-    await asyncio.create_task(provider.aclose())
+        output = await asyncio.create_task(tool.execute(name="second"))
+        assert "Hello, second" in output
+        assert tool._session is not initial_session
+    finally:
+        await asyncio.create_task(provider.aclose())
 
 
 @pytest.mark.asyncio
@@ -211,12 +229,6 @@ async def test_mcp_reconnect_during_shutdown_does_not_crash(
         return await real_connect(*args, **kwargs)
 
     monkeypatch.setattr(mcp_module, "connect_mcp_servers", gated_connect)
-    call_task = asyncio.create_task(tool.execute(name="second"))
-    await asyncio.wait_for(reconnect_started.wait(), timeout=5)
-    close_task = asyncio.create_task(provider.aclose())
-    await asyncio.sleep(0)
-    finish_reconnect.set()
-
     unhandled: list[BaseException] = []
 
     def capture_unhandled(_loop, context):
@@ -224,14 +236,23 @@ async def test_mcp_reconnect_during_shutdown_does_not_crash(
         if exc is not None:
             unhandled.append(exc)
 
-    asyncio.get_running_loop().set_exception_handler(capture_unhandled)
-
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(capture_unhandled)
+    call_task = asyncio.create_task(tool.execute(name="second"))
     try:
+        await asyncio.wait_for(reconnect_started.wait(), timeout=5)
+        close_task = asyncio.create_task(provider.aclose())
+        await asyncio.sleep(0)
+        finish_reconnect.set()
         await asyncio.wait_for(asyncio.gather(call_task, close_task), timeout=15)
-    except asyncio.CancelledError:
-        unhandled.append(asyncio.CancelledError("main task cancelled by leaked MCP cancel scope"))
-    except Exception as exc:
-        unhandled.append(exc)
-
-    assert not unhandled, f"Unhandled exception leaked during reconnect/shutdown: {unhandled[0]}"
-    assert provider.connected_server_names == set()
+        await asyncio.sleep(0)
+        assert not unhandled, f"Unhandled exception leaked during reconnect/shutdown: {unhandled[0]}"
+        assert provider.connected_server_names == set()
+    finally:
+        finish_reconnect.set()
+        if not call_task.done():
+            call_task.cancel()
+        await asyncio.gather(call_task, return_exceptions=True)
+        await asyncio.create_task(provider.aclose())
+        loop.set_exception_handler(previous_handler)

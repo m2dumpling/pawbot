@@ -84,6 +84,20 @@ def test_is_session_terminated_recognizes_connection_closed_mcp_error():
     assert _is_session_terminated(_connection_closed_error())
 
 
+@pytest.mark.parametrize(
+    ("code", "message", "terminated"),
+    [
+        (-32600, "Session not found", True),
+        (-32600, "SESSION NOT FOUND", True),
+        (-32602, "Session not found", False),
+        (-32600, "Tool not found", False),
+        (-32600, "Session not found in document", False),
+    ],
+)
+def test_session_not_found_requires_precise_protocol_error(code, message, terminated):
+    assert _is_session_terminated(MCPError(code=code, message=message)) is terminated
+
+
 # ---------------------------------------------------------------------------
 # MCPToolWrapper retry behaviour
 # ---------------------------------------------------------------------------
