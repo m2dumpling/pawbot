@@ -1,6 +1,6 @@
 # Agent 控制流、人工介入与恢复契约
 
-本文记录 Pawbot 当前 Agent 的实际控制流，作为排查故障和面试讲解的维护文档。核心使用有界 ReAct 循环；Turn pipeline 负责编排会话、恢复、上下文、执行与持久化。恢复 checkpoint 只能恢复本地对话状态，不能撤销已经发生的外部副作用。
+本文记录 Pawbot 当前 Agent 的实际控制流，用于理解运行时、排查故障和评估架构取舍。核心使用有界 ReAct 循环；Turn pipeline 负责编排会话、恢复、上下文、执行与持久化。恢复 checkpoint 只能恢复本地对话状态，不能撤销已经发生的外部副作用。
 
 ## 一次 Turn
 
@@ -58,6 +58,8 @@ stateDiagram-v2
 - `AgentRunner` 每轮先执行预算检查和上下文治理，然后请求模型，再执行工具或验证终答。
 - 参数校验发生在 approval/side effect 之前；参数错误会被作为工具消息返回模型尝试修正，失败次数由 turn 的迭代/工具调用预算约束。
 - 高风险审批通过才进入执行；恢复中的操作即便操作内容看起来相同，也不会由本地 checkpoint 擅自假设外部系统没有执行。
+- 同步/后台 `spawn` 传递本回合的工具策略快照和会话路由；批准委派不代表批准子操作，子任务不能借委派扩大权限。行为回归见 `tests/agent/test_subagent_policy.py` 与[修复案例](experiments/subagent-policy-regression.zh-CN.md)。
+- 停止会话会使尚未消费的子任务结果失效；AgentLoop 在分发、取得会话锁后和注入当前回合前校验结果，旧通知不能唤起新回合或再次消费。此保护适用于本进程 SubagentManager 生成的结果，不将第三方自行发布的旧格式通知视为已受保护。
 - Read-only 或明确声明 idempotent/safe-retry 的 Tool 可按其执行策略恢复；未知、非幂等或不可逆操作必须取得人工确认，或由 Tool 自身的服务端回执确认状态。
 - `ToolExecutionContext.operation_id` 给自定义 adapter 提供跨重试稳定的逻辑操作 ID；只有 adapter 和目标服务明确支持幂等键时，才能把 `idempotency_key` 发送到远端。Pawbot 不把 MCP 的任意调用都伪装成服务端幂等。
 - Record & Replay 的工具结果来自录制轨道；回放不会调用真实副作用。它验证固定模型响应/观察下的当前编排回归，不验证 live model 质量。
@@ -72,8 +74,8 @@ Pawbot 依赖 MCP Python SDK `>=2.0,<3`，本次锁定 SDK `2.2.0`。SDK v2 在 
 
 | 对端/传输 | Pawbot 行为 | 本地验证 |
 |---|---|---|
-| 2026-07-28 对端 | v2 `ClientSession.discover()`，按无会话协议继续 | `tests/agent/test_mcp_connection.py` 的 discovery 分支；`tests/agent/test_mcp_reconnect_crash.py` 的真实 Streamable HTTP MCP server |
-| 2025 及更早对端 | 仅 method-not-found 后执行 v1-era `initialize` | `tests/agent/test_mcp_connection.py` 的 legacy fallback 分支 |
+| 2026-07-28 对端 | v2 `ClientSession.discover()`，按无会话协议继续 | `tests/agent/test_mcp_connection.py` 的 discovery 分支 |
+| 2025 及更早对端 | 仅 method-not-found 后执行 v1-era `initialize`；识别过期会话的旧错误及 SDK v2 保留的 `-32600 / Session not found` 错误 | `tests/agent/test_mcp_connection.py` 的 legacy fallback 分支；`tests/agent/test_mcp_reconnect_crash.py` 的真实 HTTP 服务验证空闲会话过期重连及重连中关闭 |
 | stdio | SDK stdio transport + Pawbot 生命周期所有权/清理 | `tests/tools/test_mcp_tool.py`、`tests/agent/test_mcp_connection.py` |
 | SSE / Streamable HTTP | HTTPX2 client、每请求 URL 校验、解析后 DNS 固定、环境代理 mount、有限超时 | `tests/security/test_security_network.py`、`tests/tools/test_mcp_tool.py` |
 | 远端 OAuth | 使用 v2 `AuthorizationCodeResult`；原始回调 `iss` 传给 SDK 做 issuer 校验；OAuth client 使用 HTTPX2 Auth 类型 | `tests/tools/test_mcp_oauth.py`、`tests/webui/test_mcp_oauth_api.py` |
@@ -82,4 +84,4 @@ MCP v2 将 `httpx`/`httpx-sse` 改为独立的 `httpx2` 类型；把 HTTPX1 tran
 
 ## 何时考虑显式状态图
 
-当前阶段化 Turn pipeline 和有界 ReAct loop 已能表达串行交接、预算、恢复、审批和终止路径，暂时不需要为面试换成 LangGraph。若业务出现多个持久化分支、可由用户反复恢复的长工作流、跨步骤人工审批、并行子图合并或基于业务状态的复杂循环，应评估把这些**业务工作流**显式建模为图；底层仍需保留工具安全策略、budget 和 recovery invariants。
+当前阶段化 Turn pipeline 和有界 ReAct loop 已能表达串行交接、预算、恢复、审批和终止路径，引入图框架尚不能减少现有控制流的复杂度。若业务出现多个持久化分支、可由用户反复恢复的长工作流、跨步骤人工审批、并行子图合并或基于业务状态的复杂循环，应评估把这些**业务工作流**显式建模为图；底层仍需保留工具安全策略、budget 和 recovery invariants。

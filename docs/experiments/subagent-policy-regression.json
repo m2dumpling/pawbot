@@ -1,0 +1,254 @@
+{
+  "schema_version": 2,
+  "case": "subagent-tool-policy-inheritance",
+  "source": "source-review-confirmed-by-controlled-runtime-tests",
+  "production_incident": false,
+  "created_at_utc": "2026-10-17T15:12:15.083170+00:00",
+  "python": "3.11.13",
+  "platform": "win32",
+  "provider": "scripted; no external model calls; MCP uses a local HTTP fixture",
+  "selection": "denied_read_cannot_be_delegated or child_write_requires_its_own_approval or full_access_keeps_delegated_writes_usable",
+  "baseline_revision": "a8c6a9864d69e7077e9c238a38c0445691ea9b5e",
+  "candidate_revision": "uncommitted working tree based on baseline_revision",
+  "source_sha256_lf": {
+    "pawbot/agent/loop.py": "031ac1f8a23719f3be50cbdb257f1beef46ef083a06924b3f33f93d776973d71",
+    "pawbot/agent/runner.py": "9ca4d05adf9fcc5874ef60abf2e2bb958e510b3df24412c8d8b1c7aad9584d7d",
+    "pawbot/agent/subagent.py": "5fae0d1ff9c301784a1c810f18f046043b420f72a87e391cc662cce2eda15a34",
+    "pawbot/agent/tools/context.py": "58f853edb61b7eaad462acc4b31b1f1c97c50ac51a8be901038294f2119896c5",
+    "pawbot/agent/tools/spawn.py": "b69936f56ad1289b5bde6fb25c93fe570e5d388eeecd5b84c0f248569e97102e",
+    "pawbot/agent/tools/mcp.py": "487149742c86c2363b231b36f865d3b6f89963a71b38aacebf40305564c88d73",
+    "tests/agent/test_subagent_policy.py": "99abf1ba570610255d0fa35f66ea5fdb6538c94145ab42edb6df2200be1ce52e",
+    "tests/agent/test_mcp_reconnect_crash.py": "5c6893eda67c9c8aedb5fea8947c93bb5440b2c2c2df0783b3d384fb7675baa5",
+    "tests/agent/test_mcp_transient_retry.py": "9cf89e9ee7d0c5257229c84072e9db0b69fb6f7abf20e2235037700eab759b37",
+    "tests/webui/test_gateway_policy_clients.py": "fcf9c6778ae818fced3c2e77b684b7ab87646a004f010f3b62463debaf4526bb",
+    "tests/webui/policy_clients.ts": "23e8c565b8527616bb2654cd82123c3e4d68650f2e9b114e4ab721a09c51239b",
+    ".github/workflows/ci.yml": "697ec18dde1357fab5c719addfbc20f6c249149fe71f3db627a62ecc3605381f"
+  },
+  "runs": [
+    {
+      "label": "baseline",
+      "exit_code": 1,
+      "total": 9,
+      "passed": 3,
+      "failed": 6,
+      "cases": [
+        {
+          "name": "test_denied_read_cannot_be_delegated[direct]",
+          "result": "passed"
+        },
+        {
+          "name": "test_denied_read_cannot_be_delegated[inline]",
+          "result": "failed"
+        },
+        {
+          "name": "test_denied_read_cannot_be_delegated[background]",
+          "result": "failed"
+        },
+        {
+          "name": "test_child_write_requires_its_own_approval[denied-inline]",
+          "result": "failed"
+        },
+        {
+          "name": "test_child_write_requires_its_own_approval[denied-background]",
+          "result": "failed"
+        },
+        {
+          "name": "test_child_write_requires_its_own_approval[approved-inline]",
+          "result": "failed"
+        },
+        {
+          "name": "test_child_write_requires_its_own_approval[approved-background]",
+          "result": "failed"
+        },
+        {
+          "name": "test_full_access_keeps_delegated_writes_usable[inline]",
+          "result": "passed"
+        },
+        {
+          "name": "test_full_access_keeps_delegated_writes_usable[background]",
+          "result": "passed"
+        }
+      ]
+    },
+    {
+      "label": "candidate",
+      "exit_code": 0,
+      "total": 9,
+      "passed": 9,
+      "failed": 0,
+      "cases": [
+        {
+          "name": "test_denied_read_cannot_be_delegated[direct]",
+          "result": "passed"
+        },
+        {
+          "name": "test_denied_read_cannot_be_delegated[inline]",
+          "result": "passed"
+        },
+        {
+          "name": "test_denied_read_cannot_be_delegated[background]",
+          "result": "passed"
+        },
+        {
+          "name": "test_child_write_requires_its_own_approval[denied-inline]",
+          "result": "passed"
+        },
+        {
+          "name": "test_child_write_requires_its_own_approval[denied-background]",
+          "result": "passed"
+        },
+        {
+          "name": "test_child_write_requires_its_own_approval[approved-inline]",
+          "result": "passed"
+        },
+        {
+          "name": "test_child_write_requires_its_own_approval[approved-background]",
+          "result": "passed"
+        },
+        {
+          "name": "test_full_access_keeps_delegated_writes_usable[inline]",
+          "result": "passed"
+        },
+        {
+          "name": "test_full_access_keeps_delegated_writes_usable[background]",
+          "result": "passed"
+        }
+      ]
+    }
+  ],
+  "additional_regressions": [
+    {
+      "case": "queued-result",
+      "selection": "cancel_drops_already_queued_child_result_before_new_turn",
+      "runs": [
+        {
+          "label": "baseline",
+          "exit_code": 1,
+          "total": 2,
+          "passed": 0,
+          "failed": 2,
+          "cases": [
+            {
+              "name": "test_cancel_drops_already_queued_child_result_before_new_turn[dispatch]",
+              "result": "failed"
+            },
+            {
+              "name": "test_cancel_drops_already_queued_child_result_before_new_turn[pending]",
+              "result": "failed"
+            }
+          ]
+        },
+        {
+          "label": "candidate",
+          "exit_code": 0,
+          "total": 2,
+          "passed": 2,
+          "failed": 0,
+          "cases": [
+            {
+              "name": "test_cancel_drops_already_queued_child_result_before_new_turn[dispatch]",
+              "result": "passed"
+            },
+            {
+              "name": "test_cancel_drops_already_queued_child_result_before_new_turn[pending]",
+              "result": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "mcp-session",
+      "selection": "reconnect_after_session_timeout",
+      "runs": [
+        {
+          "label": "baseline",
+          "exit_code": 1,
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "cases": [
+            {
+              "name": "test_mcp_reconnect_after_session_timeout",
+              "result": "failed"
+            }
+          ]
+        },
+        {
+          "label": "candidate",
+          "exit_code": 0,
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "cases": [
+            {
+              "name": "test_mcp_reconnect_after_session_timeout",
+              "result": "passed"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "validation": {
+    "verified_at_utc": "2026-10-17T15:14:23.678781+00:00",
+    "python_full": {
+      "total": 7101,
+      "passed": 7049,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 52
+    },
+    "python_line_coverage_percent": 83.06,
+    "policy_regressions": {
+      "total": 29,
+      "passed": 29,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "actual_gateway_clients": {
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "actual_client_scenarios_each": 8,
+    "isolated_dev_profile_gateway_clients": {
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "real_mcp_lifecycle": {
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "targeted_integration": {
+      "total": 67,
+      "passed": 67,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "quality_gate": {
+      "status": "passed",
+      "checks": 10
+    },
+    "webui_tests_passed": 1134,
+    "tui_tests_passed": 164,
+    "promptfoo_assertion_tests_passed": 9,
+    "promptfoo_scripted_smoke_cases_passed": 1,
+    "remote_ci_run": false,
+    "live_model_run": false,
+    "warnings": [
+      "Discord aiohttp.BasicAuth deprecation"
+    ],
+    "skip_limits": "Windows/POSIX, permissions and optional/platform dependencies; real MCP lifecycle passed"
+  }
+}

@@ -9,7 +9,7 @@ import os
 import time
 from collections.abc import Awaitable, Callable, Iterable
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -24,6 +24,12 @@ from pawbot.agent.context_governance import (
 from pawbot.agent.evaluation import TaskContract, TaskEvaluation, evaluate_task
 from pawbot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from pawbot.agent.tools.base import ToolResult
+from pawbot.agent.tools.context import (
+    ToolAccessPolicy,
+    bind_request_context,
+    current_request_context,
+    reset_request_context,
+)
 from pawbot.agent.tools.execution import (
     TOOL_EXECUTION_METADATA_KEY,
     execute_tool_calls,
@@ -498,6 +504,19 @@ class AgentRunner:
         llm_usage_source_token = bind_llm_usage_source(
             spec.llm_usage_source or source_from_session_key(spec.session_key)
         )
+        request = current_request_context()
+        request_token = None
+        if request is not None:
+            # Delegate the authority actually used by this runner, including SDK callers.
+            request_token = bind_request_context(replace(
+                request,
+                tool_policy=ToolAccessPolicy(
+                    denied_tool_capabilities=spec.denied_tool_capabilities,
+                    tool_approval_callback=spec.tool_approval_callback,
+                    recovery_approval_callback=spec.recovery_approval_callback,
+                    approval_capabilities=spec.approval_capabilities,
+                ),
+            ))
 
         try:
             await hook.before_run(context)
@@ -586,6 +605,8 @@ class AgentRunner:
                             context.stop_reason or "run exception",
                         )
             finally:
+                if request_token is not None:
+                    reset_request_context(request_token)
                 reset_llm_usage_source(llm_usage_source_token)
 
     async def _run_core(

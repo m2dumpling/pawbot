@@ -36,6 +36,7 @@ pawbot 最适合 Agent 开发者的能力是 **Record & Replay（录制与回放
 | 了解回放能力 | [Record & Replay](#record--replay录制与回放) |
 | 验证 AI 修改后的代码 | [Agent Harness Benchmark](#agent-harness-benchmark) |
 | 理解 Agent 控制流、审批与恢复 | [控制流与恢复契约](docs/agent-control-flow.md) |
+| 查看一个可复现的可靠性修复 | [子 Agent 工具策略继承案例](docs/experiments/subagent-policy-regression.zh-CN.md) |
 | 使用 Promptfoo 运行真实模型评测 | [Promptfoo 使用指南](docs/agent-evaluation-promptfoo.zh-CN.md) |
 | 查看 Trace 或启用 OTLP | [评测与可观测性说明](docs/agent-evaluation-observability.zh-CN.md) |
 | 查看完整使用方法 | [使用指南](docs/usage.zh-CN.md) |
@@ -52,11 +53,11 @@ pawbot 最适合 Agent 开发者的能力是 **Record & Replay（录制与回放
 - 执行长期任务和定时自动化；
 - 使用 Anthropic、OpenAI 兼容端点、本地模型、Fallback 和 Model Preset；
 - 通过 WebUI、CLI/TUI、API 或聊天通道访问同一个 Agent；
+- 提供 Python SDK 和 OpenAI 兼容 API，方便集成到自己的应用。
 
 需要长期保存偏好时，可以使用 `/remember global reply_language=zh-CN`，也可以在
 WebUI 的用户消息上点击“保存为记忆”。自然语言“请记住……”会先提取为待确认候选，
 Dream 自动发现的内容也不会在确认前直接生效。
-- 提供 Python SDK 和 OpenAI 兼容 API，方便集成到自己的应用。
 
 ## 一次回合是怎样执行的？
 
@@ -97,7 +98,7 @@ flowchart LR
 
 ### 可靠性边界
 
-当前运行时还明确了三条边界：
+当前运行时还明确了以下边界：
 
 - **记忆来源：** 用户确认的偏好、Dream 候选和外部 Tool/网页内容拥有不同的信任级别和来源引用；
 - **个性化边界：** 用户填写的个性化说明、项目规则、已确认记忆和自动候选彼此分离，
@@ -424,6 +425,11 @@ uv run --no-sync python scripts/quality_gate.py
 
 Harness 已将执行轨迹检查和简单任务契约（最终内容、要求成功的 Tool）分开。因此，
 回放或 Harness 变绿都不是通用的模型回答质量评分。
+
+完整的修复前后对比见[子 Agent 工具策略继承案例](docs/experiments/subagent-policy-regression.zh-CN.md)：
+相同九项确定性检查在基线上复现子任务权限和审批缺失，修复后验证限制生效，
+同时保留正常获授权操作的对照。案例还记录了停止后旧结果处理和 MCP 会话重连的
+补充回归；这些结果不代表真实模型任务成功率。
 
 ### Agent 任务评测集
 

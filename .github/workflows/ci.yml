@@ -78,6 +78,18 @@ jobs:
         working-directory: webui
         run: bun run build
 
+      - name: Install gateway integration runtime
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install gateway test dependencies
+        run: uv sync --extra dev
+
+      - name: Actual WebUI and TUI clients against the gateway
+        run: uv run --no-sync pytest -q tests/webui/test_gateway_policy_clients.py
+
   promptfoo:
     name: Promptfoo offline integration
     runs-on: ubuntu-latest

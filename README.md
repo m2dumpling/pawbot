@@ -37,6 +37,7 @@ without another model request, another token bill, or real tool side effects.
 | Understand the replay feature | [Record & Replay](#record--replay) |
 | Verify an AI-assisted code change | [Agent Harness Benchmark](#agent-harness-benchmark) |
 | Understand Agent state, approvals, and recovery | [Control flow and recovery](docs/agent-control-flow.md) |
+| Review a reproducible reliability fix | [Delegated tool policy case (Chinese)](docs/experiments/subagent-policy-regression.zh-CN.md) |
 | Run real-model evaluations with Promptfoo | [Promptfoo setup and usage](evals/promptfoo/README.md) |
 | Inspect traces or enable OTLP | [Evaluation and observability guide](docs/agent-evaluation-observability.md) |
 | Learn how to use all execution and evaluation features | [Usage guide](docs/usage.md) |
@@ -56,12 +57,12 @@ without another model request, another token bill, or real tool side effects.
 - Use Anthropic, OpenAI-compatible endpoints, local models, fallbacks, and
   model presets.
 - Reach the same agent from the WebUI, CLI/TUI, API, or supported chat channels.
+- Expose a Python SDK and an OpenAI-compatible API for your own applications.
 
 For durable preferences, use `/remember global reply_language=zh-CN` or save a user
 message as memory from the WebUI. Natural-language remember requests are extracted
 into reviewable candidates first; Dream suggestions remain candidates until you
 confirm them.
-- Expose a Python SDK and an OpenAI-compatible API for your own applications.
 
 ## How a turn works
 
@@ -103,7 +104,7 @@ checkpoints, tool side-effect boundaries, and an offline evidence trail.
 
 ### Reliability boundaries
 
-The current runtime also makes three boundaries explicit:
+The current runtime also makes the following boundaries explicit:
 
 - **Memory provenance:** confirmed preferences, Dream candidates, and external
   tool/web content have different trust levels and source references.
@@ -468,6 +469,11 @@ uv run --no-sync python scripts/quality_gate.py
 The Harness separates trajectory checks from simple task contracts such as final
 content and required successful tools. A green replay or Harness result is not
 a general model-quality score.
+
+For a concrete before/after example, see the [delegated tool policy regression
+case](docs/experiments/subagent-policy-regression.zh-CN.md): the same nine
+deterministic checks reproduce missing subagent restrictions and approvals on
+the baseline, then verify the fix alongside authorized-operation controls.
 
 ### Agent Task Eval Set
 

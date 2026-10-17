@@ -61,9 +61,9 @@ Messages flow through an async `MessageBus` (`pawbot/bus/queue.py`) that decoupl
 
 ## Project-Specific Notes
 
-- Architecture constraints: [`.agent/design.md`](.agent/design.md)
-- Security boundaries: [`.agent/security.md`](.agent/security.md)
-- Common gotchas: [`.agent/gotchas.md`](.agent/gotchas.md)
+- Architecture and runtime boundaries: [`docs/agent-control-flow.md`](docs/agent-control-flow.md)
+- Tool approval, safety, and recovery: [`docs/agent-harness.md`](docs/agent-harness.md)
+- Development setup and validation: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ## Contribution Flow
 

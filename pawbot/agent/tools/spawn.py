@@ -94,6 +94,9 @@ class SpawnTool(Tool):
         origin_chat_id = request_ctx.chat_id
         session_key = request_ctx.session_key or f"{origin_channel}:{origin_chat_id}"
         method = self._manager.run_inline if wait else self._manager.spawn
+        policy_kwargs: dict[str, Any] = {}
+        if request_ctx.tool_policy is not None:
+            policy_kwargs["tool_policy"] = request_ctx.tool_policy
         return await method(
             task=task,
             runtime=request_ctx.runtime,
@@ -104,4 +107,5 @@ class SpawnTool(Tool):
             origin_message_id=request_ctx.message_id,
             temperature=temperature,
             workspace_scope=current_workspace_scope(),
+            **policy_kwargs,
         )

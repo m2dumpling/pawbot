@@ -5,6 +5,27 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
+### Fixed
+
+- Subagents now inherit the initiating turn's denied tool capabilities,
+  approval callbacks and capability scope, and recovery confirmation callback.
+  Both blocking and background delegation preserve session/chat routing;
+  approving delegation does not approve each child operation. Standalone
+  subagent managers also enforce their configured denied capabilities.
+- Added deterministic before/after regression evidence and checks for queued
+  session isolation, approval timeout/cancellation, workspace boundaries,
+  full-access recovery confirmation, and SDK compatibility.
+- Stopping a session invalidates its unconsumed subagent results, including
+  notifications already on the message bus or waiting for a session lock.
+  Old results cannot start or contaminate a later turn; valid results are
+  consumed once without affecting other sessions.
+- MCP legacy HTTP sessions now reconnect on the SDK v2 protocol error
+  `-32600 / Session not found`. The real idle-timeout/shutdown regression
+  fixture now uses the current SDK and fails visibly if its server cannot start.
+- CI exercises both actual WebUI and TUI clients against a gateway process
+  with a local scripted provider for delegation approval, denial, stop, and
+  interrupted-turn recovery.
+
 ## 0.8.0
 
 ### Added
