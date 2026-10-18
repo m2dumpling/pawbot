@@ -5,6 +5,10 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
+No changes yet.
+
+## 0.8.1
+
 ### Fixed
 
 - Subagents now inherit the initiating turn's denied tool capabilities,
