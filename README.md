@@ -151,9 +151,9 @@ and MCP servers are explicit capabilities with documented security boundaries.
 
 ### Published package
 
-Current stable release: **[v0.8.0](https://github.com/m2dumpling/pawbot/releases/tag/v0.8.0)**
-([release notes](docs/release-notes/0.8.0.md),
-[PyPI](https://pypi.org/project/pawbot-ai/0.8.0/)).
+Current stable release: **[v0.8.1](https://github.com/m2dumpling/pawbot/releases/tag/v0.8.1)**
+([release notes](docs/release-notes/0.8.1.md),
+[PyPI](https://pypi.org/project/pawbot-ai/0.8.1/)).
 
 Install the latest published package and open the WebUI with one command:
 
@@ -196,19 +196,19 @@ For a fresh macOS or Linux desktop, the installer can be run directly from
 GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.8.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/m2dumpling/pawbot/v0.8.1/scripts/install.sh | sh
 ```
 
 If `curl` is not available, use `wget` instead:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.8.0/scripts/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/m2dumpling/pawbot/v0.8.1/scripts/install.sh | sh
 ```
 
 For native Windows PowerShell:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.8.0/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/m2dumpling/pawbot/v0.8.1/scripts/install.ps1)
 ```
 
 The installer selects an active virtual environment, `uv`, `pipx`, or a

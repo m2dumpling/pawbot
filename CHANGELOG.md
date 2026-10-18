@@ -29,6 +29,9 @@ No changes yet.
 - CI exercises both actual WebUI and TUI clients against a gateway process
   with a local scripted provider for delegation approval, denial, stop, and
   interrupted-turn recovery.
+- The stdin-close regression explicitly waits for process exit before checking
+  its exit code, and always cleans up its exec session. Receiving output alone
+  is not a completion guarantee for normal polling.
 
 ## 0.8.0
 
