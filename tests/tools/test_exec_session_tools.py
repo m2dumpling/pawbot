@@ -341,17 +341,21 @@ def test_exec_session_can_close_stdin(tmp_path):
             "data=sys.stdin.read(); print('got:' + data, flush=True)"
         )
 
-        initial = await exec_tool.execute(command=command, yield_time_ms=1500)
-        sid = _session_id(initial)
-        result = await stdin_tool.execute(
-            session_id=sid,
-            input="payload",
-            close_stdin=True,
-            # Windows may need a few extra seconds to tear down the
-            # PowerShell/Job Object wrapper after EOF reaches the child.
-            timeout_ms=5000,
-        )
-        return initial, result
+        try:
+            initial = await exec_tool.execute(command=command, yield_time_ms=1500)
+            sid = _session_id(initial)
+            result = await stdin_tool.execute(
+                session_id=sid,
+                input="payload",
+                close_stdin=True,
+                # Output can arrive before the shell exits. A normal poll may
+                # return then; explicitly wait for exit before checking its code.
+                until_exit=True,
+                timeout_ms=5000,
+            )
+            return initial, result
+        finally:
+            await manager.close_all()
 
     initial, result = asyncio.run(run())
     assert "ready" in initial + result
