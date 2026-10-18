@@ -21,4 +21,5 @@ The Python package is available on
 - [Evaluation and observability](agent-evaluation-observability.md) / [评测与可观测性](agent-evaluation-observability.zh-CN.md)
 - [Model capability registry](model-capabilities.md)
 - [v0.8.0 release notes](release-notes/0.8.0.md)
+- [v0.8.1 release preparation](release-notes/0.8.1.md)
 - [Changelog](../CHANGELOG.md)

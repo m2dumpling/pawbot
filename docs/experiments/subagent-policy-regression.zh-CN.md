@@ -139,5 +139,10 @@ WebUI 1,134 项、TUI 164 项、Promptfoo 离线断言 9 项与 scripted smoke 1
 这些集合有重叠，不相加。
 
 跳过项涉及 Windows/POSIX、权限和可选依赖等环境条件，详细原因保存在本地
-`polish-full.xml`；MCP 真实生命周期已实际通过。本次未运行远端 CI，也未请求
-真实模型；合并前仍须通过仓库 CI 的各平台矩阵。
+`polish-full.xml`；MCP 真实生命周期已实际通过。上述本地实验未请求真实模型。
+
+实现随后通过 [PR #20](https://github.com/m2dumpling/pawbot/pull/20) 的远端验证并合并；
+合并后的 `main` 提交 `cdec5cb` 也通过
+[全部 11 项 CI 作业](https://github.com/m2dumpling/pawbot/actions/runs/39057385819)。
+这些 CI 检查包含实际 WebUI/TUI 客户端链路、Python 跨平台矩阵、离线评测、
+Replay、质量门禁、安装器及打包冒烟，未请求真实模型。
