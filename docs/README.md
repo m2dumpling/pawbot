@@ -22,5 +22,4 @@ The Python package is available on
 - [Model capability registry](model-capabilities.md)
 - [v0.8.0 release notes](release-notes/0.8.0.md)
 - [v0.8.1 release notes](release-notes/0.8.1.md)
-- [v0.8.2 release notes](release-notes/0.8.2.md)
 - [Changelog](../CHANGELOG.md)
