@@ -99,3 +99,46 @@ def test_judge_raw_scores_and_unavailability_do_not_change_hard_pass_rate() -> N
     assert result["provider_tokens"] == 30
     assert result["judge_tokens"] == 15  # Export duplicates this value; count it once.
     assert result["total_tokens"] == 45
+
+
+def test_workspace_summary_keeps_splits_usage_sources_and_deduplicates_tool_events() -> None:
+    exported = document(["passed", "failed", "error"])
+    for index, row in enumerate(exported["results"]["results"]):
+        row["vars"]["split"] = "dev" if index < 2 else "holdout"
+        m = row["response"]["metadata"]
+        m.update({
+            "evaluation_scope": "workspace", "trial_id": f"trial-{index}",
+            "split": row["vars"]["split"], "planned_splits": {"dev": 4, "holdout": 2},
+            "model_requests": [{"duration_ms": 10, "usage": {
+                "source": "reported" if index == 0 else "estimated",
+                "input_tokens": 20, "output_tokens": 5,
+            }}] if index != 2 else [{"duration_ms": 2, "usage": None}],
+            "physical_model_requests": [{"duration_ms": 10}] if index != 2 else None,
+            "tool_events": [
+                {"id": "call", "name": "read_file", "duration_ms": 4, "status": "ok", "iteration": 0, "index": 0},
+                {"id": "call", "name": "read_file", "duration_ms": 4, "status": "ok", "iteration": 0, "index": 0},
+                {"id": "call", "name": "read_file", "duration_ms": 4, "status": "ok", "iteration": 1, "index": 0},
+            ],
+            "contexts": [{"estimated_prompt_tokens": 100, "estimated_tool_schema_tokens": 20,
+                          "estimated_tool_result_tokens": 10, "token_estimation_source": "test"}],
+        })
+    result = summary.summarize(exported)["workspace"]
+    assert result["planned_trials"] == 18
+    assert result["splits"]["dev"]["passed"] == result["splits"]["dev"]["failed"] == 1
+    assert result["splits"]["holdout"]["errors"] == 1
+    assert result["tools"]["read_file"]["calls"] == 6
+    assert result["tools"]["read_file"]["mean_ms"] == 4
+    assert result["usage"]["reported_input_tokens"] == 20
+    assert result["usage"]["estimated_input_tokens"] == 20
+    assert result["usage"]["requests_with_missing_or_mixed_usage"] == 1
+    assert result["physical_request_counts_unavailable_trials"] == 1
+    assert result["context_estimates"]["mean_tool_schema_tokens"] == 20
+
+
+def test_workspace_oracle_unavailable_is_not_reported_as_quality_failure() -> None:
+    exported = document(["error"])
+    m = exported["results"]["results"][0]["response"]["metadata"]
+    m.update({"evaluation_scope": "workspace", "diagnostic_class": "oracle_unavailable"})
+    result = summary.summarize(exported)["workspace"]
+    assert result["splits"]["unknown"]["not_evaluable"] == 1
+    assert result["splits"]["unknown"]["failed"] == 0

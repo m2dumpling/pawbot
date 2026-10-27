@@ -513,6 +513,10 @@ remain; the self-built evaluation workbench, APIs and `pawbot eval live` were
 removed. See the [integration README](evals/promptfoo/README.md) for Python setup,
 case boundaries, cost accounting, and comparable baseline/candidate runs.
 
+A second Promptfoo suite runs six small, isolated workspace tasks with real file
+tools and a separate outcome checker. The [experiment evidence](docs/experiments/agent-evaluation-evidence.md)
+records one small-sample run and its limits; temporary workspaces are not OS sandboxes.
+
 When a WebUI chat uses **Workspace access**, write, execute, and network-capable
 Tools pause for an explicit approval. **Full access** remains the opt-in mode
 that runs those Tools directly. The same approval protocol is available to the

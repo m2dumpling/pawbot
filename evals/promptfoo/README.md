@@ -1,6 +1,6 @@
 # Pawbot + Promptfoo
 
-真实模型评测的入口只有这个目录。Promptfoo 固定为 `0.123.1`，通过 npm 安装即可，无需复制它的源码。用例、验收参数、重复运行和报告由 Promptfoo 配置管理；Python Provider 只负责驱动真实 Pawbot `AgentRunner`、提供本地假工具和记录证据。
+真实模型评测的入口只有这个目录。Promptfoo 固定为 `0.123.1`，通过 npm 安装即可，无需复制它的源码。用例、验收参数、重复运行和报告由 Promptfoo 配置管理；诊断套件通过本地假工具驱动真实 `AgentRunner`，工作区套件通过真实文件工具驱动 `AgentLoop`，两者都记录证据。
 
 ## 开始使用
 
@@ -15,7 +15,38 @@ npm test
 npm run validate
 ```
 
-`validate` 不请求模型：脚本 Provider 驱动真实 AgentRunner 读取 Fixture，并由同一套评分器校验结果。它只是接入冒烟，不计入模型质量报告。CI 也只运行这条无模型链路和断言测试。
+`validate` 不请求模型：脚本 Provider 驱动真实 AgentRunner 读取 Fixture，并由同一套评分器校验结果。它只是接入冒烟，不计入模型质量报告。CI 运行诊断与工作区两条脚本模型冒烟及断言测试，不运行付费真实模型套件。
+
+## 真实工作区任务
+
+工作区套件使用独立的临时小项目运行真实 `AgentLoop → AgentRunner`、真实文件工具和所配置的模型。任务覆盖代码修复、配置迁移、日志汇总与只读核查。四个 dev Case 和两个 holdout Case 在运行前固定；holdout 是未用于调参的小样本，不是保密 benchmark。
+
+在同一个目录中，先运行不消耗模型额度的完整接入冒烟：
+
+```powershell
+npm run validate:workspace
+```
+
+配置好模型后，可先运行一个真实预检，再运行完整套件：
+
+```powershell
+npm run eval:workspace -- --filter-first-n 1 --repeat 1 --no-table --output results/workspace-preflight.json
+npm run eval:workspace -- --no-table
+../../.venv/Scripts/python.exe summarize.py results/workspace-latest.json --output results/workspace-summary.json
+npm run view
+```
+
+完整套件默认六个 Case 各运行三次，串行且不使用缓存；每个 Trial 可能包含多次模型请求。默认报告是 `results/workspace-latest.json` 和 `results/workspace-latest.html`，不会覆盖原有诊断集报告。首次运行需要能访问模型 Provider，并会消耗额度。缺少可靠单价时，费用为 unknown；预算在请求之间检查，不能撤销已经发出的请求。
+
+在 Promptfoo 中点击结果行查看最终回答、断言和 Metadata。Original Output 是该次模型生成的回答。Metadata 的 `validation` 是 Agent 结束后外部检查器执行的结果，`boundary_failures` 是文件/工具边界检查，`trace`、`transcript` 和 `file_diff` 指向本地证据。摘要按 dev/holdout 区分 PASS、FAIL、ERROR 和不可评估，并汇总每次模型请求、按工具统计的耗时与上下文 Token 估算。并发工具耗时不能直接相加为墙钟占比；小样本 P95 仅供观察。
+
+一次真实运行的脱敏结果、状态修复前后比较及性能口径见[工作区评测证据](../../docs/experiments/agent-evaluation-evidence.md)。
+
+比较报告时还需人工核对提示词模板等非 Python 资源：当前 `agent_sha256` 只覆盖 `pawbot` 下的 Python 文件，不能单独证明所有运行输入相同。
+
+每次 Trial 使用新工作区、Session、记忆目录和 Provider。项目内的文件工具是真实实现；`run_project_tests` 执行固定的公共检查，最终验收由工作区外的独立检查器执行。工作区任务不暴露自由 Shell、联网、MCP 和委派工具。模型生成的代码会在本机受控子进程中运行，临时目录不等于操作系统沙箱；请只使用可信模型和受控任务。完整 Transcript 和文件差异留在本地 Trace 目录，提交前只分享经检查的脱敏摘要。
+
+Provider 或执行环境错误单列为 ERROR；该次批量运行会阻止后续 Trial 继续请求模型。模型达到预算、修改错误文件或没有满足任务条件属于 FAIL。具体用户任务和验收细节见 `workspace_cases.yaml` 和 `workspace_tasks.py`。
 
 配置好 Pawbot 的 `~/.pawbot/config.json` 后，先运行一个真实用例：
 

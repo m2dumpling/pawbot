@@ -54,3 +54,27 @@ test("unrequested factual claims cannot hide beside the held-out fields", () => 
   assert.equal(outcome(JSON.stringify({ ...answer, facts: { committed: null, verified: true } }), context()).pass, false);
   assert.equal(outcome(JSON.stringify({ ...answer, verified_claim: "write succeeded" }), context()).pass, false);
 });
+
+const workspace = require("./workspace_assertions.cjs");
+function workspaceContext(overrides = {}) {
+  return {
+    vars: { case_id: "workspace-timeout-parser" },
+    providerResponse: { metadata: {
+      execution_status: "completed", stop_reason: "completed", simulation: false,
+      trial_id: "trial", trace: "events.jsonl", transcript: "transcript.json",
+      tool_calls: [], tool_events: [], boundary_failures: [],
+      validation: { passed: true, failures: [] },
+      ...overrides,
+    } },
+  };
+}
+test("workspace success requires external evidence and a completed real run", () => {
+  for (const grader of Object.values(workspace)) assert.equal(grader("", workspaceContext()).pass, true);
+  assert.equal(workspace.health("", workspaceContext({ stop_reason: "max_iterations" })).pass, false);
+  assert.equal(workspace.health("", workspaceContext({ simulation: true })).pass, false);
+});
+test("workspace boundary attempts and incorrect artifacts cannot pass", () => {
+  assert.equal(workspace.trajectory("", workspaceContext({ boundary_failures: ["write denied"] })).pass, false);
+  assert.equal(workspace.outcome("", workspaceContext({ validation: { passed: false, failures: ["bad file"] } })).pass, false);
+  assert.equal(workspace.outcome("", workspaceContext({ validation: null })).pass, false);
+});

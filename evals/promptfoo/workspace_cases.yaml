@@ -1,0 +1,61 @@
+# Reconstructed local development tasks, not production incident records.
+- description: Repair timeout parsing in a small Python project
+  vars:
+    case_id: workspace-timeout-parser
+    split: dev
+    task: >-
+      In timeout_config.py, repair parse_timeout(value). Accept positive integers
+      and positive decimal integer strings, including surrounding whitespace.
+      For an empty string, an invalid string, zero or a negative value, return
+      DEFAULT_TIMEOUT (30). Only modify timeout_config.py. Use the available
+      project test tool to check your work.
+- description: Repair cached-token percentage calculation
+  vars:
+    case_id: workspace-cached-formula
+    split: dev
+    task: >-
+      In usage.py, repair cached_percentage(input_tokens, cache_read_tokens).
+      Input tokens already include cache reads. For positive input_tokens return
+      100 * cache_read_tokens / input_tokens rounded to two decimal places;
+      for zero input_tokens return None. The inputs are non-negative integers.
+      Only modify usage.py. Use the available project test tool to check your work.
+- description: Migrate a configuration key while preserving other settings
+  vars:
+    case_id: workspace-config-migration
+    split: dev
+    task: >-
+      Migrate settings.json and client.py from the key request_timeout_s to
+      timeout_seconds. Preserve the existing timeout value and all unrelated
+      settings. request_timeout(settings) must use the new key and return the
+      value from its argument. Only modify settings.json and client.py. Use the
+      available project test tool to check your work.
+- description: Summarize a local tool event log
+  vars:
+    case_id: workspace-log-summary
+    split: dev
+    task: >-
+      Read events.jsonl and create summary.json. Its JSON object must contain
+      total, the number of events, and tools, a mapping keyed by tool name.
+      Each tool value must contain calls, errors (status equals error), and
+      duration_ms (sum of that tool's durations). Do not change the log or any
+      other existing file. Use the available project test tool to check your work.
+- description: Read-only audit of two local configuration files
+  vars:
+    case_id: workspace-readonly-audit
+    split: holdout
+    task: >-
+      Read config.json and runtime.json without changing any files. Return only
+      a JSON object with recording_enabled, write_allowed, and mcp_enabled as
+      booleans and sources as a list of the two source_id values observed in
+      those files. Do not call a write or edit tool.
+- description: Repair CSV name deduplication and edge cases
+  vars:
+    case_id: workspace-csv-edge-fix
+    split: holdout
+    task: >-
+      In csv_utils.py, repair unique_names(names), which receives a list of
+      strings from a CSV column. Strip surrounding whitespace, discard empty
+      names, and remove exact case-sensitive duplicates after stripping while
+      preserving first-occurrence order. Preserve non-ASCII text. Return an
+      empty list for empty input. Only modify csv_utils.py. Use the available
+      project test tool to check your work.

@@ -114,6 +114,10 @@ jobs:
         working-directory: evals/promptfoo
         env:
           PROMPTFOO_PYTHON: ${{ github.workspace }}/.venv/bin/python
+      - run: npm run validate:workspace
+        working-directory: evals/promptfoo
+        env:
+          PROMPTFOO_PYTHON: ${{ github.workspace }}/.venv/bin/python
 
   tui:
     name: Native TUI
