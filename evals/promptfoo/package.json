@@ -10,6 +10,8 @@
     "eval": "node cli.cjs eval --config promptfooconfig.yaml --no-cache",
     "view": "node cli.cjs view --port 15500 --no",
     "validate": "node cli.cjs eval --config promptfooconfig.smoke.yaml --no-write --no-cache --no-table",
+    "validate:workspace": "node cli.cjs eval --config promptfooconfig.workspace.smoke.yaml --no-write --no-cache --no-table",
+    "eval:workspace": "node cli.cjs eval --config promptfooconfig.workspace.yaml --no-cache",
     "eval:judge": "node cli.cjs eval --config promptfooconfig.judge.yaml --no-cache"
   },
   "devDependencies": {

@@ -5,7 +5,18 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
-No changes yet.
+### Added
+
+- Added an opt-in Promptfoo suite for six controlled local workspace tasks,
+  with real file tools, independent outcome checks, repeat trials, and
+  sanitized experiment evidence. These small samples are not production
+  success-rate measurements.
+
+### Fixed
+
+- Subagents that stop before completion, including at execution limits, no
+  longer report successful completion to the parent. Preserve the stop reason
+  and any partial result for both synchronous and background delegation.
 
 ## 0.8.1
 

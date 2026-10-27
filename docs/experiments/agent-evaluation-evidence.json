@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "runtime_status_fix": {
+    "baseline_git_commit": "3164f277935fb68c7ed53e929e0dcdc101be190e",
+    "baseline_source_sha256_lf": "5fae0d1ff9c301784a1c810f18f046043b420f72a87e391cc662cce2eda15a34",
+    "candidate_source_sha256_lf": "927647308fe9bbc37e29d1610137bf37f106ffa32357da6de59a59dc2ae6a9c7",
+    "candidate_is_uncommitted_worktree": true,
+    "same_test_file_sha256_lf": "0e8d75f37ed9da57f97a23045ad7075a78424201f817cf95d4ef03dc9599a654",
+    "baseline": {
+      "tests": 12,
+      "failures": 12,
+      "errors": 0,
+      "skipped": 0
+    },
+    "candidate": {
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "scope": "selected status assertions with scripted provider; not real-model task accuracy"
+  },
+  "workspace_experiment": {
+    "model": "deepseek-flash",
+    "provider": "deepseek",
+    "generation": {
+      "max_tokens": 2048,
+      "reasoning_effort": "none",
+      "temperature": 0.1
+    },
+    "limits": {
+      "max_input_tokens": 32000,
+      "max_iterations": 8,
+      "max_output_tokens": 8192,
+      "max_tool_calls": 12,
+      "max_wall_seconds": 120
+    },
+    "python_version": "3.11.13",
+    "platform": "Windows",
+    "suite_sha256": "c01a2534deb1ed48e8a499c5223fc9c0f9c201353dc3f0d31282404e31daebe8",
+    "agent_sha256": "a82423ffb8105238c6b04ff98b4f22a1cc019f99e5f01c8893abdf86cecd031b",
+    "agent_sha256_scope": "pawbot Python files only; excludes prompt templates and other non-Python assets",
+    "prompt_templates_git_tree": "eb29d973d2f96a51e3072df9465da979d5bb9d8f",
+    "prompt_templates_worktree_clean_at_run": true,
+    "dependencies_sha256": "3cec8c0836d1359482e1ceacd29c9077b70904408bee447ecb696d19d291aa14",
+    "planned_trials": 18,
+    "total_trials": 18,
+    "passed": 18,
+    "errors": 0,
+    "splits": {
+      "dev": {
+        "total": 12,
+        "passed": 12,
+        "failed": 0,
+        "errors": 0,
+        "not_evaluable": 0,
+        "planned_cases": 4,
+        "planned_trials": 12
+      },
+      "holdout": {
+        "total": 6,
+        "passed": 6,
+        "failed": 0,
+        "errors": 0,
+        "not_evaluable": 0,
+        "planned_cases": 2,
+        "planned_trials": 6
+      }
+    },
+    "cases": [
+      {
+        "id": "workspace-cached-formula",
+        "trials": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      {
+        "id": "workspace-config-migration",
+        "trials": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      {
+        "id": "workspace-csv-edge-fix",
+        "trials": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      {
+        "id": "workspace-log-summary",
+        "trials": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      {
+        "id": "workspace-readonly-audit",
+        "trials": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      {
+        "id": "workspace-timeout-parser",
+        "trials": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      }
+    ],
+    "logical_model_requests": 86,
+    "physical_model_requests_observed": 86,
+    "usage": {
+      "reported_input_tokens": 353616,
+      "reported_output_tokens": 6663,
+      "estimated_input_tokens": 0,
+      "estimated_output_tokens": 0,
+      "requests_with_missing_or_mixed_usage": 0,
+      "source_counts": {
+        "reported": 86
+      }
+    },
+    "provider_tokens": 360279,
+    "cost_estimated_usd": null,
+    "mean_trial_latency_ms": 9090.222222222223,
+    "mean_model_request_ms": 1811.7093023255813,
+    "mean_ttft_ms": null,
+    "tool_metrics": {
+      "find_files": {
+        "calls": 23,
+        "errors": 0,
+        "timed_calls": 23,
+        "mean_ms": 6.782608695652174,
+        "median_ms": 7,
+        "p95_ms": 9,
+        "max_ms": 9
+      },
+      "read_file": {
+        "calls": 34,
+        "errors": 0,
+        "timed_calls": 34,
+        "mean_ms": 13.911764705882353,
+        "median_ms": 8.0,
+        "p95_ms": 9,
+        "max_ms": 204
+      },
+      "write_file": {
+        "calls": 9,
+        "errors": 0,
+        "timed_calls": 9,
+        "mean_ms": 8.333333333333334,
+        "median_ms": 10,
+        "p95_ms": 12,
+        "max_ms": 12
+      },
+      "run_project_tests": {
+        "calls": 15,
+        "errors": 0,
+        "timed_calls": 15,
+        "mean_ms": 175.73333333333332,
+        "median_ms": 180,
+        "p95_ms": 190,
+        "max_ms": 190
+      },
+      "apply_patch": {
+        "calls": 6,
+        "errors": 0,
+        "timed_calls": 6,
+        "mean_ms": 10,
+        "median_ms": 10.0,
+        "p95_ms": 16,
+        "max_ms": 16
+      },
+      "list_dir": {
+        "calls": 4,
+        "errors": 0,
+        "timed_calls": 4,
+        "mean_ms": 6.25,
+        "median_ms": 6.5,
+        "p95_ms": 7,
+        "max_ms": 7
+      },
+      "grep": {
+        "calls": 1,
+        "errors": 0,
+        "timed_calls": 1,
+        "mean_ms": 8,
+        "median_ms": 8,
+        "p95_ms": 8,
+        "max_ms": 8
+      }
+    },
+    "context_estimates": {
+      "requests": 86,
+      "mean_prompt_tokens": 4156.988372093023,
+      "mean_tool_schema_tokens": 2021,
+      "mean_tool_result_tokens": 210.27906976744185,
+      "sources": [
+        "tiktoken:cl100k_base:generic_fallback"
+      ],
+      "interpretation": "Estimates of logical model input; not exact billed or additive token counts."
+    },
+    "transcripts_sampled": 6,
+    "scope": "controlled local projects; fixed external checks; not production task success rate"
+  },
+  "preflight": {
+    "trials": 1,
+    "passed": true,
+    "provider_tokens": 20994,
+    "logical_model_requests": 5
+  }
+}

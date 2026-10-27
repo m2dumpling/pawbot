@@ -2,7 +2,7 @@
 
 This note describes the current implementation and its limits. Pawbot keeps its bounded ReAct loop and staged turn pipeline; the project does not require LangGraph to expose state transitions, budgets, checkpoints, or approval boundaries.
 
-The primary real-model regression entry point is [`evals/promptfoo`](../evals/promptfoo/README.md). Promptfoo owns cases, repetition, assertions and reports; the adapter drives Pawbot's isolated AgentRunner and traces. The old live workbench, management APIs and CLI/catalog were removed. Runtime validation, Harness and Record & Replay remain.
+The primary real-model regression entry point is [`evals/promptfoo`](../evals/promptfoo/README.md). Promptfoo owns cases, repetition, assertions and reports; the adapters drive an isolated AgentRunner for fixture-based diagnostics or an AgentLoop with real file tools for workspace tasks. The old live workbench, management APIs and CLI/catalog were removed. Runtime validation, Harness and Record & Replay remain.
 
 ## Four engineering dimensions
 
@@ -53,16 +53,25 @@ The Harness exercises the real `AgentRunner` with scripted provider responses an
 ### Real-model diagnostics with Promptfoo
 
 The primary entry point is [`evals/promptfoo`](../evals/promptfoo/README.md), with
-a pinned npm dependency, ten fixed cases, local tool fixtures, shared deterministic
-assertions, repeat trials, optional soft LLM Judge and JSON/HTML reports. The
-Python provider directly runs the real AgentRunner in a fresh environment. Expected
-answers are held out of the model request. No real shell or deployment tool runs.
+a pinned npm dependency, shared deterministic assertions, repeat trials and
+JSON/HTML reports. The diagnostic suite has ten fixed cases, local tool fixtures
+and an optional soft LLM Judge. Its Python provider runs the real AgentRunner in a
+fresh environment. Expected answers are held out of the model request.
 
 The suite measures diagnostic decisions, evidence collection and honest reporting;
 it does not replace the runtime Harness or real integration tests. Provider/API
 execution errors are separate from quality assertion failures. Cost remains unknown
 when token rates are missing. See the integration README for comparable reports,
 transcript inspection and the limits of three-trial observations.
+
+The separate workspace suite exercises six small local development tasks through
+the real AgentLoop and real file tools. It checks the resulting files and behavior
+outside the workspace; four development and two holdout tasks were frozen before
+the recorded run. See the [experiment evidence](experiments/agent-evaluation-evidence.md)
+for results, attribution and measurement boundaries. Neither suite exposes an
+unrestricted shell, network, MCP or deployment tool to the evaluated Agent. The
+workspace checker executes generated code on the local machine; a temporary
+directory is not an operating-system sandbox.
 
 ### Reviewing rolling evidence
 
@@ -109,7 +118,7 @@ This is a provider-free framework regression report, not a live model baseline. 
 
 ## Known limits
 
-- The Promptfoo suite uses reconstructed diagnostic scenarios and synthetic controls. It still needs reviewed samples from real Pawbot deployments, an independent holdout, and human calibration before it can support a product-quality claim.
+- The Promptfoo suites use reconstructed diagnostic scenarios and small controlled workspace tasks. The two frozen holdout cases are not a secret benchmark. Reviewed samples from real Pawbot deployments and independent human calibration are still needed before making a product-quality claim.
 - The local fake APIs verify tool selection and arguments, but they do not test network behavior or compatibility with a production MCP server.
 - The optional judge defaults to the generation provider/model, supports a separate preset, and has not been human-calibrated. Compare it with human labels or a separately configured judge before using it as a release threshold.
 - Cost is an estimate and cannot stop an already in-flight provider response.

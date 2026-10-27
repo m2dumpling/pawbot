@@ -33,7 +33,7 @@ async def test_run_inline_returns_result_without_announcement(tmp_path):
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
     )
     manager.runner.run = AsyncMock(return_value=SimpleNamespace(
-        stop_reason="done",
+        stop_reason="completed",
         final_content="review result",
         error=None,
         tool_events=[],
@@ -108,7 +108,7 @@ async def test_subagent_exec_tool_receives_allowed_env_keys(tmp_path):
         assert exec_tool is not None
         assert exec_tool.allowed_env_keys == ["GOPATH", "JAVA_HOME"]
         return SimpleNamespace(
-            stop_reason="done",
+            stop_reason="completed",
             final_content="done",
             error=None,
             tool_events=[],
@@ -151,7 +151,7 @@ async def test_subagent_uses_configured_max_iterations(tmp_path):
     async def fake_run(spec):
         assert spec.max_iterations == 37
         return SimpleNamespace(
-            stop_reason="done",
+            stop_reason="completed",
             final_content="done",
             error=None,
             tool_events=[],
@@ -197,7 +197,7 @@ async def test_spawn_forwards_temperature_to_run_spec(tmp_path):
         seen["temperature"] = spec.runtime.generation.temperature
         seen["runtime"] = spec.runtime
         return SimpleNamespace(
-            stop_reason="done", final_content="done", error=None, tool_events=[],
+            stop_reason="completed", final_content="done", error=None, tool_events=[],
         )
 
     mgr.runner.run = AsyncMock(side_effect=fake_run)
@@ -242,7 +242,7 @@ async def test_background_spawn_waits_for_concurrency_capacity(tmp_path):
             second_entered.set()
             await release_second.wait()
         return SimpleNamespace(
-            stop_reason="done",
+            stop_reason="completed",
             final_content="done",
             error=None,
             tool_events=[],
@@ -340,7 +340,7 @@ async def test_inline_spawn_waits_for_concurrency_capacity(tmp_path):
             second_entered.set()
             await release_second.wait()
         return SimpleNamespace(
-            stop_reason="done",
+            stop_reason="completed",
             final_content="done",
             error=None,
             tool_events=[],
@@ -401,7 +401,7 @@ async def test_runner_executes_inline_spawn_batch_concurrently(tmp_path):
             both_entered.set()
         await release.wait()
         return SimpleNamespace(
-            stop_reason="done",
+            stop_reason="completed",
             final_content=spec.initial_messages[-1]["content"],
             error=None,
             tool_events=[],

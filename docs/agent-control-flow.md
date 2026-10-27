@@ -59,6 +59,8 @@ stateDiagram-v2
 - 参数校验发生在 approval/side effect 之前；参数错误会被作为工具消息返回模型尝试修正，失败次数由 turn 的迭代/工具调用预算约束。
 - 高风险审批通过才进入执行；恢复中的操作即便操作内容看起来相同，也不会由本地 checkpoint 擅自假设外部系统没有执行。
 - 同步/后台 `spawn` 传递本回合的工具策略快照和会话路由；批准委派不代表批准子操作，子任务不能借委派扩大权限。行为回归见 `tests/agent/test_subagent_policy.py` 与[修复案例](experiments/subagent-policy-regression.zh-CN.md)。
+- 子任务仅在正常结束且产生有效答复时报告成功。预算耗尽、无进展或验收未通过会保留停止原因与部分结果；同步调用返回错误状态，后台通知明确标记未完成。取消仍使未消费的旧结果失效。
+- `TurnBudget` 约束单次 Runner 执行。子任务拥有自己的迭代等限制，但目前没有父子共享的 Token、时间或成本总配额；不能把父回合的预算表述为整个委派树的总预算。
 - 停止会话会使尚未消费的子任务结果失效；AgentLoop 在分发、取得会话锁后和注入当前回合前校验结果，旧通知不能唤起新回合或再次消费。此保护适用于本进程 SubagentManager 生成的结果，不将第三方自行发布的旧格式通知视为已受保护。
 - Read-only 或明确声明 idempotent/safe-retry 的 Tool 可按其执行策略恢复；未知、非幂等或不可逆操作必须取得人工确认，或由 Tool 自身的服务端回执确认状态。
 - `ToolExecutionContext.operation_id` 给自定义 adapter 提供跨重试稳定的逻辑操作 ID；只有 adapter 和目标服务明确支持幂等键时，才能把 `idempotency_key` 发送到远端。Pawbot 不把 MCP 的任意调用都伪装成服务端幂等。

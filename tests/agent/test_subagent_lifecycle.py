@@ -66,6 +66,104 @@ async def _drain_subagent_tasks(sm: SubagentManager) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stop_reason",
+    [
+        "max_iterations", "max_tool_calls", "max_wall_time", "max_input_tokens",
+        "max_output_tokens", "max_cost_usd", "tool_retry_stalled",
+        "empty_final_response", "task_verification_failed", "unknown_stop",
+    ],
+)
+async def test_incomplete_subagent_is_not_reported_as_success(tmp_path, stop_reason):
+    from pawbot.agent.tools.base import ToolResult
+
+    manager = _manager(tmp_path)
+    manager.runner.run = AsyncMock(return_value=AgentRunResult(
+        final_content="partial work", messages=[], stop_reason=stop_reason,
+    ))
+
+    inline = await manager.run_inline("test", runtime=_runtime())
+    assert isinstance(inline, ToolResult) and inline.is_error
+    assert stop_reason in inline and "partial work" in inline
+
+    await manager.spawn("test", runtime=_runtime())
+    await _drain_subagent_tasks(manager)
+    notice = await asyncio.wait_for(manager.bus.consume_inbound(), timeout=1)
+    assert "completed successfully" not in notice.content
+    assert stop_reason in notice.content and "partial work" in notice.content
+
+
+@pytest.mark.asyncio
+async def test_subagent_with_empty_completed_result_is_not_success(tmp_path):
+    from pawbot.agent.tools.base import ToolResult
+
+    manager = _manager(tmp_path)
+    manager.runner.run = AsyncMock(return_value=AgentRunResult(
+        final_content="  ", messages=[], stop_reason="completed",
+    ))
+    inline = await manager.run_inline("test", runtime=_runtime())
+    assert isinstance(inline, ToolResult) and inline.is_error
+
+    await manager.spawn("test", runtime=_runtime())
+    await _drain_subagent_tasks(manager)
+    notice = await asyncio.wait_for(manager.bus.consume_inbound(), timeout=1)
+    assert "completed successfully" not in notice.content
+
+
+@pytest.mark.asyncio
+async def test_real_runner_iteration_limit_is_not_announced_as_success(tmp_path):
+    from pawbot.agent.tools.registry import ToolRegistry
+    from pawbot.harness import ScriptedProvider
+    from pawbot.providers.base import LLMResponse, ToolCallRequest
+
+    provider = ScriptedProvider([LLMResponse(
+        content=None,
+        tool_calls=[ToolCallRequest(id="probe", name="unavailable_probe", arguments={})],
+        finish_reason="tool_calls",
+    )])
+    manager = _manager(tmp_path, max_iterations=1)
+    manager._build_tools = lambda **_kwargs: ToolRegistry()
+    manager._build_subagent_prompt = lambda **_kwargs: "Complete the task."
+    runtime = LLMRuntime.capture(provider, "harness-model", context_window_tokens=16000)
+
+    await manager.spawn("inspect the fixture", runtime=runtime)
+    await _drain_subagent_tasks(manager)
+    notice = await asyncio.wait_for(manager.bus.consume_inbound(), timeout=1)
+    assert "max_iterations" in notice.content
+    assert "completed successfully" not in notice.content
+    assert "Task completed but no final response was generated" not in notice.content
+
+
+@pytest.mark.asyncio
+async def test_failed_subagent_preserves_partial_output(tmp_path):
+    from pawbot.agent.tools.base import ToolResult
+
+    manager = _manager(tmp_path)
+    manager.runner.run = AsyncMock(return_value=AgentRunResult(
+        final_content="partial work", messages=[], stop_reason="error", error="Provider failed",
+    ))
+    result = await manager.run_inline("test", runtime=_runtime())
+    assert isinstance(result, ToolResult) and result.is_error
+    assert "Provider failed" in result and "partial work" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_status", ["failed", "not_evaluable"])
+async def test_completed_execution_does_not_hide_failed_task_verification(tmp_path, task_status):
+    from pawbot.agent.evaluation import TaskEvaluation
+    from pawbot.agent.tools.base import ToolResult
+
+    manager = _manager(tmp_path)
+    manager.runner.run = AsyncMock(return_value=AgentRunResult(
+        final_content="partial work", messages=[], stop_reason="completed",
+        task_evaluation=TaskEvaluation(status=task_status, completed=False),
+    ))
+    result = await manager.run_inline("test", runtime=_runtime())
+    assert isinstance(result, ToolResult) and result.is_error
+    assert task_status in result and "partial work" in result
+
+
+@pytest.mark.asyncio
 async def test_close_cancels_tasks_before_closing_exec_sessions(tmp_path):
     sm = _manager(tmp_path)
     task = asyncio.create_task(asyncio.Event().wait())

@@ -26,6 +26,7 @@ from pawbot.agent.tools.exec_session import ExecSessionManager
 from pawbot.agent.tools.file_state import FileStates
 from pawbot.agent.tools.loader import ToolLoader
 from pawbot.agent.tools.registry import ToolRegistry
+from pawbot.agent.turn.outcome import TurnOutcome
 from pawbot.bus.events import InboundMessage
 from pawbot.bus.queue import MessageBus
 from pawbot.config.schema import AgentDefaults, ToolsConfig
@@ -358,7 +359,7 @@ class SubagentManager:
             self._session_tasks.setdefault(session_key, set()).add(task_id)
         try:
             result = await inline_task
-            if status.phase == "error" or status.stop_reason == "error":
+            if status.phase == "error" or status.stop_reason != "completed":
                 return ToolResult.error(result)
             return result
         finally:
@@ -459,7 +460,7 @@ class SubagentManager:
                     max_iterations=self.max_iterations,
                     max_tool_result_chars=self.max_tool_result_chars,
                     hook=_SubagentHook(task_id, status),
-                    max_iterations_message="Task completed but no final response was generated.",
+                    max_iterations_message="The subagent stopped at its iteration limit without a final response.",
                     finalize_on_max_iterations=False,
                     error_message=None,
                     checkpoint_callback=_on_checkpoint,
@@ -481,16 +482,42 @@ class SubagentManager:
                 if token is not None:
                     reset_workspace_scope(token)
                 reset_request_context(request_token)
-            status.phase = "done"
-            status.stop_reason = result.stop_reason
-
-            if result.stop_reason == "error":
-                final_result = result.error or "Error: subagent execution failed."
-                final_status = "error"
-            else:
-                final_result = result.final_content or "Task completed but no final response was generated."
+            outcome = TurnOutcome.from_run_result(result)
+            content = result.final_content or ""
+            accepted = outcome.task_status not in {"failed", "not_evaluable"}
+            completed = (
+                result.stop_reason == "completed"
+                and outcome.is_successful_execution
+                and accepted
+                and bool(content.strip())
+            )
+            if completed:
+                status.phase = "done"
+                status.stop_reason = "completed"
+                final_result = content
                 final_status = "ok"
                 logger.info("Subagent [{}] completed successfully", task_id)
+            elif outcome.execution_status == "failed":
+                status.phase = "error"
+                status.stop_reason = result.stop_reason or "error"
+                final_result = result.error or "Error: subagent execution failed."
+                if content.strip() and content.strip() != final_result.strip():
+                    final_result += f"\n\nPartial result:\n{content}"
+                final_status = "error"
+            else:
+                status.phase = "done"
+                reason = result.stop_reason or "unknown_stop"
+                if reason == "completed":
+                    reason = (
+                        "empty_final_response" if not content.strip()
+                        else f"task_verification_{outcome.task_status}"
+                    )
+                status.stop_reason = reason
+                final_result = f"Subagent stopped before completion (reason: {reason})."
+                if content.strip():
+                    final_result += f"\n\nPartial result:\n{content}"
+                final_status = "incomplete"
+                logger.info("Subagent [{}] stopped before completion: {}", task_id, reason)
             if announce:
                 await self._announce_result(
                     task_id,
@@ -534,7 +561,10 @@ class SubagentManager:
         running = self._running_tasks.get(task_id)
         if running is not None and running.cancelling():
             return
-        status_text = "completed successfully" if status == "ok" else "failed"
+        status_text = {
+            "ok": "completed successfully",
+            "incomplete": "stopped before completion",
+        }.get(status, "failed")
 
         announce_content = render_template(
             "agent/subagent_announce.md",
