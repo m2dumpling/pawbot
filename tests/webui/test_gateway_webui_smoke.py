@@ -228,6 +228,18 @@ async def test_gateway_webui_assets_and_settings_mutations(tmp_path: Path) -> No
     finally:
         _stop_gateway(process)
 
+    # Verify the same installed gateway reloads the saved settings, not just
+    # that the previous process wrote them to disk.
+    restarted = _start_gateway(config_path, log_path)
+    try:
+        bootstrap = _wait_for_bootstrap(base_url, restarted, log_path)
+        persisted = _get_json(f"{base_url}/api/settings", token=bootstrap["api_token"])
+        assert persisted["agent"]["timezone"] == "UTC"
+        assert persisted["advanced"]["webui_allow_local_service_access"] is False
+        assert "Smoke spare" not in {row["name"] for row in persisted["model_presets"]}
+    finally:
+        _stop_gateway(restarted)
+
 
 @pytest.mark.asyncio
 async def test_gateway_webui_bootstrap_message_and_thread_hydration(tmp_path: Path) -> None:
