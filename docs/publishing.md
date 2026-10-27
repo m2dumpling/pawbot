@@ -15,17 +15,27 @@ Publishing the GitHub Release does not start either publishing workflow.
 Both use **Actions → Run workflow** and require an exact existing release tag.
 Creating the release alone does not make the installer ready for users.
 
-## Publish native TUI, then Python
+## Prepare native TUI and Python distributions
 
 1. Run **Publish native TUI** (`publish-tui.yml`) with the exact release `tag`.
    It attaches archives for Linux
-   x64/ARM64, macOS Intel/Apple Silicon, and Windows x64 to the same release.
-2. Wait for every build and the asset-upload job to succeed. Confirm that all
-   five nonempty archives and their five `.sha256` files are attached.
-3. Publish the matching GitHub Release if it is still a draft. Run **Publish
-   package** (`publish.yml`) with the same `tag`. Its preflight rejects drafts,
-   tag/version mismatches, and missing or empty native archives/checksums.
-4. Verify the public installation below after PyPI publication succeeds. Update
+   x64/ARM64, macOS Intel/Apple Silicon, and Windows x64 to the matching draft
+   release. It does not replace assets on a published release.
+2. Wait for every build and the asset-upload job to succeed. Download all five
+   archives and their five `.sha256` files. Run
+   `python -m scripts.release_artifacts tui <download-directory> <target>` for
+   each target to verify the outer checksum and every internal manifest entry.
+3. Run **Publish package** (`publish.yml`) on the exact release tag with
+   `operation=prepare` and the same `tag` input. This builds the wheel and sdist,
+   rebuilds a wheel from the sdist, verifies bundled WebUI assets, and installs
+   and tests the actual wheel. Record the successful run ID and artifact hashes.
+   This operation does not publish to PyPI.
+4. After draft assets and the prepared package pass installation checks, publish
+   the matching GitHub Release. Run **Publish package** on the same tag with
+   `operation=publish`, the same `tag`, and the successful `prepare_run_id`.
+   It verifies the published Release, run identity, version, commit and file
+   checksums, then uploads the exact prepared distributions without rebuilding.
+5. Verify the public installation below after PyPI publication succeeds. Update
    version-pinned installation links only when the corresponding tag and
    required artifacts are available.
 
@@ -125,8 +135,10 @@ gateway health port private; an SSH tunnel is the safer alternative.
 ## Release safety
 
 - Do not add `PYPI_TOKEN` or provider credentials to the repository.
-- Both publishing workflows are manually dispatched for an exact tag; neither
-  runs automatically on tag pushes or GitHub Release publication.
+- Both publishing workflows are manually dispatched on an exact tag for
+  publication; neither publishes automatically on tag pushes or GitHub Release
+  publication. On release PRs, the native builds and Python preparation also
+  run without publishing. A PR run cannot be used as the final prepare run.
 - Keep the version in `pyproject.toml`, the release tag, and the release notes
   aligned.
 - Wait for the CI installer smoke jobs on Ubuntu, macOS, and Windows before
