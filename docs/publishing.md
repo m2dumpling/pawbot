@@ -46,6 +46,9 @@ Finish these steps before announcing the release:
 - In both `README.md` and `README.zh-CN.md`, update the current stable release,
   release-note/PyPI links, and all three version-pinned installer commands
   (`curl`, `wget`, and PowerShell) to the published tag.
+- Keep `PYPI_README.md` version-independent: PyPI embeds it in each
+  distribution, so editing the GitHub README after publication cannot update
+  the description of a previously uploaded package.
 - Mark the release notes as published and update `docs/README.md` and
   `docs/release-notes/unreleased.md` to identify
   the latest published version. Keep historical release notes unchanged.

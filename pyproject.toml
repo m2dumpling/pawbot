@@ -2,7 +2,7 @@
 name = "pawbot-ai"
 version = "0.8.2"
 description = "A replayable, self-hosted AI agent"
-readme = { file = "README.md", content-type = "text/markdown" }
+readme = { file = "PYPI_README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
@@ -159,6 +159,7 @@ include = [
     "pawbot/web/dist/",
     "hatch_build.py",
     "README.md",
+    "PYPI_README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "pyproject.toml",

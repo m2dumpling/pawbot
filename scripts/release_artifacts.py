@@ -94,8 +94,13 @@ def validate_distribution(path: Path, version: str) -> None:
         metadata = [files[prefix + "PKG-INFO"]] if prefix + "PKG-INFO" in files else []
     else:
         raise ValueError(f"unsupported distribution: {path.name}")
-    if len(metadata) != 1 or BytesParser().parsebytes(metadata[0]).get("Version") != version:
+    if len(metadata) != 1:
+        raise ValueError(f"distribution metadata missing or ambiguous: {path.name}")
+    info = BytesParser().parsebytes(metadata[0])
+    if info.get("Version") != version:
         raise ValueError(f"distribution version mismatch: {path.name}")
+    if not isinstance(info.get_payload(), str) or not info.get_payload().strip():
+        raise ValueError(f"distribution description is missing: {path.name}")
     _validate_bundle(files, prefix)
 
 

@@ -30,7 +30,7 @@ def _distributions(directory: Path) -> None:
         "pawbot/web/dist/asset-manifest.json": json.dumps({"src/main.tsx": {"file": "assets/main.js"}}).encode(),
         "pawbot/web/dist/assets/main.js": b"console.log('ok')",
     }
-    metadata = f"Metadata-Version: 2.1\nName: pawbot-ai\nVersion: {VERSION}\n".encode()
+    metadata = f"Metadata-Version: 2.1\nName: pawbot-ai\nVersion: {VERSION}\n\nPackage description.\n".encode()
     with zipfile.ZipFile(directory / f"pawbot_ai-{VERSION}-py3-none-any.whl", "w") as wheel:
         for name, value in bundle.items():
             wheel.writestr(name, value)
@@ -119,8 +119,13 @@ def test_distribution_rejects_missing_asset_and_wrong_version(tmp_path: Path) ->
     with pytest.raises(ValueError, match="version mismatch"):
         validate_distribution(wheel, "0.8.1")
     with zipfile.ZipFile(wheel, "w") as archive:
-        archive.writestr(f"pawbot_ai-{VERSION}.dist-info/METADATA", f"Version: {VERSION}\n")
+        archive.writestr(f"pawbot_ai-{VERSION}.dist-info/METADATA", f"Version: {VERSION}\n\nDescription.\n")
     with pytest.raises(ValueError, match="WebUI index or manifest"):
+        validate_distribution(wheel, VERSION)
+
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(f"pawbot_ai-{VERSION}.dist-info/METADATA", f"Version: {VERSION}\n\n")
+    with pytest.raises(ValueError, match="description is missing"):
         validate_distribution(wheel, VERSION)
 
 
@@ -135,3 +140,13 @@ def test_prepare_run_must_be_successful_dispatch_for_same_workflow_and_commit() 
                        ("event", "pull_request"), ("path", "other.yml"), ("id", 9)):
         with pytest.raises(ValueError, match="prepare run"):
             validate_prepare_run({**run, key: value}, RUN, COMMIT, REPO)
+
+
+def test_pypi_readme_uses_version_independent_installation_links() -> None:
+    import re
+
+    readme = Path(__file__).resolve().parents[1] / "PYPI_README.md"
+    text = readme.read_text(encoding="utf-8")
+    assert "https://github.com/m2dumpling/pawbot/releases/latest" in text
+    assert "uv tool install --force --upgrade pawbot-ai" in text
+    assert not re.search(r"/releases/tag/v\d|raw\.githubusercontent\.com/[^\s]+/v\d", text)
