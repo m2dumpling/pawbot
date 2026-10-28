@@ -5,6 +5,15 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
+## 0.8.3
+
+### Fixed
+
+- Native TUI downloads now report TLS, network, HTTP and checksum errors
+  accurately instead of incorrectly claiming that a release archive is missing.
+  Temporary download failures are retried once; TLS certificate verification
+  and archive integrity checks remain enabled.
+
 ## 0.8.2
 
 ### Added

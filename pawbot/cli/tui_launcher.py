@@ -7,6 +7,7 @@ import io
 import os
 import platform
 import shutil
+import ssl
 import subprocess
 import time
 import urllib.error
@@ -266,13 +267,43 @@ def _download_release_tui(asset: str) -> Path | None:
     base = f"{release_base}/v{version}"
     archive_name = f"{asset}.zip"
     try:
-        checksum = _read_release_asset(f"{base}/{archive_name}.sha256", max_bytes=1024)
+        checksum = _read_release_asset_with_retry(f"{base}/{archive_name}.sha256", max_bytes=1024)
         expected = _release_checksum(checksum, archive_name)
         if expected is None:
+            raise TuiUnavailableError("downloaded TUI checksum file is invalid")
+        archive = _read_release_asset_with_retry(
+            f"{base}/{archive_name}", max_bytes=200 * 1024 * 1024
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
             return None
-        archive = _read_release_asset(f"{base}/{archive_name}", max_bytes=200 * 1024 * 1024)
-    except (OSError, TimeoutError, urllib.error.URLError, urllib.error.HTTPError):
-        return None
+        raise TuiUnavailableError(
+            f"native TUI download failed (HTTP {exc.code}); check your network and retry, "
+            "or use `pawbot agent --classic`"
+        ) from exc
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, ssl.SSLCertVerificationError):
+            message = "TLS certificate verification failed; check your system clock and trusted certificates"
+        elif isinstance(exc.reason, ssl.SSLError):
+            message = "TLS connection failed; check your network and certificate settings"
+        else:
+            message = "native TUI download failed; check your network and retry"
+        raise TuiUnavailableError(f"{message}, or use `pawbot agent --classic`") from exc
+    except ssl.SSLCertVerificationError as exc:
+        raise TuiUnavailableError(
+            "TLS certificate verification failed; check your system clock and trusted "
+            "certificates, or use `pawbot agent --classic`"
+        ) from exc
+    except ssl.SSLError as exc:
+        raise TuiUnavailableError(
+            "TLS connection failed; check your network and certificate settings, "
+            "or use `pawbot agent --classic`"
+        ) from exc
+    except OSError as exc:
+        raise TuiUnavailableError(
+            "native TUI download failed; check your network and retry, "
+            "or use `pawbot agent --classic`"
+        ) from exc
     if hashlib.sha256(archive).hexdigest() != expected:
         raise TuiUnavailableError("downloaded TUI archive failed checksum verification")
     files = _verified_release_archive(archive, asset)
@@ -396,7 +427,7 @@ def _clear_cached_release(target_dir: Path, asset: str) -> None:
 
 def _read_release_asset(url: str, *, max_bytes: int) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": f"pawbot/{__version__}"})
-    with urllib.request.urlopen(request, timeout=5) as response:
+    with urllib.request.urlopen(request, timeout=15) as response:
         content_length = response.headers.get("Content-Length")
         if content_length and int(content_length) > max_bytes:
             raise OSError("release asset exceeds size limit")
@@ -404,6 +435,24 @@ def _read_release_asset(url: str, *, max_bytes: int) -> bytes:
     if len(body) > max_bytes:
         raise OSError("release asset exceeds size limit")
     return body
+
+
+def _read_release_asset_with_retry(url: str, *, max_bytes: int) -> bytes:
+    """Retry temporary failures once without retrying TLS or authorization errors."""
+    for attempt in range(2):
+        try:
+            return _read_release_asset(url, max_bytes=max_bytes)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in {429, 500, 502, 503, 504} or attempt:
+                raise
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, ssl.SSLError) or attempt:
+                raise
+        except (TimeoutError, ConnectionError):
+            if attempt:
+                raise
+        time.sleep(0.25)
+    raise AssertionError("unreachable")
 
 
 def _ensure_gateway(
