@@ -1,6 +1,8 @@
 import hashlib
 import io
+import ssl
 import subprocess
+import urllib.error
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -620,6 +622,99 @@ def test_release_tui_uses_the_public_release_base_by_default(
         "https://github.com/m2dumpling/pawbot/releases/download/v9.9.9/"
         "pawbot-tui-linux-x64.zip",
     ]
+
+
+def test_release_tui_reports_certificate_failure_without_claiming_archive_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+
+    def read_asset(url: str, *, max_bytes: int) -> bytes:
+        calls.append(url)
+        raise urllib.error.URLError(ssl.SSLCertVerificationError("untrusted test certificate"))
+
+    monkeypatch.setattr("pawbot.cli.tui_launcher.__version__", "9.9.9")
+    monkeypatch.setattr("pawbot.cli.tui_launcher.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("pawbot.cli.tui_launcher._read_release_asset", read_asset)
+    with pytest.raises(TuiUnavailableError, match="TLS certificate verification failed") as exc:
+        _download_release_tui("pawbot-tui-linux-x64")
+    assert "not published" not in str(exc.value)
+    assert len(calls) == 1
+
+
+def test_release_tui_retries_a_transient_download_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    asset = "pawbot-tui-linux-x64"
+    archive, checksum = _release_archive(asset)
+    calls: list[str] = []
+
+    def read_asset(url: str, *, max_bytes: int) -> bytes:
+        calls.append(url)
+        if len(calls) == 1:
+            raise urllib.error.URLError(TimeoutError("temporary timeout"))
+        return checksum if url.endswith(".sha256") else archive
+
+    monkeypatch.setattr("pawbot.cli.tui_launcher.__version__", "9.9.9")
+    monkeypatch.setattr("pawbot.cli.tui_launcher.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("pawbot.cli.tui_launcher._read_release_asset", read_asset)
+    monkeypatch.setattr("pawbot.cli.tui_launcher.time.sleep", lambda _delay: None)
+    assert _download_release_tui(asset) == tmp_path / "bin" / "tui" / "9.9.9" / asset
+    assert len(calls) == 3
+
+
+def test_release_tui_reports_http_errors_without_leaking_download_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def read_asset(url: str, *, max_bytes: int) -> bytes:
+        raise urllib.error.HTTPError(url, 403, "forbidden", {}, None)
+
+    monkeypatch.setattr("pawbot.cli.tui_launcher.__version__", "9.9.9")
+    monkeypatch.setenv("PAWBOT_TUI_RELEASE_BASE_URL", "https://user:secret@downloads.example.test")
+    monkeypatch.setattr("pawbot.cli.tui_launcher.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("pawbot.cli.tui_launcher._read_release_asset", read_asset)
+    with pytest.raises(TuiUnavailableError, match="HTTP 403") as exc:
+        _download_release_tui("pawbot-tui-linux-x64")
+    assert "secret" not in str(exc.value)
+
+
+@pytest.mark.parametrize(("status", "attempts"), [(404, 1), (503, 2)])
+def test_release_tui_distinguishes_missing_assets_from_temporary_http_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    status: int,
+    attempts: int,
+) -> None:
+    calls: list[str] = []
+
+    def read_asset(url: str, *, max_bytes: int) -> bytes:
+        calls.append(url)
+        raise urllib.error.HTTPError(url, status, "test error", {}, None)
+
+    monkeypatch.setattr("pawbot.cli.tui_launcher.__version__", "9.9.9")
+    monkeypatch.setattr("pawbot.cli.tui_launcher.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("pawbot.cli.tui_launcher._read_release_asset", read_asset)
+    monkeypatch.setattr("pawbot.cli.tui_launcher.time.sleep", lambda _delay: None)
+    if status == 404:
+        assert _download_release_tui("pawbot-tui-linux-x64") is None
+    else:
+        with pytest.raises(TuiUnavailableError, match="HTTP 503"):
+            _download_release_tui("pawbot-tui-linux-x64")
+    assert len(calls) == attempts
+
+
+def test_release_tui_reports_an_invalid_checksum_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("pawbot.cli.tui_launcher.__version__", "9.9.9")
+    monkeypatch.setattr("pawbot.cli.tui_launcher.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("pawbot.cli.tui_launcher._read_release_asset", lambda *_a, **_kw: b"invalid")
+    with pytest.raises(TuiUnavailableError, match="checksum file is invalid"):
+        _download_release_tui("pawbot-tui-linux-x64")
 
 
 def test_release_tui_replaces_a_corrupted_cached_binary(
