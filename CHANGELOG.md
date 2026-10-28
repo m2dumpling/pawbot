@@ -5,6 +5,8 @@ supported surface and known boundaries of each published version.
 
 ## Unreleased
 
+## 0.8.2
+
 ### Added
 
 - Added an opt-in Promptfoo suite for six controlled local workspace tasks,

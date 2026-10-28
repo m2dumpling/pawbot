@@ -168,6 +168,16 @@ jobs:
       - name: Build wheel and sdist
         run: uv build
 
+      - name: Verify distributions and rebuild the sdist
+        shell: bash
+        run: |
+          set -eu
+          version="$(uv run --no-project --python 3.11 python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          uv run --no-project --python 3.11 python -m scripts.release_artifacts distribution dist/*.whl "$version"
+          uv run --no-project --python 3.11 python -m scripts.release_artifacts distribution dist/*.tar.gz "$version"
+          uv build --wheel --out-dir "$RUNNER_TEMP/sdist-wheel" dist/*.tar.gz
+          uv run --no-project --python 3.11 python -m scripts.release_artifacts distribution "$RUNNER_TEMP"/sdist-wheel/*.whl "$version"
+
       - name: Install the wheel into a clean environment
         shell: bash
         run: |
